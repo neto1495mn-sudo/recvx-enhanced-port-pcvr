@@ -97,14 +97,14 @@ void profile_start(void)
 /* Windows: a sampler thread suspends the game thread every millisecond and records where it
    was (EIP) plus the code addresses found on top of its stack (a rough call chain), tagged with
    the --profile frame number, so the slow frames of the CSV can be looked up. Written as it
-   goes (the game may be closed abruptly). Lines: "<frame> <eip> <stack code addresses...>";
+   goes (the game may be closed abruptly). Lines: "<frame> <eip> <g|r thread> <stack code addresses...>";
    the first line "base <image base> <text end>". */
 #include <windows.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
 volatile unsigned g_prof_frame;
-static HANDLE game_thread;
+static HANDLE game_thread, render_thread;
 static FILE* out;
 static uintptr_t img_lo, img_hi;
 
@@ -114,23 +114,30 @@ static DWORD WINAPI sampler(LPVOID arg)
     (void)arg;
     timeBeginPeriod(1);
     for (;;) {
-        CONTEXT c;
         Sleep(1);
-        if (!game_thread) continue;
-        if (SuspendThread(game_thread) == (DWORD)-1) continue;
-        c.ContextFlags = CONTEXT_CONTROL;
-        if (GetThreadContext(game_thread, &c)) {
-            uint32_t sp = (uint32_t)c.Esp, found = 0;
-            fprintf(out, "%u %x", g_prof_frame, (unsigned)c.Eip);
-            for (int i = 0; i < 2048 && found < 12; i++) {   /* the stack, 8 KB from the top */
-                uint32_t v;
-                SIZE_T got = 0;
-                if (!ReadProcessMemory(GetCurrentProcess(), (void*)(uintptr_t)(sp + i * 4), &v, 4, &got) || got != 4) break;
-                if (v >= img_lo && v < img_hi) { fprintf(out, " %x", v); found++; }
+        for (int k = 0; k < 2; k++) {
+            HANDLE th = k ? render_thread : game_thread;
+            CONTEXT c;
+            if (!th || SuspendThread(th) == (DWORD)-1) continue;
+            c.ContextFlags = CONTEXT_CONTROL;
+            if (GetThreadContext(th, &c)) {
+                uint32_t sp = (uint32_t)c.Esp, found = 0;
+                int deep = !(c.Eip >= img_lo && c.Eip < img_hi);   /* in a system call: look further up for the caller */
+                static uint32_t stk[16384];
+                MEMORY_BASIC_INFORMATION mi;
+                SIZE_T want = deep ? sizeof(stk) : 8192, got = 0;
+                fprintf(out, "%u %x %c", g_prof_frame, (unsigned)c.Eip, k ? 'r' : 'g');
+                if (VirtualQuery((void*)(uintptr_t)sp, &mi, sizeof(mi))) {   /* (one read, within the stack's region) */
+                    uintptr_t end = (uintptr_t)mi.BaseAddress + mi.RegionSize;
+                    if (sp + want > end) want = end - sp;
+                    if (!ReadProcessMemory(GetCurrentProcess(), (void*)(uintptr_t)sp, stk, want, &got)) got = 0;
+                }
+                for (SIZE_T i = 0; i < got / 4 && found < (deep ? 48u : 12u); i++)
+                    if (stk[i] >= img_lo && stk[i] < img_hi) { fprintf(out, " %x", stk[i]); found++; }
+                fputc('\n', out);
             }
-            fputc('\n', out);
+            ResumeThread(th);
         }
-        ResumeThread(game_thread);
         if (++n % 500 == 0) fflush(out);
     }
     return 0;
@@ -152,9 +159,11 @@ void profile_start(void)
     if (!path || !(out = fopen(path, "w"))) return;
     dos = (IMAGE_DOS_HEADER*)GetModuleHandle(NULL);
     nt = (IMAGE_NT_HEADERS*)((char*)dos + dos->e_lfanew);
-    img_lo = (uintptr_t)dos;
-    img_hi = img_lo + nt->OptionalHeader.SizeOfImage;
+    img_lo = (uintptr_t)dos + nt->OptionalHeader.BaseOfCode;   /* code only (stack words pointing at data are noise) */
+    img_hi = img_lo + nt->OptionalHeader.SizeOfCode;
     fprintf(out, "base %x %x\n", (unsigned)img_lo, (unsigned)img_hi);
+    DuplicateHandle(GetCurrentProcess(), GetCurrentThread(), GetCurrentProcess(), &render_thread,
+                    THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT, FALSE, 0);   /* (main thread = render thread) */
     CreateThread(NULL, 0, sampler, NULL, 0, NULL);
 }
 #endif
