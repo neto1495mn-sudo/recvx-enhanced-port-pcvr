@@ -133,6 +133,7 @@ void log_start(const char* path)
     if (!MultiByteToWideChar(CP_UTF8, 0, path, -1, w, 1024) || !_wfreopen(w, L"w", stdout)) return;
     setvbuf(stdout, NULL, _IONBF, 0);
     _dup2(_fileno(stdout), 2);
+    setvbuf(stderr, NULL, _IONBF, 0);   /* (buffered, the last lines were lost when the game was closed) */
     SetUnhandledExceptionFilter(on_fatal);
     host_log("log: writing %s\n", path);
 }
