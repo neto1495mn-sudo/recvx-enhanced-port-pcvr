@@ -189,7 +189,12 @@ uint32_t pc_native_prim(unsigned int prim, const unsigned int* dp, int n, int cl
            screen overlays have depth 0 and stay 2D */
         /* (not the game's own 2D: texts, message windows, icons are drawn at priority -1, the
            nearest depth there is - those go on the VR panel, not into the world) */
-        if (!clip_3d_on && g_vr_fx_fix && o->z > VR_FX_MIN_DEPTH && z < -1.0001f) o->cull |= 0x40;   /* (in front of the camera only: z >= 0 is behind it, its depth and position meaningless) */
+        if (!clip_3d_on && g_vr_fx_fix && o->z > VR_FX_MIN_DEPTH && z < -1.0001f) {   /* (in front of the camera only: z >= 0 is behind it, its depth and position meaningless) */
+            o->cull |= 0x40;
+            /* the depth unrounded: VR takes the view depth back from it (-b / (z + a)), and the GS's
+               integer step is centimetres a few metres away - the point swam as the head moved */
+            o->z = Ps2_zbuff_a + Ps2_zbuff_b / z;
+        }
     }
     if (!clip_3d_on && n > 0 && vr_big(v[0].x, v[0].y, v, n, sizeof(NativeVertex)))   /* a screen layer: stays 2D */
         for (int i = 0; i < n; i++) v[i].cull &= (uint8_t)~0x40;
