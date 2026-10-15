@@ -708,6 +708,42 @@ void xr_frame_end_quad_rect(int x, int y, int w, int h)
     quad.subImage.swapchain = quad_chain.h;
     quad.subImage.imageRect.extent.width = quad_chain.w;
     quad.subImage.imageRect.extent.height = quad_chain.ht;
+    {   /* the screen floats where the head looks: placed in front of the gaze when it appears,
+           then following the head's heading and pitch slowly (~1.2 s), at vr_dist */
+        static float sy, sp, shp[3];
+        static uint64_t last_ms;
+        XrSpaceLocation loc = { XR_TYPE_SPACE_LOCATION };
+        uint64_t now = SDL_GetTicks();
+        if (view_space && XR_SUCCEEDED(xrLocateSpace(view_space, local_space, fs.predictedDisplayTime, &loc)) &&
+            (loc.locationFlags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT) && (loc.locationFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT)) {
+            const XrQuaternionf* q = &loc.pose.orientation;
+            float fy = -2.0f * (q->y * q->z - q->w * q->x);
+            float yaw = yaw_of(q), pitch = asinf(fy < -1.0f ? -1.0f : fy > 1.0f ? 1.0f : fy), d = (float)g_vr_screen_dist / 100.0f, k;
+            float hp[3] = { loc.pose.position.x, loc.pose.position.y, loc.pose.position.z };
+            if (pitch > 0.6f) pitch = 0.6f;
+            if (pitch < -0.6f) pitch = -0.6f;
+            if (!last_ms || now - last_ms > 500) { sy = yaw; sp = pitch; memcpy(shp, hp, sizeof(shp)); }   /* appears: in front of the gaze */
+            else {
+                float dt = (now - last_ms) / 1000.0f, dy = yaw - sy;
+                while (dy > 3.14159265f) dy -= 6.2831853f;
+                while (dy < -3.14159265f) dy += 6.2831853f;
+                k = 1.0f - expf(-dt / 1.2f);
+                sy += dy * k; sp += (pitch - sp) * k;
+                for (int i = 0; i < 3; i++) shp[i] += (hp[i] - shp[i]) * k;
+            }
+            last_ms = now;
+            {
+                float cy = cosf(sy * 0.5f), syh = sinf(sy * 0.5f), cp = cosf(sp * 0.5f), sph = sinf(sp * 0.5f);
+                screen_pose.orientation.x = cy * sph;   /* yaw (about y) then pitch (about x) */
+                screen_pose.orientation.y = syh * cp;
+                screen_pose.orientation.z = -syh * sph;
+                screen_pose.orientation.w = cy * cp;
+                screen_pose.position.x = shp[0] - sinf(sy) * cosf(sp) * d;
+                screen_pose.position.y = shp[1] + sinf(sp) * d;
+                screen_pose.position.z = shp[2] - cosf(sy) * cosf(sp) * d;
+            }
+        }
+    }
     quad.pose = screen_pose;
     {
         float a = (float)(g_vr_screen_angle < 20 ? 20 : g_vr_screen_angle > 120 ? 120 : g_vr_screen_angle) * (3.14159265f / 360.0f);
