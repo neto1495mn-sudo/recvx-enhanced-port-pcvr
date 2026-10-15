@@ -33,6 +33,7 @@ int g_vr_scale = 100;        /* ini vr_scale: game units per metre, in tenths (1
 int g_vr_eye_height = 155;   /* ini vr_eye_height: the camera's height above the player's feet, tenths of units */
 int g_vr_fov = 120;          /* ini vr_fov: the game camera's horizontal field of view (degrees): what it culls against */
 int g_vr_turn = 30;          /* ini vr_turn: right-stick turn in degrees per flick; 0 = smooth turning */
+int g_vr_gun_min = 15;       /* ini vr_gun_min: the hand/weapon never comes closer than this to the eyes (cm) */
 int g_vr_fx_fix = 1;         /* ini vr_fx_fix: 1 = 2D effects with a depth (fire, glows) are placed in the world */
 int g_vr_hand_aim = 1;       /* ini vr_hand_aim: 1 = shots go where the right controller points, 0 = where the head looks */
 
@@ -168,6 +169,88 @@ unsigned vr_tps_keys(void)
     if (in.buttons & VRB_B) k |= 1024;   /* TPS_K_CANCEL */
     return k;
 }
+
+/* the play space in the world now: recentred tracking space (metres) -> world */
+static void make_Wg(float Wg[16])
+{
+    float s = g_vr_scale / 10.0f, c = cosf(vr_yaw), sn = sinf(vr_yaw);
+    vr_mat_identity(Wg);
+    Wg[0] = c * s;  Wg[8] = sn * s;
+    Wg[5] = s;
+    Wg[2] = -sn * s; Wg[10] = c * s;
+    Wg[12] = plp->px; Wg[13] = plp->py + g_vr_eye_height / 10.0f; Wg[14] = plp->pz;
+}
+
+static void xform(const float m[16], float x, float y, float z, float o[3])
+{
+    o[0] = m[0] * x + m[4] * y + m[8] * z + m[12];
+    o[1] = m[1] * x + m[5] * y + m[9] * z + m[13];
+    o[2] = m[2] * x + m[6] * y + m[10] * z + m[14];
+}
+
+/* The weapon hand (node 9: weapon, lighter, muzzle flash and the shot's origin hang on it)
+   follows the right controller. How the hand holds each weapon relative to the aim direction
+   is taken from the game's own aim pose (hand rotation relative to Ry(ay) Rx(wax)) whenever it
+   aims, and applied to the controller's orientation; the hand is put where the controller is,
+   never closer than vr_gun_min to the eyes. Before a weapon was first aimed, the game's pose
+   stays. tps_calc_model(), after the player's model is computed, before the linked objects. */
+void vr_hand(BH_PWORK* p)
+{
+    static float rrel[64][9];
+    static unsigned char rrel_ok[64];
+    float* H;
+    VrInput in;
+    VrPose h;
+    float Wg[16], P[3], E[3], A[9], C[9], ra[9], cy = cosf(vr_yaw), sy = sinf(vr_yaw);
+    int wn;
+    if (!vr_on() || !p || !p->mlwP || p->mlwP->obj_num <= 9) return;
+    H = p->mlwP->owP[9].mtx;
+    wn = p->wpnr_no & 63;
+    if (p->mode0 == 1 && p->mode1 == 1) {   /* aiming: learn the grip, rrel = A^T * Hrot */
+        float ya = (float)(short)p->ay * (3.14159265f / 32768.0f), pa = (float)(short)p->wax * (3.14159265f / 32768.0f);
+        float c1 = cosf(ya), s1 = sinf(ya), c2 = cosf(pa), s2 = sinf(pa);
+        /* A = Ry(ya) Rx(pa), rows */
+        A[0] = c1; A[1] = s1 * s2; A[2] = s1 * c2;
+        A[3] = 0;  A[4] = c2;      A[5] = -s2;
+        A[6] = -s1; A[7] = c1 * s2; A[8] = c1 * c2;
+        for (int i = 0; i < 3; i++)
+            for (int j = 0; j < 3; j++)   /* Hrot[r][c] = H[c * 4 + r] */
+                rrel[wn][i * 3 + j] = A[0 * 3 + i] * H[j * 4 + 0] + A[1 * 3 + i] * H[j * 4 + 1] + A[2 * 3 + i] * H[j * 4 + 2];
+        rrel_ok[wn] = 1;
+    }
+    if (!rrel_ok[wn] || !xr_input(&in) || !in.aim_valid || !xr_head_pose(&h)) return;
+    quat_to_rows(ra, &in.aim);
+    for (int j = 0; j < 3; j++) {   /* C = Ry(vr_yaw) * Raim */
+        C[0 * 3 + j] = cy * ra[0 * 3 + j] + sy * ra[2 * 3 + j];
+        C[1 * 3 + j] = ra[1 * 3 + j];
+        C[2 * 3 + j] = -sy * ra[0 * 3 + j] + cy * ra[2 * 3 + j];
+    }
+    for (int i = 0; i < 3; i++)
+        for (int j = 0; j < 3; j++)   /* Hrot = C * rrel, written back as columns */
+            H[j * 4 + i] = C[i * 3 + 0] * rrel[wn][0 * 3 + j] + C[i * 3 + 1] * rrel[wn][1 * 3 + j] + C[i * 3 + 2] * rrel[wn][2 * 3 + j];
+    make_Wg(Wg);
+    xform(Wg, in.aim.px, in.aim.py, in.aim.pz, P);
+    xform(Wg, h.px, h.py, h.pz, E);
+    {   /* not into the face */
+        float d[3] = { P[0] - E[0], P[1] - E[1], P[2] - E[2] }, l = sqrtf(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+        float mn = g_vr_gun_min / 100.0f * (g_vr_scale / 10.0f);
+        if (l < mn) {
+            if (l < 1e-4f) { d[0] = -sy; d[1] = 0; d[2] = -cy; l = 1.0f; }   /* straight ahead */
+            for (int k = 0; k < 3; k++) P[k] = E[k] + d[k] / l * mn;
+        }
+    }
+    H[12] = P[0]; H[13] = P[1]; H[14] = P[2];
+}
+
+/* the left stick (forward, right), -1..1; 0 if no controllers */
+int vr_move_stick(float* f, float* r)
+{
+    VrInput in;
+    if (!vr_on() || !xr_input(&in)) return 0;
+    *f = in.ly; *r = in.lx;
+    return 1;
+}
+int vr_run_held(void) { VrInput in; return xr_input(&in) && (in.ltrig > 0.5f || (in.buttons & VRB_LSTICK)); }
 
 int vr_pad_start(void) { VrInput in; return xr_input(&in) && (in.buttons & VRB_MENU); }        /* left menu button: Start */
 int vr_quick_knife(void) { VrInput in; return xr_input(&in) && in.lgrip > 0.5f; }             /* left grip: quick knife */

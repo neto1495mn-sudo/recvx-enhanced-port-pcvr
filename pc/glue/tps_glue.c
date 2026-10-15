@@ -82,6 +82,33 @@ static int aiming(void) { return tps_cam_active && plp->mode0 == 1 && plp->mode1
 int vr_on(void);
 int vr_hand_ray(NJS_POINT3* o, NJS_POINT3* d);
 void tps_vr_view(float y, float p) { yaw = wrap(y); pitch = p; }
+void vr_hand(BH_PWORK* p);
+int vr_move_stick(float* f, float* r);
+int vr_run_held(void);
+
+/* VR: walking while aiming (the game holds the character still with a weapon raised): the
+   left stick moves it relative to where the head looks, at walking pace (running with the run
+   key), stopped short of walls by the game's own wall ray */
+static void vr_aim_walk(void)
+{
+    float f, r, l, s = sinf(RAD(yaw)), c = cosf(RAD(yaw)), step, dx, dz, len;
+    NJS_LINE line;
+    NJS_POINT3 apos;
+    ATR_WORK* ahtp;
+    if (!vr_move_stick(&f, &r)) return;
+    l = sqrtf(f * f + r * r);
+    if (l < 0.3f) return;
+    if (l > 1.0f) { f /= l; r /= l; l = 1.0f; }
+    step = (vr_run_held() ? 0.9f : 0.5f) * l;          /* units per game frame (~1.5 / 2.7 m/s) */
+    dx = (-s * f + c * r) * step / l;                  /* forward (-sin, 0, -cos), right (cos, 0, -sin) */
+    dz = (-c * f - s * r) * step / l;
+    line.px = plp->px; line.py = plp->py + 8.0f; line.pz = plp->pz;
+    line.vx = dx * (1.0f + 3.0f / step); line.vy = 0; line.vz = dz * (1.0f + 3.0f / step);   /* look 3 units past the step */
+    apos = sys->apos; ahtp = sys->ahtp;
+    if (bhCheckL2Wall(&line, 0x400, &len)) { sys->apos = apos; sys->ahtp = ahtp; return; }
+    sys->apos = apos; sys->ahtp = ahtp;
+    plp->px += dx; plp->pz += dz;
+}
 #define FREE_CAM (g_tps.free_cam || vr_on())
 
 static float cur_dist, cur_fov;   /* eased towards the walk/aim values */
@@ -671,6 +698,7 @@ void tps_player(void)
             plp->flg &= ~0x100000;
             plp->stflg &= ~0x800;
         }
+        if (vr_on()) vr_aim_walk();
         aim_at_crosshair();
         return;
     }
@@ -745,7 +773,7 @@ void tps_calc_model(void)
     bhCalcModel(plp);
     bend_a = 0;
     w += (on - w) * 0.35f;
-    if (w < 0.01f || plp->mlwP->obj_num <= 9) return;
+    if (w < 0.01f || plp->mlwP->obj_num <= 9) { vr_hand(plp); return; }
     /* pitch from the weapon hand of the straight pose to the target (not wax: the shot starts
        lower, at 11 units, and needs a steeper angle for close targets); with "You appear as" the
        hand where the model holds the weapon (a Tyrant's is higher: its weapon pointed over the
@@ -755,6 +783,7 @@ void tps_calc_model(void)
     a = atan2f(aim_t.y - ow[9].mtx[13] - ofs[1], sqrtf(dx * dx + dz * dz));
     bend_a = a = w * (a > 1.047f ? 1.047f : a < -1.047f ? -1.047f : a) / 2;   /* at most 60 degrees */
     bend(plp, a);
+    vr_hand(plp);   /* VR: the weapon hand to the right controller */
 }
 
 /* the same bend on a display copy of the player posed this tick (actor_glue.c: a gender-matched
