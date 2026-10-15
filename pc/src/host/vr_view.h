@@ -37,7 +37,7 @@ typedef struct {
     int   mk_kind[12];          /*   VRMK_* */
     int   mk_val[12];           /*   VRMK_NUMBER: the number shown */
 } VrView;
-enum { VRMK_DOT = 0, VRMK_BUTTON = 1, VRMK_NUMBER = 2 };   /* aiming dot, "A" over what the action button can use, the holster's ammo count */
+enum { VRMK_DOT = 0, VRMK_NUMBER = 2 };   /* aiming dot, the holster's ammo count */
 
 /* small 4x4 helpers (column-major), vr_math.c */
 void vr_mat_identity(float m[16]);

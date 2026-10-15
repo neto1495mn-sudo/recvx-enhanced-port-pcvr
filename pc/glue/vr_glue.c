@@ -50,8 +50,6 @@ extern int g_vr_danger_fx;    /* gs_gl.c, ini vr_danger_fx */
 int g_vr_hit_tilt = 5;       /* ini vr_hit_tilt: the view tilts this many degrees away from a hit; 0 = off */
 int g_vr_left_mirror = 1;    /* ini vr_left_mirror: the left hand without a weapon holds its controller as the right does, mirrored (1/2/3: the bone axis mirrored x/y/z; 0 = the game's own pose) */
 int g_vr_dmg_head = 130, g_vr_dmg_body = 100, g_vr_dmg_arm = 75, g_vr_dmg_leg = 75;   /* ini vr_dmg_*: damage by the body part hit (zombies), percent */
-int g_vr_prompts = 1;        /* ini vr_prompts: an "A" over doors, items and whatever the action button can use, when near */
-int g_vr_prompt_dist = 250;  /* ini vr_prompt_dist: how near (cm) */
 int g_vr_holster = 1;        /* ini vr_holster: the ammo in the boxes, shown at the belt */
 int g_vr_sight = 1;          /* ini vr_sight: a small white ring where the aimed gun's shot would hit */
 int g_vr_recoil = 1;         /* ini vr_recoil: the weapon kicks in the hand at each shot */
@@ -192,7 +190,6 @@ static int mk_n;
 static float mk_pt[12][3];
 static int mk_kind[12], mk_val[12];
 static int knife_equipped(void);
-static int vr_eye_world(float out[3]);
 
 /* The ammo in the boxes for the gun in hand: the inventory items the game would reload it
    from (as bhSearchBullet: ammo items whose combination list names the weapon), summed;
@@ -248,50 +245,6 @@ static void holster_update(const float Wg[16], const VrPose* h)
     mk_add(VRMK_NUMBER, pw, n > 999 ? 999 : n);
 }
 
-/* "A" over what the action button can use near the player: the game's action areas (the ones
-   bhCheckExmAtari tests: doors, items, things to examine or push) on the player's floor within
-   vr_prompt_dist, the nearest few, not behind a wall from the eyes */
-static void prompts_update(void)
-{
-    int etc_n, cnt = 0;
-    float lim = g_vr_prompt_dist / 100.0f * (g_vr_scale / 10.0f), eye[3];
-    struct { float d, p[3]; } best[6];
-    if (!g_vr_prompts || !plp || !rom || !vr_eye_world(eye)) return;
-    etc_n = rom->etc_n + sys->metc_n;
-    for (int i = 0; i < etc_n; i++) {
-        ATR_WORK* exp = i < rom->etc_n ? &rom->etcp[i] : &sys->metcp[i - rom->etc_n];
-        float cx, cz, nx, nz, d, top, y, p[3];
-        if (!(exp->flg & 0x1) || exp->type > 4 || exp->flr_no != plp->flr_no) continue;
-        nx = plp->px < exp->px ? exp->px : plp->px > exp->px + exp->w ? exp->px + exp->w : plp->px;   /* nearest point of the area */
-        nz = plp->pz < exp->pz ? exp->pz : plp->pz > exp->pz + exp->d ? exp->pz + exp->d : plp->pz;
-        d = sqrtf((nx - plp->px) * (nx - plp->px) + (nz - plp->pz) * (nz - plp->pz));
-        if (d > lim) continue;
-        cx = exp->px + exp->w * 0.5f; cz = exp->pz + exp->d * 0.5f;
-        top = exp->py + (exp->h > 0 ? exp->h : 0);
-        y = top + 1.5f;
-        if (y < plp->py + 4.0f) y = plp->py + 4.0f;
-        if (y > plp->py + 15.0f) y = plp->py + 15.0f;
-        p[0] = cx; p[1] = y; p[2] = cz;
-        {   /* not through a wall */
-            NJS_LINE line;
-            NJS_POINT3 apos = sys->apos;
-            ATR_WORK* ahtp = sys->ahtp;
-            float len, L;
-            line.px = eye[0]; line.py = eye[1]; line.pz = eye[2];
-            line.vx = p[0] - eye[0]; line.vy = p[1] - eye[1]; line.vz = p[2] - eye[2];
-            L = sqrtf(line.vx * line.vx + line.vy * line.vy + line.vz * line.vz);
-            if (bhCheckL2Wall(&line, 0x400, &len) && len < L - 2.0f) { sys->apos = apos; sys->ahtp = ahtp; continue; }
-            sys->apos = apos; sys->ahtp = ahtp;
-        }
-        if (cnt < 6) { best[cnt].d = d; memcpy(best[cnt].p, p, sizeof(p)); cnt++; }
-        else {
-            int w = 0;
-            for (int k = 1; k < 6; k++) if (best[k].d > best[w].d) w = k;
-            if (d < best[w].d) { best[w].d = d; memcpy(best[w].p, p, sizeof(p)); }
-        }
-    }
-    for (int k = 0; k < cnt; k++) mk_add(VRMK_BUTTON, best[k].p, 0);
-}
 
 /* end of tps_camera(), the third-person camera already in `cam`: replace it with the head's */
 void vr_camera(void)
@@ -358,7 +311,6 @@ void vr_camera(void)
     cam.ln = 0;
     cam.pers = (int)(g_vr_fov * (65536.0f / 360.0f));
     tps_vr_view(TO_ANGLE(ax[0]), TO_ANGLE(ax[1]));   /* walking and head aim relative to where the head looks */
-    prompts_update();
     holster_update(Wg, &h);
     vr_frame = 1;
     vr_active = 1;
@@ -373,7 +325,6 @@ void vr_camera(void)
 
 int vr_on(void) { return vr_active && xr_stereo_ready(); }
 
-static int vr_eye_world(float out[3]) { out[0] = cam.px; out[1] = cam.py; out[2] = cam.pz; return 1; }   /* set by vr_camera before use */
 
 /* in play: the VR camera ran in the last moments - in menus, the inventory, the map and the
    title it does not run (tps_pad, pad.c) */
@@ -658,8 +609,8 @@ static void vr_slash(BH_PWORK* p, const VrPose* hp, const float* H)
     }
 }
 
-/* VR markers handed to the renderer with the frame (VrView.mk*): the aiming dots, the "A"
-   over what the action button can use, the holster's ammo count. Filled during the game frame,
+/* VR markers handed to the renderer with the frame (VrView.mk*): the aiming dots and the
+   holster's ammo count. Filled during the game frame,
    handed over and cleared by vr_after_draw. */
 static void mk_add(int kind, const float p[3], int val)
 {

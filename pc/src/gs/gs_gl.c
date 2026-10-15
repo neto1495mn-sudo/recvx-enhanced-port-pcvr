@@ -1930,8 +1930,7 @@ static const char* vig_fs =
     "void main(){ float r = length(v_t); float a = smoothstep(0.45, 1.25, r) * u_amt; o = vec4(0.75, 0.0, 0.0, a); }\n";
 
 /* VR markers (VrView.mk*, vr_glue.c) over each eye: the aiming dot (a small white dot,
-   vr_sight_size hundredths of a degree across), the "A" over what the action button can use
-   (8 cm across where it stands) and the holster's ammo count (6 cm high digits on a dark
+   vr_sight_size hundredths of a degree across) and the holster's ammo count (6 cm high digits on a dark
    rounded plate). Drawn after the eye's picture, facing the eye. */
 int g_vr_sight_size = 30;
 static GLuint mk_prog;
@@ -1951,25 +1950,12 @@ static const char* mk_fs =
     "uniform int u_kind; uniform int u_val; uniform float u_aspect;\n"
     "const int F[70] = int[70](14,17,19,21,25,17,14, 4,12,4,4,4,4,14, 14,17,1,2,4,8,31, 31,2,4,2,1,17,14, 2,6,10,18,31,2,2,\n"
     "                          31,16,30,1,1,17,14, 6,8,16,30,17,17,14, 31,1,2,4,8,8,8, 14,17,17,14,17,17,14, 14,17,17,15,1,2,12);\n"
-    "float seg(vec2 p, vec2 a, vec2 b){ vec2 pa = p - a, ba = b - a; float h = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0); return length(pa - ba * h); }\n"
     "void main(){\n"
     "  float aa;\n"
     "  if (u_kind == 0) {\n"   /* the dot */
     "    float r = length(v_c); aa = fwidth(r);\n"
     "    float a = 1.0 - smoothstep(1.0 - aa * 1.5, 1.0, r);\n"
     "    if (a <= 0.0) discard; o = vec4(1.0, 1.0, 1.0, a); return;\n"
-    "  }\n"
-    "  if (u_kind == 1) {\n"   /* the A button: a dark disc, a thin white rim, a white A */
-    "    float r = length(v_c); aa = fwidth(r);\n"
-    "    float disc = 1.0 - smoothstep(0.95 - aa, 0.95 + aa, r);\n"
-    "    float rim = smoothstep(0.80 - aa, 0.80 + aa, r) * disc;\n"
-    "    vec2 p = v_c;\n"   /* y up */
-    "    float d = min(min(seg(p, vec2(-0.34, -0.45), vec2(0.0, 0.47)), seg(p, vec2(0.34, -0.45), vec2(0.0, 0.47))), seg(p, vec2(-0.19, -0.10), vec2(0.19, -0.10)));\n"
-    "    float glyph = 1.0 - smoothstep(0.075 - aa, 0.075 + aa, d);\n"
-    "    float w = max(rim, glyph * disc);\n"
-    "    float a = max(disc * 0.55, w * 0.95);\n"
-    "    if (a <= 0.0) discard;\n"
-    "    o = vec4(mix(vec3(0.08, 0.07, 0.06), vec3(1.0, 0.97, 0.88), clamp(w / max(a, 1e-3) * min(w * 1.2, 1.0), 0.0, 1.0)), a); return;\n"
     "  }\n"
     /* the number: n digits of 5x7 dots in cells of 6x9, on a plate of n*6+2 x 11 */
     "  int n = u_val >= 100 ? 3 : u_val >= 10 ? 2 : 1;\n"
@@ -2020,7 +2006,6 @@ static void draw_markers(const VrView* v, const float M[16], const VrEye* E, int
         nx = (tx - E->l) / (E->r - E->l) * 2.0f - 1.0f;
         ny = (ty - E->d) / (E->u - E->d) * 2.0f - 1.0f;
         if (kind == 0) { ang = tanf(g_vr_sight_size / 100.0f * (3.14159265f / 360.0f)); hx = hy = ang; }
-        else if (kind == 1) { hx = hy = 0.04f / e[2]; }                         /* 8 cm across */
         else {
             int n = v->mk_val[i] >= 100 ? 3 : v->mk_val[i] >= 10 ? 2 : 1;
             hy = 0.035f / e[2];                                                 /* the plate 7 cm high */
