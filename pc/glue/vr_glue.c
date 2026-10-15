@@ -630,12 +630,16 @@ int vr_shot_wakes(BH_PWORK* pp, GA_WORK* gap)
     if (!vr_on() || !g_vr_wake_shots || !player_shot(gap) || !pp || (pp->id != 1 && pp->id != 26)) return 0;
     /* only one still lying asleep (its Move mode, idle): not one falling, dying or getting up,
        which the game keeps unhittable on purpose (shot then, it came back broken and undying) */
-    if (pp->mode0 != 1 || pp->mode1 != 0 || pp->hp <= 0) return 0;
+    if (pp->mode0 != 1 || pp->mode1 != 0 || pp->hp <= 0) {
+        static int nlog;   /* (diagnosis: which unhittable zombies are shot at, and in what state) */
+        if (nlog++ < 60) vr_log("vr: shot at an unhittable zombie, left as is (enemy %d, type %d, mode %d/%d/%d, hp %d, flg %x)\n", (int)(pp - ene), pp->type, pp->mode0, pp->mode1, pp->mode2, pp->hp, pp->flg);
+        return 0;
+    }
     dx = pp->px - plp->px; dz = pp->pz - plp->pz;
     if (dx * dx + dz * dz < 30.0f * 30.0f * (g_vr_scale / 100.0f) * (g_vr_scale / 100.0f)) return 0;
     {
         static int nlog;
-        if (nlog++ < 100) vr_log("vr: shot at a sleeping zombie (enemy %d, flg %x, stflg %x, mode %d/%d/%d)\n", (int)(pp - ene), pp->flg, pp->stflg, pp->mode0, pp->mode1, pp->mode2);
+        if (nlog++ < 100) vr_log("vr: shot at a sleeping zombie (enemy %d, type %d, flg %x, stflg %x, mode %d/%d/%d, hp %d)\n", (int)(pp - ene), pp->type, pp->flg, pp->stflg, pp->mode0, pp->mode1, pp->mode2, pp->hp);
     }
     return 1;
 }

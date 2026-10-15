@@ -145,7 +145,8 @@ void profile_thread(char tag)
 
 void profile_start(void)
 {
-    const char* path = getenv("RECVX_PROFILE");
+    extern const char* SDL_getenv(const char*);
+    const char* path = SDL_getenv("RECVX_PROFILE");   /* (set with SDL_setenv_unsafe: not in the CRT's getenv on Windows) */
     IMAGE_DOS_HEADER* dos;
     IMAGE_NT_HEADERS* nt;
     if (!path || !(out = fopen(path, "w"))) return;
