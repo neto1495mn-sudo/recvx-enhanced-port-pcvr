@@ -34,6 +34,18 @@ int    xr_head_pose(VrPose* out);
    (local -> recentred); vr_glue.c folds it into the frame's W */
 void   xr_recenter_matrix(float m[16]);
 
+/* Touch controllers (any thread): the latest state, read each headset frame. Buttons: */
+enum { VRB_A = 1, VRB_B = 2, VRB_X = 4, VRB_Y = 8, VRB_MENU = 16, VRB_LSTICK = 32, VRB_RSTICK = 64 };
+typedef struct {
+    unsigned buttons;
+    float lx, ly, rx, ry;          /* thumbsticks, -1..1 (y up) */
+    float ltrig, rtrig, lgrip, rgrip;
+    int   aim_valid;               /* the right hand's aim pose is tracked */
+    VrPose aim;                    /* right hand aim pose (forward = -z), recentred like xr_head_pose */
+} VrInput;
+int    xr_input(VrInput* out);     /* 0 if there is no controller input (no session / not focused) */
+unsigned xr_recenter_gen(void);    /* changes at every recentring */
+
 /* render thread, one headset frame per present:
    xr_frame_begin: -1 no frame (not running), 0 frame begun but nothing to draw, 1 draw */
 int          xr_frame_begin(void);

@@ -78,6 +78,12 @@ static void deactivate(void)
 
 static int aiming(void) { return tps_cam_active && plp->mode0 == 1 && plp->mode1 == 1; }
 
+/* VR (vr_glue.c): the head's heading/pitch as this camera's, walking relative to it (camera A) */
+int vr_on(void);
+int vr_hand_ray(NJS_POINT3* o, NJS_POINT3* d);
+void tps_vr_view(float y, float p) { yaw = wrap(y); pitch = p; }
+#define FREE_CAM (g_tps.free_cam || vr_on())
+
 static float cur_dist, cur_fov;   /* eased towards the walk/aim values */
 
 /* b moved towards a so that it stays 1.5 units in front of the first wall between them (the
@@ -448,7 +454,7 @@ unsigned int tps_pad(unsigned int pad)
     k = tps_input_keys();
     pad_steer = (pad & 0xF) != 0;
     move_keys = 0;
-    if (g_tps.free_cam && tps_cam_active && plp && plp->mode1 == 0 && !(k & TPS_K_QUICKTURN)) {
+    if (FREE_CAM && tps_cam_active && plp && plp->mode1 == 0 && !(k & TPS_K_QUICKTURN)) {
         /* camera A: any direction walks forward, tps_player turns the character towards it */
         move_keys = k & (TPS_K_FWD | TPS_K_BACK | TPS_K_LEFT | TPS_K_RIGHT);
         k &= ~move_keys;
@@ -502,6 +508,7 @@ static void aim_at_crosshair(void)
     int ay;
 
     view(&eye, &dir, &sh);
+    vr_hand_ray(&sh, &dir);   /* VR: the right controller's ray (else the head's, through yaw/pitch) */
     line.px = sh.x; line.py = sh.y; line.pz = sh.z;
     line.vx = dir.x * dist; line.vy = dir.y * dist; line.vz = dir.z * dist;
     apos = sys->apos; ahtp = sys->ahtp;
@@ -667,7 +674,7 @@ void tps_player(void)
         aim_at_crosshair();
         return;
     }
-    if (g_tps.free_cam) {
+    if (FREE_CAM) {
         static int was_aiming;
         int aim = plp->mode1 == 1;
         /* game auto-aim: raised towards the camera unless locked on, then as B */

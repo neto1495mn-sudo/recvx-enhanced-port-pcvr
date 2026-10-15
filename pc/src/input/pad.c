@@ -128,6 +128,7 @@ static void build_report(unsigned char* r)
         }
     }
 
+    { extern int vr_pad_start(void); if (input_enabled && vr_pad_start()) b |= PAD_START; }   /* VR: left menu button */
     b |= scripted_buttons();
     {   /* RECVX_PAD_TRACE=1: log the DS2 buttons when they change */
         static int trace = -1; static uint32_t last;
@@ -153,6 +154,7 @@ int pad_quick_knife(void)
 {
     const bool* k = bind_keys();
     if (!input_enabled || g_lobby_io.text_on) return 0;
+    { extern int vr_quick_knife(void); if (vr_quick_knife()) return 1; }   /* VR: left grip */
     return bind_held(B_QUICKKNIFE, BIND_KB, k, tps_mouse_buttons()) || (gamepad && bind_held(B_QUICKKNIFE, BIND_PAD, k, 0));
 }
 

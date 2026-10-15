@@ -85,6 +85,7 @@ unsigned tps_input_keys(void)
         if (bind_held(map[i].row, BIND_KB, k, b)) r |= map[i].bit;
     qt = bind_quickturn(1, bind_held(B_TPS_QUICKTURN, BIND_KB, k, b));
     if (qt) r |= TPS_K_BACK | TPS_K_QUICKTURN | (qt > 1 ? TPS_K_RUN : 0);
+    { extern unsigned vr_tps_keys(void); r |= vr_tps_keys(); }   /* VR Touch controllers (vr_glue.c) */
     return r;
 }
 

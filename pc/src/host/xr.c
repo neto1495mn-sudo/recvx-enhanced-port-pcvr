@@ -30,6 +30,22 @@ static VrPose head_rec;           /* latest head pose, recentred */
 static int head_valid;
 static float rec_yaw, rec_ox, rec_oy, rec_oz;
 static SDL_AtomicInt stereo_ready;
+static VrInput input_now;         /* latest controller state */
+static int input_valid;
+static SDL_AtomicInt rec_gen;
+
+unsigned xr_recenter_gen(void) { return (unsigned)SDL_GetAtomicInt(&rec_gen); }
+
+int xr_input(VrInput* out)
+{
+    int ok;
+    SDL_LockSpinlock(&pose_lock);
+    ok = input_valid;
+    if (ok) *out = input_now;
+    SDL_UnlockSpinlock(&pose_lock);
+    if (!ok) memset(out, 0, sizeof(*out));
+    return ok;
+}
 
 int xr_stereo_ready(void) { return SDL_GetAtomicInt(&stereo_ready); }
 
@@ -122,6 +138,12 @@ static int eyes_valid;
 static XrPosef screen_pose;     /* the cinema quad's pose in LOCAL space */
 static int need_center = 1;     /* recentre on the next frame */
 
+/* controller actions (Touch profile) */
+static XrActionSet aset = XR_NULL_HANDLE;
+static XrAction a_aim, a_lstick, a_rstick, a_ltrig, a_rtrig, a_lgrip, a_rgrip, a_a, a_b, a_x, a_y, a_menu, a_lclick, a_rclick;
+static XrSpace aim_space = XR_NULL_HANDLE;
+static XrPath p_left, p_right;
+
 static int xr_ok(XrResult r, const char* what)
 {
     if (XR_SUCCEEDED(r)) return 1;
@@ -200,6 +222,134 @@ static int pick_format(void)
     return chain_fmt != 0;
 }
 
+
+/* ---- controllers ---- */
+
+static XrAction mk_action(const char* name, const char* loc, XrActionType type)
+{
+    XrActionCreateInfo ci = { XR_TYPE_ACTION_CREATE_INFO };
+    XrPath subs[2] = { p_left, p_right };
+    XrAction a = XR_NULL_HANDLE;
+    strcpy(ci.actionName, name);
+    strcpy(ci.localizedActionName, loc);
+    ci.actionType = type;
+    ci.countSubactionPaths = 0;
+    (void)subs;
+    xr_ok(xrCreateAction(aset, &ci, &a), "xrCreateAction");
+    return a;
+}
+
+static XrPath path_of(const char* s) { XrPath p = XR_NULL_PATH; xrStringToPath(inst, s, &p); return p; }
+
+/* Touch controllers: left stick moves, right stick turns, triggers/grips/buttons as in the README */
+static void make_actions(void)
+{
+    XrActionSetCreateInfo si = { XR_TYPE_ACTION_SET_CREATE_INFO };
+    XrInteractionProfileSuggestedBinding sb = { XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING };
+    XrActionSuggestedBinding b[16];
+    XrSessionActionSetsAttachInfo ai = { XR_TYPE_SESSION_ACTION_SETS_ATTACH_INFO };
+    XrActionSpaceCreateInfo sci = { XR_TYPE_ACTION_SPACE_CREATE_INFO };
+    int n = 0;
+    p_left = path_of("/user/hand/left"); p_right = path_of("/user/hand/right");
+    strcpy(si.actionSetName, "gameplay");
+    strcpy(si.localizedActionSetName, "Gameplay");
+    if (!xr_ok(xrCreateActionSet(inst, &si, &aset), "xrCreateActionSet")) return;
+    a_aim = mk_action("aim", "Aim", XR_ACTION_TYPE_POSE_INPUT);
+    a_lstick = mk_action("move", "Move", XR_ACTION_TYPE_VECTOR2F_INPUT);
+    a_rstick = mk_action("turn", "Turn", XR_ACTION_TYPE_VECTOR2F_INPUT);
+    a_ltrig = mk_action("run", "Run", XR_ACTION_TYPE_FLOAT_INPUT);
+    a_rtrig = mk_action("fire", "Fire", XR_ACTION_TYPE_FLOAT_INPUT);
+    a_lgrip = mk_action("knife", "Knife", XR_ACTION_TYPE_FLOAT_INPUT);
+    a_rgrip = mk_action("ready", "Ready weapon", XR_ACTION_TYPE_FLOAT_INPUT);
+    a_a = mk_action("action", "Action", XR_ACTION_TYPE_BOOLEAN_INPUT);
+    a_b = mk_action("cancel", "Cancel", XR_ACTION_TYPE_BOOLEAN_INPUT);
+    a_x = mk_action("map", "Map", XR_ACTION_TYPE_BOOLEAN_INPUT);
+    a_y = mk_action("inventory", "Inventory", XR_ACTION_TYPE_BOOLEAN_INPUT);
+    a_menu = mk_action("pause", "Pause", XR_ACTION_TYPE_BOOLEAN_INPUT);
+    a_lclick = mk_action("lclick", "Left stick click", XR_ACTION_TYPE_BOOLEAN_INPUT);
+    a_rclick = mk_action("rclick", "Right stick click", XR_ACTION_TYPE_BOOLEAN_INPUT);
+#define BIND(act, str) do { b[n].action = act; b[n].binding = path_of(str); n++; } while (0)
+    BIND(a_aim, "/user/hand/right/input/aim/pose");
+    BIND(a_lstick, "/user/hand/left/input/thumbstick");
+    BIND(a_rstick, "/user/hand/right/input/thumbstick");
+    BIND(a_ltrig, "/user/hand/left/input/trigger/value");
+    BIND(a_rtrig, "/user/hand/right/input/trigger/value");
+    BIND(a_lgrip, "/user/hand/left/input/squeeze/value");
+    BIND(a_rgrip, "/user/hand/right/input/squeeze/value");
+    BIND(a_a, "/user/hand/right/input/a/click");
+    BIND(a_b, "/user/hand/right/input/b/click");
+    BIND(a_x, "/user/hand/left/input/x/click");
+    BIND(a_y, "/user/hand/left/input/y/click");
+    BIND(a_menu, "/user/hand/left/input/menu/click");
+    BIND(a_lclick, "/user/hand/left/input/thumbstick/click");
+    BIND(a_rclick, "/user/hand/right/input/thumbstick/click");
+#undef BIND
+    sb.interactionProfile = path_of("/interaction_profiles/oculus/touch_controller");
+    sb.suggestedBindings = b;
+    sb.countSuggestedBindings = (uint32_t)n;
+    xr_ok(xrSuggestInteractionProfileBindings(inst, &sb), "xrSuggestInteractionProfileBindings(touch)");
+    ai.countActionSets = 1;
+    ai.actionSets = &aset;
+    xr_ok(xrAttachSessionActionSets(sess, &ai), "xrAttachSessionActionSets");
+    sci.action = a_aim;
+    sci.poseInActionSpace.orientation.w = 1.0f;
+    xr_ok(xrCreateActionSpace(sess, &sci, &aim_space), "xrCreateActionSpace(aim)");
+    host_log("vr: controllers: Touch bindings suggested\n");
+}
+
+static float get_f(XrAction a) { XrActionStateGetInfo gi = { XR_TYPE_ACTION_STATE_GET_INFO }; XrActionStateFloat st = { XR_TYPE_ACTION_STATE_FLOAT }; gi.action = a; return XR_SUCCEEDED(xrGetActionStateFloat(sess, &gi, &st)) && st.isActive ? st.currentState : 0.0f; }
+static int get_b(XrAction a) { XrActionStateGetInfo gi = { XR_TYPE_ACTION_STATE_GET_INFO }; XrActionStateBoolean st = { XR_TYPE_ACTION_STATE_BOOLEAN }; gi.action = a; return XR_SUCCEEDED(xrGetActionStateBoolean(sess, &gi, &st)) && st.isActive && st.currentState; }
+static void get_v(XrAction a, float* x, float* y) { XrActionStateGetInfo gi = { XR_TYPE_ACTION_STATE_GET_INFO }; XrActionStateVector2f st = { XR_TYPE_ACTION_STATE_VECTOR2F }; gi.action = a; *x = *y = 0; if (XR_SUCCEEDED(xrGetActionStateVector2f(sess, &gi, &st)) && st.isActive) { *x = st.currentState.x; *y = st.currentState.y; } }
+
+static void to_recentred(const XrPosef* in, VrPose* p)
+{
+    float m[16], c, s;
+    const XrQuaternionf* q = &in->orientation;
+    xr_recenter_matrix(m);
+    p->px = m[0] * in->position.x + m[4] * in->position.y + m[8] * in->position.z + m[12];
+    p->py = m[1] * in->position.x + m[5] * in->position.y + m[9] * in->position.z + m[13];
+    p->pz = m[2] * in->position.x + m[6] * in->position.y + m[10] * in->position.z + m[14];
+    c = cosf(-rec_yaw * 0.5f); s = sinf(-rec_yaw * 0.5f);   /* Ry(-yaw0) * q */
+    p->qw = c * q->w - s * q->y;
+    p->qx = c * q->x + s * q->z;
+    p->qy = c * q->y + s * q->w;
+    p->qz = c * q->z - s * q->x;
+}
+
+/* the controllers now (session focused) */
+static void read_actions(XrTime t)
+{
+    XrActiveActionSet as = { aset, XR_NULL_PATH };
+    XrActionsSyncInfo si = { XR_TYPE_ACTIONS_SYNC_INFO };
+    VrInput in;
+    if (!aset) return;
+    si.countActiveActionSets = 1;
+    si.activeActionSets = &as;
+    if (state != XR_SESSION_STATE_FOCUSED || !XR_SUCCEEDED(xrSyncActions(sess, &si))) {
+        SDL_LockSpinlock(&pose_lock); input_valid = 0; SDL_UnlockSpinlock(&pose_lock);
+        return;
+    }
+    memset(&in, 0, sizeof(in));
+    get_v(a_lstick, &in.lx, &in.ly);
+    get_v(a_rstick, &in.rx, &in.ry);
+    in.ltrig = get_f(a_ltrig); in.rtrig = get_f(a_rtrig);
+    in.lgrip = get_f(a_lgrip); in.rgrip = get_f(a_rgrip);
+    in.buttons = (get_b(a_a) ? VRB_A : 0) | (get_b(a_b) ? VRB_B : 0) | (get_b(a_x) ? VRB_X : 0) | (get_b(a_y) ? VRB_Y : 0) |
+                 (get_b(a_menu) ? VRB_MENU : 0) | (get_b(a_lclick) ? VRB_LSTICK : 0) | (get_b(a_rclick) ? VRB_RSTICK : 0);
+    if (aim_space) {
+        XrSpaceLocation loc = { XR_TYPE_SPACE_LOCATION };
+        if (XR_SUCCEEDED(xrLocateSpace(aim_space, local_space, t, &loc)) &&
+            (loc.locationFlags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT) && (loc.locationFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT)) {
+            to_recentred(&loc.pose, &in.aim);
+            in.aim_valid = 1;
+        }
+    }
+    SDL_LockSpinlock(&pose_lock);
+    input_now = in;
+    input_valid = 1;
+    SDL_UnlockSpinlock(&pose_lock);
+}
+
 int xr_init(void)
 {
     static const char* exts[] = { XR_KHR_OPENGL_ENABLE_EXTENSION_NAME };
@@ -262,6 +412,7 @@ int xr_init(void)
     if (!xr_ok(xrCreateReferenceSpace(sess, &rci, &view_space), "xrCreateReferenceSpace(VIEW)")) goto fail;
 
     if (!pick_format()) goto fail;
+    make_actions();   /* before xrBeginSession (poll_events) */
     glGenFramebuffers(1, &blit_fbo);
 
     screen_pose.orientation.w = 1.0f;
@@ -343,6 +494,7 @@ static void update_head(XrTime t)
         rec_ox = loc.pose.position.x; rec_oy = loc.pose.position.y; rec_oz = loc.pose.position.z;
         SDL_UnlockSpinlock(&pose_lock);
         need_center = 0;
+        SDL_AddAtomicInt(&rec_gen, 1);
         host_log("vr: recentred (yaw %.1f deg)\n", yaw * 57.29578f);
     }
     {
@@ -383,6 +535,7 @@ int xr_frame_begin(void)
     SDL_SetAtomicInt(&stereo_ready, g_vr_stereo && (state == XR_SESSION_STATE_VISIBLE || state == XR_SESSION_STATE_FOCUSED));
     if (!fs.shouldRender) return 0;
     update_head(fs.predictedDisplayTime);
+    read_actions(fs.predictedDisplayTime);
     {
         XrViewLocateInfo li = { XR_TYPE_VIEW_LOCATE_INFO };
         XrViewState vs = { XR_TYPE_VIEW_STATE };
@@ -490,6 +643,11 @@ void xr_frame_end_quad(int w, int h)
 void xr_shutdown(void)
 {
     SDL_SetAtomicInt(&stereo_ready, 0);
+    SDL_LockSpinlock(&pose_lock); input_valid = 0; SDL_UnlockSpinlock(&pose_lock);
+    if (aim_space) xrDestroySpace(aim_space);
+    aim_space = XR_NULL_HANDLE;
+    if (aset) xrDestroyActionSet(aset);
+    aset = XR_NULL_HANDLE;
     chain_destroy(&quad_chain);
     chain_destroy(&eye_chain[0]);
     chain_destroy(&eye_chain[1]);
