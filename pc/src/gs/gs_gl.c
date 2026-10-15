@@ -1467,6 +1467,15 @@ void gs_draw_primitive(int type, const GsVertex* v, int count, const GsContext* 
         prim_big = (x1 - x0) > 320.0f || (y1 - y0) > 240.0f;
         prim_tall = (y1 - y0) > 240.0f;
     }
+    {   /* VR (as native_glue.c): a polygon with corners both in the world (GS depth) and not - the
+           others behind or too close to the camera - stretched between the world and the panel: left out */
+        extern int gs_raw_vr, gs_vu1_vr, gs_raw_ui, g_vr_fx_fix;
+        if (vr_u.on && g_vr_fx_fix && !gs_raw_vr && !gs_vu1_vr && !gs_raw_ui && !prim_big && count > 1) {
+            int fx = 0, other = 0;
+            for (int i = 0; i < count; i++) { if (v[i].z > 100.0f) fx++; else other++; }
+            if (fx && other) return;
+        }
+    }
     int fst = (prim >> 8) & 1;
     batch_for(type, v, count, c, prim);
     if (type == 6) { /* sprite: two corners, attributes from the 2nd vertex */

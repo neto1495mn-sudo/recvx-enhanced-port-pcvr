@@ -193,6 +193,19 @@ uint32_t pc_native_prim(unsigned int prim, const unsigned int* dp, int n, int cl
     }
     if (!clip_3d_on && n > 0 && vr_big(v[0].x, v[0].y, v, n, sizeof(NativeVertex)))   /* a screen layer: stays 2D */
         for (int i = 0; i < n; i++) v[i].cull &= (uint8_t)~0x40;
+    else if (!clip_3d_on && n > 0 && g_vr_fx_fix) {
+        /* VR: one effect polygon with some corners in the world (0x40) and some not - those came out
+           at depth 0, behind or too close to the camera, their screen positions meaningless. Split
+           between the world and the head-locked panel it stretched (blood on the floor when the head
+           turned) or floated in a corner: in VR it is left out, as the GS's clipping hid it */
+        int fx = 0, other = 0;
+        for (int i = 0; i < n; i++) { if (v[i].cull & 0x40) fx++; else other++; }
+        if (fx && other) {
+            extern int vr_on(void);
+            if (vr_on()) for (int i = 1; i < n; i++) { v[i].x = v[0].x; v[i].y = v[0].y; }   /* (no area: not drawn) */
+            for (int i = 0; i < n; i++) v[i].cull |= 0x40;
+        }
+    }
     if (!clip_3d_on && n > 0) {   /* tall (more than half the screen top to bottom): a screen layer VR keeps over the whole view (0x20); wide and low goes on the panel */
         float y0 = v[0].y, y1 = v[0].y;
         for (int i = 1; i < n; i++) { y0 = fminf(y0, v[i].y); y1 = fmaxf(y1, v[i].y); }
