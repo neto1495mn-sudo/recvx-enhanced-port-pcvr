@@ -44,6 +44,8 @@ typedef struct {
     float ltrig, rtrig, lgrip, rgrip;
     int   aim_valid;               /* the right hand's aim pose is tracked */
     VrPose aim;                    /* right hand aim pose (forward = -z), recentred like xr_head_pose */
+    int   aiml_valid;              /* the left hand's aim pose is tracked */
+    VrPose aiml;                   /* left hand aim pose */
 } VrInput;
 int    xr_input(VrInput* out);     /* 0 if there is no controller input (no session / not focused) */
 unsigned xr_recenter_gen(void);    /* changes at every recentring */

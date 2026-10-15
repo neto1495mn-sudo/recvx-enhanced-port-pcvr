@@ -143,8 +143,8 @@ static int need_center = 1;     /* recentre on the next frame */
 
 /* controller actions (Touch profile) */
 static XrActionSet aset = XR_NULL_HANDLE;
-static XrAction a_aim, a_lstick, a_rstick, a_ltrig, a_rtrig, a_lgrip, a_rgrip, a_a, a_b, a_x, a_y, a_menu, a_lclick, a_rclick;
-static XrSpace aim_space = XR_NULL_HANDLE;
+static XrAction a_aiml, a_aim, a_lstick, a_rstick, a_ltrig, a_rtrig, a_lgrip, a_rgrip, a_a, a_b, a_x, a_y, a_menu, a_lclick, a_rclick;
+static XrSpace aim_space = XR_NULL_HANDLE, aiml_space = XR_NULL_HANDLE;
 static XrPath p_left, p_right;
 
 static int xr_ok(XrResult r, const char* what)
@@ -258,6 +258,7 @@ static void make_actions(void)
     strcpy(si.localizedActionSetName, "Gameplay");
     if (!xr_ok(xrCreateActionSet(inst, &si, &aset), "xrCreateActionSet")) return;
     a_aim = mk_action("aim", "Aim", XR_ACTION_TYPE_POSE_INPUT);
+    a_aiml = mk_action("aim_left", "Left hand", XR_ACTION_TYPE_POSE_INPUT);
     a_lstick = mk_action("move", "Move", XR_ACTION_TYPE_VECTOR2F_INPUT);
     a_rstick = mk_action("turn", "Turn", XR_ACTION_TYPE_VECTOR2F_INPUT);
     a_ltrig = mk_action("run", "Run", XR_ACTION_TYPE_FLOAT_INPUT);
@@ -273,6 +274,7 @@ static void make_actions(void)
     a_rclick = mk_action("rclick", "Right stick click", XR_ACTION_TYPE_BOOLEAN_INPUT);
 #define BIND(act, str) do { b[n].action = act; b[n].binding = path_of(str); n++; } while (0)
     BIND(a_aim, "/user/hand/right/input/aim/pose");
+    BIND(a_aiml, "/user/hand/left/input/aim/pose");
     BIND(a_lstick, "/user/hand/left/input/thumbstick");
     BIND(a_rstick, "/user/hand/right/input/thumbstick");
     BIND(a_ltrig, "/user/hand/left/input/trigger/value");
@@ -297,6 +299,8 @@ static void make_actions(void)
     sci.action = a_aim;
     sci.poseInActionSpace.orientation.w = 1.0f;
     xr_ok(xrCreateActionSpace(sess, &sci, &aim_space), "xrCreateActionSpace(aim)");
+    sci.action = a_aiml;
+    xr_ok(xrCreateActionSpace(sess, &sci, &aiml_space), "xrCreateActionSpace(aim_left)");
     host_log("vr: controllers: Touch bindings suggested\n");
 }
 
@@ -339,13 +343,19 @@ static void read_actions(XrTime t)
     in.lgrip = get_f(a_lgrip); in.rgrip = get_f(a_rgrip);
     in.buttons = (get_b(a_a) ? VRB_A : 0) | (get_b(a_b) ? VRB_B : 0) | (get_b(a_x) ? VRB_X : 0) | (get_b(a_y) ? VRB_Y : 0) |
                  (get_b(a_menu) ? VRB_MENU : 0) | (get_b(a_lclick) ? VRB_LSTICK : 0) | (get_b(a_rclick) ? VRB_RSTICK : 0);
-    if (aim_space) {
+    for (int hnd = 0; hnd < 2; hnd++) {
+        XrSpace sp = hnd ? aiml_space : aim_space;
         XrSpaceLocation loc = { XR_TYPE_SPACE_LOCATION };
-        if (XR_SUCCEEDED(xrLocateSpace(aim_space, local_space, t, &loc)) &&
+        if (sp && XR_SUCCEEDED(xrLocateSpace(sp, local_space, t, &loc)) &&
             (loc.locationFlags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT) && (loc.locationFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT)) {
-            to_recentred(&loc.pose, &in.aim);
-            in.aim_valid = 1;
+            to_recentred(&loc.pose, hnd ? &in.aiml : &in.aim);
+            if (hnd) in.aiml_valid = 1; else in.aim_valid = 1;
         }
+    }
+    {   /* diagnosis: log when a controller's pose comes and goes */
+        static int last = -1;
+        int now = in.aim_valid | (in.aiml_valid << 1);
+        if (now != last) { host_log("vr: controller poses: right %s, left %s\n", in.aim_valid ? "tracked" : "lost", in.aiml_valid ? "tracked" : "lost"); last = now; }
     }
     SDL_LockSpinlock(&pose_lock);
     input_now = in;
@@ -651,7 +661,8 @@ void xr_shutdown(void)
     SDL_SetAtomicInt(&stereo_ready, 0);
     SDL_LockSpinlock(&pose_lock); input_valid = 0; SDL_UnlockSpinlock(&pose_lock);
     if (aim_space) xrDestroySpace(aim_space);
-    aim_space = XR_NULL_HANDLE;
+    if (aiml_space) xrDestroySpace(aiml_space);
+    aim_space = aiml_space = XR_NULL_HANDLE;
     if (aset) xrDestroyActionSet(aset);
     aset = XR_NULL_HANDLE;
     chain_destroy(&quad_chain);

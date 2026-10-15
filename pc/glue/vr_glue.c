@@ -28,6 +28,8 @@
 #include "../src/gs/stream.h"
 #include <math.h>
 #include <string.h>
+#include <stdio.h>
+#include <stdarg.h>
 
 int g_vr_scale = 100;        /* ini vr_scale: game units per metre, in tenths (100 = 10 units/m: the character is ~17 tall) */
 int g_vr_eye_height = 155;   /* ini vr_eye_height: the camera's height above the player's feet, tenths of units */
@@ -188,59 +190,167 @@ static void xform(const float m[16], float x, float y, float z, float o[3])
     o[2] = m[2] * x + m[6] * y + m[10] * z + m[14];
 }
 
-/* The weapon hand (node 9: weapon, lighter, muzzle flash and the shot's origin hang on it)
-   follows the right controller. How the hand holds each weapon relative to the aim direction
-   is taken from the game's own aim pose (hand rotation relative to Ry(ay) Rx(wax)) whenever it
-   aims, and applied to the controller's orientation; the hand is put where the controller is,
-   never closer than vr_gun_min to the eyes. Before a weapon was first aimed, the game's pose
-   stays. tps_calc_model(), after the player's model is computed, before the linked objects. */
+/* Both hands follow the controllers, each on its own: node 9 (right hand: the weapon, the
+   muzzle flash and the shot's origin hang on it) the right controller, node 13 (left hand) the
+   left one. The hand objects the game links to these nodes (sys->obwp, drawn from owP[lkono])
+   follow with them. How a hand holds each weapon relative to the controller is taken from the
+   game's own pose: when it aims, the hand's rotation relative to the aim direction Ry(ay) Rx(wax)
+   (the gun pointing where the controller points); until the weapon was first aimed, relative to
+   the body Ry(ay). The hand is put where the controller is, never closer than vr_gun_min to the
+   eyes. The body is not turned by the hands (its facing is the head's, tps_glue.c).
+   tps_calc_model(), after the player's model is computed, before the linked objects. */
+static void vr_log(const char* fmt, ...);
+
+static int  hand_state[2] = { -1, -1 };   /* last logged: 0 following, 1 no controller pose, 2 no hand node */
+static float hand_pos[2][3];               /* where each hand was put this frame (world) */
+static int  hand_ok[2];                    /* ... and whether it was */
+
+static void hand_log(int side, int st, int wn)
+{
+    static const char* names[] = { "following the controller", "no controller pose (hand stays in the game's pose)", "model has no hand node" };
+    if (hand_state[side] == st) return;
+    hand_state[side] = st;
+    vr_log("vr: %s hand %s (weapon %d)\n", side ? "left" : "right", names[st], wn);
+}
+
+static void rows_from_angles(float A[9], float ya, float pa)   /* Ry(ya) Rx(pa), rows */
+{
+    float c1 = cosf(ya), s1 = sinf(ya), c2 = cosf(pa), s2 = sinf(pa);
+    A[0] = c1;  A[1] = s1 * s2; A[2] = s1 * c2;
+    A[3] = 0;   A[4] = c2;      A[5] = -s2;
+    A[6] = -s1; A[7] = c1 * s2; A[8] = c1 * c2;
+}
+
+static void learn(float out[9], const float A[9], const float* H)   /* out = A^T * Hrot (Hrot[r][c] = H[c * 4 + r]) */
+{
+    for (int i = 0; i < 3; i++)
+        for (int j = 0; j < 3; j++)
+            out[i * 3 + j] = A[0 * 3 + i] * H[j * 4 + 0] + A[1 * 3 + i] * H[j * 4 + 1] + A[2 * 3 + i] * H[j * 4 + 2];
+}
+
+static void log_hand_objects(void)
+{
+    static unsigned last;
+    unsigned sig = 0;
+    char buf[256];
+    int n = 0;
+    if (!sys || !sys->obwp || !rom) return;
+    buf[0] = 0;
+    for (int i = 0; i < rom->obj_n && i < 64; i++) {
+        O_WRK* o = &sys->obwp[i];
+        if (!(o->flg & 0x1) || !(o->flg & 0x80) || o->lkwkp != (unsigned char*)plp) continue;
+        sig = sig * 31 + o->id * 64 + o->lkono + 1;
+        if (n < 200) n += snprintf(buf + n, sizeof(buf) - n, " %d(id %d, node %d)", i, o->id, o->lkono);
+    }
+    if (sig != last) { last = sig; vr_log("vr: objects on the player:%s\n", buf[0] ? buf : " none"); }
+}
+
 void vr_hand(BH_PWORK* p)
 {
-    static float rrel[64][9];
-    static unsigned char rrel_ok[64];
-    float* H;
+    static float rrel[2][2][64][9];          /* [hand][0 aim grip, 1 body grip][weapon] */
+    static unsigned char rok[2][2][64];
+    static int hooked;
     VrInput in;
     VrPose h;
-    float Wg[16], P[3], E[3], A[9], C[9], ra[9], cy = cosf(vr_yaw), sy = sinf(vr_yaw);
-    int wn;
-    if (!vr_on() || !p || !p->mlwP || p->mlwP->obj_num <= 9) return;
-    H = p->mlwP->owP[9].mtx;
+    float Wg[16], E[3], A[9], cy = cosf(vr_yaw), sy = sinf(vr_yaw);
+    float ya, pa;
+    int wn, aiming, ctl;
+    hand_ok[0] = hand_ok[1] = 0;
+    if (!vr_on() || !p || !p->mlwP) return;
+    if (!hooked) { hooked = 1; vr_log("vr: hand hook running (player model %d nodes)\n", p->mlwP->obj_num); }
+    log_hand_objects();
     wn = p->wpnr_no & 63;
-    if (p->mode0 == 1 && p->mode1 == 1) {   /* aiming: learn the grip, rrel = A^T * Hrot */
-        float ya = (float)(short)p->ay * (3.14159265f / 32768.0f), pa = (float)(short)p->wax * (3.14159265f / 32768.0f);
-        float c1 = cosf(ya), s1 = sinf(ya), c2 = cosf(pa), s2 = sinf(pa);
-        /* A = Ry(ya) Rx(pa), rows */
-        A[0] = c1; A[1] = s1 * s2; A[2] = s1 * c2;
-        A[3] = 0;  A[4] = c2;      A[5] = -s2;
-        A[6] = -s1; A[7] = c1 * s2; A[8] = c1 * c2;
+    aiming = p->mode0 == 1 && p->mode1 == 1;
+    ya = (float)(short)p->ay * (3.14159265f / 32768.0f);
+    pa = (float)(short)p->wax * (3.14159265f / 32768.0f);
+    ctl = xr_input(&in) && xr_head_pose(&h);
+    if (ctl) { make_Wg(Wg); xform(Wg, h.px, h.py, h.pz, E); }
+    for (int side = 0; side < 2; side++) {
+        int node = side ? 13 : 9;
+        float* H;
+        const float* R;
+        float ra[9], C[9], P[3];
+        const VrPose* hp;
+        if (p->mlwP->obj_num <= node) { hand_log(side, 2, wn); continue; }
+        H = p->mlwP->owP[node].mtx;
+        if (aiming) { rows_from_angles(A, ya, pa); learn(rrel[side][0][wn], A, H); rok[side][0][wn] = 1; }
+        else if (!rok[side][1][wn]) { rows_from_angles(A, ya, 0); learn(rrel[side][1][wn], A, H); rok[side][1][wn] = 1; }
+        hp = side ? &in.aiml : &in.aim;
+        if (!ctl || !(side ? in.aiml_valid : in.aim_valid)) { hand_log(side, 1, wn); continue; }
+        R = rok[side][0][wn] ? rrel[side][0][wn] : rrel[side][1][wn];
+        quat_to_rows(ra, hp);
+        for (int j = 0; j < 3; j++) {   /* C = Ry(vr_yaw) * Rhand */
+            C[0 * 3 + j] = cy * ra[0 * 3 + j] + sy * ra[2 * 3 + j];
+            C[1 * 3 + j] = ra[1 * 3 + j];
+            C[2 * 3 + j] = -sy * ra[0 * 3 + j] + cy * ra[2 * 3 + j];
+        }
         for (int i = 0; i < 3; i++)
-            for (int j = 0; j < 3; j++)   /* Hrot[r][c] = H[c * 4 + r] */
-                rrel[wn][i * 3 + j] = A[0 * 3 + i] * H[j * 4 + 0] + A[1 * 3 + i] * H[j * 4 + 1] + A[2 * 3 + i] * H[j * 4 + 2];
-        rrel_ok[wn] = 1;
+            for (int j = 0; j < 3; j++)   /* Hrot = C * R, written back as columns */
+                H[j * 4 + i] = C[i * 3 + 0] * R[0 * 3 + j] + C[i * 3 + 1] * R[1 * 3 + j] + C[i * 3 + 2] * R[2 * 3 + j];
+        xform(Wg, hp->px, hp->py, hp->pz, P);
+        {   /* not into the face */
+            float d[3] = { P[0] - E[0], P[1] - E[1], P[2] - E[2] }, l = sqrtf(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+            float mn = g_vr_gun_min / 100.0f * (g_vr_scale / 10.0f);
+            if (l < mn) {
+                if (l < 1e-4f) { d[0] = -sy; d[1] = 0; d[2] = -cy; l = 1.0f; }   /* straight ahead */
+                for (int k = 0; k < 3; k++) P[k] = E[k] + d[k] / l * mn;
+            }
+        }
+        H[12] = P[0]; H[13] = P[1]; H[14] = P[2];
+        memcpy(hand_pos[side], P, sizeof(P));
+        hand_ok[side] = 1;
+        hand_log(side, 0, wn);
     }
-    if (!rrel_ok[wn] || !xr_input(&in) || !in.aim_valid || !xr_head_pose(&h)) return;
-    quat_to_rows(ra, &in.aim);
-    for (int j = 0; j < 3; j++) {   /* C = Ry(vr_yaw) * Raim */
-        C[0 * 3 + j] = cy * ra[0 * 3 + j] + sy * ra[2 * 3 + j];
-        C[1 * 3 + j] = ra[1 * 3 + j];
-        C[2 * 3 + j] = -sy * ra[0 * 3 + j] + cy * ra[2 * 3 + j];
-    }
-    for (int i = 0; i < 3; i++)
-        for (int j = 0; j < 3; j++)   /* Hrot = C * rrel, written back as columns */
-            H[j * 4 + i] = C[i * 3 + 0] * rrel[wn][0 * 3 + j] + C[i * 3 + 1] * rrel[wn][1 * 3 + j] + C[i * 3 + 2] * rrel[wn][2 * 3 + j];
-    make_Wg(Wg);
-    xform(Wg, in.aim.px, in.aim.py, in.aim.pz, P);
-    xform(Wg, h.px, h.py, h.pz, E);
-    {   /* not into the face */
-        float d[3] = { P[0] - E[0], P[1] - E[1], P[2] - E[2] }, l = sqrtf(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
-        float mn = g_vr_gun_min / 100.0f * (g_vr_scale / 10.0f);
-        if (l < mn) {
-            if (l < 1e-4f) { d[0] = -sy; d[1] = 0; d[2] = -cy; l = 1.0f; }   /* straight ahead */
-            for (int k = 0; k < 3; k++) P[k] = E[k] + d[k] / l * mn;
+}
+
+/* weapon.c bhCheckGunAtari(), first thing: a shot of the player's (the game builds it from the
+   body: origin at the chest, direction Rx(wax) Ry(way)) leaves the muzzle of the weapon in the
+   hand that fired it (the game's own muzzle point gx, on the hand node, which follows the
+   controller) and goes where that controller points. Everything else about the shot (damage,
+   walls, enemies, effects) is the game's. */
+void vr_gun_ray(GA_WORK* gap)
+{
+    static int last = -1;
+    NJS_POINT3 o, d;
+    VrInput in;
+    float r[9], f[3], c = cosf(vr_yaw), s = sinf(vr_yaw), l;
+    int side, st;
+    if (!gap || !plp || !vr_on() || !g_vr_hand_aim) return;
+    if (gap->wpn_no != plp->wpnr_no || gap->ax != plp->wax || gap->ay != plp->way) return;   /* not the player's shot */
+    {   /* which hand: the one whose node is nearer the game's muzzle point */
+        const float* h9 = plp->mlwP->owP[9].mtx;
+        float d9 = (gap->gx - h9[12]) * (gap->gx - h9[12]) + (gap->gy - h9[13]) * (gap->gy - h9[13]) + (gap->gz - h9[14]) * (gap->gz - h9[14]);
+        side = 0;
+        if (plp->mlwP->obj_num > 13) {
+            const float* h13 = plp->mlwP->owP[13].mtx;
+            float d13 = (gap->gx - h13[12]) * (gap->gx - h13[12]) + (gap->gy - h13[13]) * (gap->gy - h13[13]) + (gap->gz - h13[14]) * (gap->gz - h13[14]);
+            if (d13 < d9) side = 1;
         }
     }
-    H[12] = P[0]; H[13] = P[1]; H[14] = P[2];
+    st = 1;
+    if (xr_input(&in) && (side ? in.aiml_valid : in.aim_valid) && hand_ok[side]) {
+        const VrPose* hp = side ? &in.aiml : &in.aim;
+        quat_to_rows(r, hp);
+        f[0] = -r[2]; f[1] = -r[5]; f[2] = -r[8];   /* -z of the controller */
+        d.x = c * f[0] + s * f[2]; d.y = f[1]; d.z = -s * f[0] + c * f[2];
+        l = sqrtf(d.x * d.x + d.y * d.y + d.z * d.z);
+        if (l > 1e-4f) {
+            o.x = gap->gx; o.y = gap->gy; o.z = gap->gz;   /* the muzzle, on the tracked hand */
+            gap->px = o.x; gap->py = o.y; gap->pz = o.z;
+            gap->vx = d.x / l * gap->l; gap->vy = d.y / l * gap->l; gap->vz = d.z / l * gap->l;
+            st = 0;
+        }
+    }
+    if (st * 2 + side != last) {
+        last = st * 2 + side;
+        vr_log(st ? "vr: shot from the game's aim (%s hand not tracked)\n" : "vr: shot from the %s hand's weapon\n", side ? "left" : "right");
+    }
 }
+
+/* game.c, in place of the player's model while the camera is in the head: the body stays
+   hidden; what is seen of the player are the hand/weapon objects linked to the hand nodes
+   (drawn by the game's object pass from the tracked hand matrices) */
+void vr_draw_hands(void* p) { (void)p; }
 
 /* the left stick (forward, right), -1..1; 0 if no controllers */
 int vr_move_stick(float* f, float* r)
@@ -272,4 +382,15 @@ void vr_after_draw(void)
     { extern float Ps2_zbuff_a, Ps2_zbuff_b; v.za = Ps2_zbuff_a; v.zb = Ps2_zbuff_b; }
     stream_vr_view(&v);
     vr_frame = 0;
+}
+
+static void vr_log(const char* fmt, ...)
+{
+    extern void host_log(const char* fmt, ...);
+    char b[512];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(b, sizeof(b), fmt, ap);
+    va_end(ap);
+    host_log("%s", b);
 }
