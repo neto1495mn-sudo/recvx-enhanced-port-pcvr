@@ -84,7 +84,9 @@ int vr_hand_ray(NJS_POINT3* o, NJS_POINT3* d);
 void tps_vr_view(float y, float p) { yaw = wrap(y); pitch = p; }
 void vr_hand(BH_PWORK* p);
 
-#define FREE_CAM (g_tps.free_cam || vr_on())
+int vr_playing(void);
+void vr_pad_frame(void);
+#define FREE_CAM (g_tps.free_cam || vr_playing())   /* VR: in play only - in menus the stick is the d-pad */
 
 static float cur_dist, cur_fov;   /* eased towards the walk/aim values */
 
@@ -452,6 +454,7 @@ int pc_input_active(void)
 unsigned int tps_pad(unsigned int pad)
 {
     unsigned k;
+    vr_pad_frame();
     if (sys->ss_flg & 0x400000) return pad;   /* attract demo playback */
     k = tps_input_keys();
     pad_steer = (pad & 0xF) != 0;

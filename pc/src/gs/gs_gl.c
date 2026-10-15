@@ -126,9 +126,9 @@ static DrawState batch_state;
 static int batch_valid;
 
 static GLuint prog, vao, vbo, present_prog, present_vao, svao, svbo;
-static GLint u_vr_on, u_vr_src, u_vr_dst, u_vr_m0, u_vr_m1, u_vr_m2, u_vr_m3, u_vr_zab;
+static GLint u_vr_on, u_vr_src, u_vr_dst, u_vr_m0, u_vr_m1, u_vr_m2, u_vr_m3, u_vr_zab, u_vr_zs;
 /* VR re-projection of the draws being replayed for an eye (gs_present_vr); off otherwise */
-static struct { int on; float src[4], dst[4], m[16], zab[2]; } vr_u;
+static struct { int on; float src[4], dst[4], m[16], zab[2], zs; } vr_u;
 /* VR diagnosis: what the first eye's replay draws, by path (logged now and then while stereo is on) */
 /* path: 'N' native triangles, 'S' sprites/lines (gs_draw_raw), 'R' GS register writes (VU1 / packets) */
 static struct { int on; unsigned n3d, nraw, n2d, nbig; int ns; float s[12][3]; char path[12]; } vr_st;
@@ -163,7 +163,7 @@ static const char* vs_src =
        (columns) take V to the eye's view (same axes: x right, y down, z forward), which is
        projected with the eye's frustum onto the display area (u_vr_dst: c', k'). The GS depth
        is kept, so the game's depth tests between draws behave as before. */
-    "uniform int u_vr_on; uniform vec4 u_vr_src, u_vr_dst, u_vr_m0, u_vr_m1, u_vr_m2, u_vr_m3; uniform vec2 u_vr_zab;\n"
+    "uniform int u_vr_on; uniform vec4 u_vr_src, u_vr_dst, u_vr_m0, u_vr_m1, u_vr_m2, u_vr_m3; uniform vec2 u_vr_zab; uniform float u_vr_zs;\n"
     /* everything perspective-correct: for GS vertices w = 1, so that is the GS's screen-space
        interpolation; native 3D triangles stay whole where VU1 would have cut them at the guard
        band, and screen-linear colour/fog across a triangle reaching far off-screen near the
@@ -178,8 +178,11 @@ static const char* vs_src =
     "    float vz = P.w;\n"
     "    vec3 V = vec3((P.x - u_vr_src.x * vz) / u_vr_src.z, (P.y - u_vr_src.y * vz) / u_vr_src.w, vz);\n"
     "    vec4 E = u_vr_m0 * V.x + u_vr_m1 * V.y + u_vr_m2 * V.z + u_vr_m3;\n"
-    "    float zg = P.z / vz;\n"
-    "    P = vec4(u_vr_dst.x * E.z + u_vr_dst.z * E.x, u_vr_dst.y * E.z + u_vr_dst.w * E.y, zg * E.z, E.z);\n"
+    /* depth: the GS depth formula applied to the EYE's distance (E.z metres * u_vr_zs units per
+       metre), times E.z - affine in the vertex, so it interpolates exactly across the eye's
+       screen. (The game camera's depth, kept before, bends across large triangles seen from the
+       eye: surfaces close to others - frames on walls, pipes, table parts - fought and flickered.) */
+    "    P = vec4(u_vr_dst.x * E.z + u_vr_dst.z * E.x, u_vr_dst.y * E.z + u_vr_dst.w * E.y, -u_vr_zab.y / u_vr_zs - u_vr_zab.x * E.z, E.z);\n"
     "    clip = vec2(E.z - 0.03, a_vr > 1.5 ? 1.0 : clip.y);\n"   /* 3 cm in front of the eye (E is in metres) */
     "  }\n"
     "  float w = P.w;\n"
@@ -294,7 +297,7 @@ void gs_renderer_init(void)
 #define U(n) u_##n = glGetUniformLocation(prog, "u_" #n)
     U(rt_size); U(rt_margin); U(tme); U(tfx); U(tcc); U(fst); U(texsize); U(fge); U(fogcol); U(ate); U(atst); U(aref);
     U(tex); U(tex_alpha_scale); U(texofs); U(premul); U(zscale); U(clamp_mode); U(clamp_vals); U(afail_pass); U(rt16);
-    U(vr_on); U(vr_src); U(vr_dst); U(vr_m0); U(vr_m1); U(vr_m2); U(vr_m3); U(vr_zab);
+    U(vr_on); U(vr_src); U(vr_dst); U(vr_m0); U(vr_m1); U(vr_m2); U(vr_m3); U(vr_zab); U(vr_zs);
 #undef U
     present_prog = compile(present_vs, present_fs);
     up_tex = glGetUniformLocation(present_prog, "u_tex");
@@ -1180,6 +1183,7 @@ void gs_flush(void)
         uni4f(u_vr_m2, vr_u.m[8], vr_u.m[9], vr_u.m[10], vr_u.m[11]);
         uni4f(u_vr_m3, vr_u.m[12], vr_u.m[13], vr_u.m[14], vr_u.m[15]);
         uni2f(u_vr_zab, vr_u.zab[0], vr_u.zab[1]);
+        uni1f(u_vr_zs, vr_u.zs);
     }
     {
         uint32_t zpsm = (st->ctx.zbuf >> 24) & 0xF;
@@ -1890,6 +1894,51 @@ void gs_replay_check(const struct Frame* cur)
 
 const char* g_vr_status;   /* shown by the overlay: why this frame is on the cinema screen */
 
+/* VR danger vignette (vr_glue.c sets g_vr_danger while the player's life is in Danger): a light
+   red edge over each eye, pulsing like a heartbeat, centred on the eye's own view axis */
+volatile int g_vr_danger;
+int g_vr_danger_fx = 1;   /* ini vr_danger_fx */
+static GLuint vig_prog;
+static GLint uv_tan, uv_amt;
+static const char* vig_vs =
+    "#version 330 core\n"
+    "uniform vec4 u_tan;\n"   /* l, r, u, d of the eye */
+    "out vec2 v_t;\n"
+    "void main(){\n"
+    "  vec2 c = vec2((gl_VertexID & 1) != 0 ? 1.0 : 0.0, (gl_VertexID & 2) != 0 ? 1.0 : 0.0);\n"
+    "  v_t = vec2(mix(u_tan.x, u_tan.y, c.x), mix(u_tan.w, u_tan.z, c.y));\n"
+    "  gl_Position = vec4(c.x * 2.0 - 1.0, c.y * 2.0 - 1.0, 0.0, 1.0);\n"
+    "}\n";
+static const char* vig_fs =
+    "#version 330 core\n"
+    "in vec2 v_t; uniform float u_amt; out vec4 o;\n"
+    "void main(){ float r = length(v_t); float a = smoothstep(0.45, 1.25, r) * u_amt; o = vec4(0.75, 0.0, 0.0, a); }\n";
+
+static void draw_vignette(const VrEye* E, int w, int h)
+{
+    float t, beat, amt;
+    if (!g_vr_danger || !g_vr_danger_fx) return;
+    if (!vig_prog) {
+        vig_prog = compile(vig_vs, vig_fs);
+        uv_tan = glGetUniformLocation(vig_prog, "u_tan");
+        uv_amt = glGetUniformLocation(vig_prog, "u_amt");
+    }
+    t = fmodf((float)(SDL_GetTicks() % 100000) / 1000.0f, 0.9f);   /* ~67 beats a minute: lub-dub, pause */
+    beat = expf(-((t - 0.05f) * (t - 0.05f)) / 0.004f) + 0.6f * expf(-((t - 0.30f) * (t - 0.30f)) / 0.005f);
+    amt = 0.18f + 0.30f * beat;   /* light: at most ~half opaque at the very edge */
+    glViewport(0, 0, w, h);
+    glEnable(GL_BLEND);
+    glBlendEquationSeparate(GL_FUNC_ADD, GL_FUNC_ADD);
+    glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ZERO, GL_ONE);
+    glUseProgram(vig_prog);
+    glUniform4f(uv_tan, E->l, E->r, E->u, E->d);
+    glUniform1f(uv_amt, amt);
+    glBindVertexArray(present_vao);
+    glDrawArrays(0x0005 /* GL_TRIANGLE_STRIP */, 0, 4);
+    glBindVertexArray(vao);
+    glDisable(GL_BLEND);
+}
+
 /* the display area of a render-target texture (the 640x480 area, hor+ margins included) into
    the bound draw framebuffer of w x h, the right way up for OpenXR (row 0 at the bottom) */
 static void draw_area_to(GLuint tex, int rt_vw, int rt_vh, int w, int h)
@@ -1960,6 +2009,8 @@ static int present_vr_stereo(const struct Frame* cur)
         vr_u.dst[3] = 480.0f / (u - d);
         memcpy(vr_u.m, M, sizeof(M));
         vr_u.zab[0] = v->za; vr_u.zab[1] = v->zb;
+        vr_u.zs = sqrtf(v->W[0] * v->W[0] + v->W[1] * v->W[1] + v->W[2] * v->W[2]);   /* game units per metre */
+        if (vr_u.zs < 1e-3f) vr_u.zs = 10.0f;
         vr_u.on = 1;
         {
             static unsigned nlog;
@@ -1986,6 +2037,7 @@ static int present_vr_stereo(const struct Frame* cur)
             glBindFramebuffer(GL_FRAMEBUFFER, vr_fbo);
             glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
             draw_area_to(rt->tex, rt->vw, rt->vh, w, h);
+            draw_vignette(E, w, h);
             glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
             glBindFramebuffer(GL_FRAMEBUFFER, 0);
             fb_forget();

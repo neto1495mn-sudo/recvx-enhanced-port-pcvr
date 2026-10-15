@@ -129,6 +129,7 @@ static void build_report(unsigned char* r)
     }
 
     { extern int vr_pad_start(void); if (input_enabled && vr_pad_start()) b |= PAD_START; }   /* VR: left menu button */
+    { extern int vr_pad_select(void); if (input_enabled && vr_pad_select()) b |= PAD_SELECT; }   /* VR: LT + Y */
     b |= scripted_buttons();
     {   /* RECVX_PAD_TRACE=1: log the DS2 buttons when they change */
         static int trace = -1; static uint32_t last;

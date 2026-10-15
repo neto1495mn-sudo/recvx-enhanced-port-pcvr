@@ -26,6 +26,12 @@
 #include "../../decomp/include/ps2/veronica/prog/ps2_Vu1Strip.h"
 #include "../src/host/xr.h"
 #include "../src/gs/stream.h"
+#include "../../decomp/include/ps2/veronica/prog/player.h"
+#include "../../decomp/include/ps2/veronica/prog/weapon.h"
+#include "../../decomp/include/ps2/veronica/prog/sdfunc.h"
+#include <stdint.h>
+extern uint64_t SDL_GetTicks(void);     /* SDL3 (the game glue does not see its headers) */
+extern uint64_t SDL_GetTicksNS(void);
 #include <math.h>
 #include <string.h>
 #include <stdio.h>
@@ -36,6 +42,9 @@ int g_vr_eye_height = 155;   /* ini vr_eye_height: the camera's height above the
 int g_vr_fov = 120;          /* ini vr_fov: the game camera's horizontal field of view (degrees): what it culls against */
 int g_vr_turn = 30;          /* ini vr_turn: right-stick turn in degrees per flick; 0 = smooth turning */
 int g_vr_gun_min = 15;       /* ini vr_gun_min: the hand/weapon never comes closer than this to the eyes (cm) */
+int g_vr_slash_speed = 180;  /* ini vr_slash_speed: the knife cuts when the right hand moves faster than this (cm/s) */
+extern int g_vr_danger_fx;    /* gs_gl.c, ini vr_danger_fx */
+int g_vr_hit_tilt = 5;       /* ini vr_hit_tilt: the view tilts this many degrees away from a hit; 0 = off */
 int g_vr_hand_offset = -6;   /* ini vr_hand_offset: the hands moved forward (+) or back (-) from the palm, cm */
 int g_vr_fx_fix = 1;         /* ini vr_fx_fix: 1 = 2D effects with a depth (fire, glows) are placed in the world */
 int g_vr_hand_aim = 1;       /* ini vr_hand_aim: 1 = shots go where the right controller points, 0 = where the head looks */
@@ -47,6 +56,7 @@ static float frame_Wg[16];   /* this frame's recentred tracking space -> world *
 static float vr_yaw;         /* the view's heading (radians, forward (-sin, 0, -cos)) */
 static unsigned rec_seen;    /* xr_recenter_gen at the last heading reset */
 static int snap_held;        /* the right stick is still out after a snap turn */
+static int cam_ran, playing; /* the VR camera ran since the last pad read / it ran in the last game frame (in play, not a menu) */
 
 void tps_vr_view(float yaw, float pitch);   /* tps_glue.c: its camera yaw/pitch (game angle units) */
 
@@ -70,7 +80,8 @@ static void quat_to_rows(float m[9], const VrPose* p)
    smoothed. Changes between the two are eased out over a few frames. Computed once per game
    frame (the first of vr_hand / vr_camera to ask). */
 static unsigned base_gen, cam_gen = 1;
-static float base[3], base_res[3], root_ref = -1.0f, sm_y;
+static float base[3], base_res[3], root_ref, sm_y;
+static int root_ok;
 static int on_stairs = -1;
 
 static void play_base(float out[3])
@@ -81,15 +92,22 @@ static void play_base(float out[3])
         base_gen = cam_gen;
         if (plp && plp->mlwP && plp->mlwP->obj_num > 0) {
             const float* r = plp->mlwP->owP[0].mtx;
-            st = (plp->stflg & 0x80000000u) && (plp->flg & 0x400);
-            if (!st) {   /* the root's usual height above the feet, averaged */
+            /* stairs: the game's stair states (player.c bhCPM2_act_kdu / kdd: mode2 14/15) or its stair flags */
+            st = (plp->mode0 == 1 && plp->mode1 == 0 && (plp->mode2 == 14 || plp->mode2 == 15)) ||
+                 ((plp->stflg & 0x80000000u) && (plp->flg & 0x400));
+            if (!st) {   /* the root's usual height above the feet (can be 0 or below), averaged */
                 float h = r[13] - plp->py;
-                root_ref = root_ref < 0 ? h : root_ref + (h - root_ref) * 0.05f;
+                root_ref = !root_ok ? h : root_ref + (h - root_ref) * 0.05f;
+                root_ok = 1;
             }
-            if (st && root_ref >= 0) {
+            if (st && root_ok) {
                 float y = r[13] - root_ref;
-                if (on_stairs != 1) sm_y = y;
-                sm_y += (y - sm_y) * 0.25f;
+                if (on_stairs != 1) {
+                    extern void host_log(const char* fmt, ...);
+                    host_log("vr: stairs: body %.1f %.1f %.1f, position %.1f %.1f %.1f\n", r[12], r[13], r[14], plp->px, plp->py, plp->pz);
+                    sm_y = y;
+                }
+                sm_y += (y - sm_y) * 0.5f;   /* step by step with the body, without the bob */
                 t[0] = r[12]; t[1] = sm_y; t[2] = r[14];
             } else { t[0] = plp->px; t[1] = plp->py; t[2] = plp->pz; st = 0; }
         } else if (plp) { t[0] = plp->px; t[1] = plp->py; t[2] = plp->pz; }
@@ -110,6 +128,52 @@ static void play_base(float out[3])
     out[0] = base[0]; out[1] = base[1]; out[2] = base[2];
 }
 
+/* Hit reaction: when the player loses life the view tilts g_vr_hit_tilt degrees away from the
+   hit (rolled away from the nearest enemy's side, pushed back from a hit in front) and eases
+   back in about half a second. Applied to the play space about the head (make_Wg), so the
+   world, the camera and the hands tilt together and the renderer's re-projection keeps it. */
+static float tilt_roll, tilt_pitch;   /* now (radians) */
+static float hit_side, hit_front;     /* the last hit's direction relative to the view */
+static uint64_t hit_ms;               /* when (SDL ticks), 0 = none */
+static int last_hp = -1;
+
+static void hit_update(void)
+{
+    uint64_t now = SDL_GetTicks();
+    float env = 0, a = g_vr_hit_tilt * (3.14159265f / 180.0f);
+    if (plp && last_hp >= 0 && plp->hp < last_hp && last_hp - plp->hp < 400) {
+        float best = 1e9f, dx = 0, dz = 0;
+        for (int i = 0; i < sys->ewk_n; i++) {   /* the nearest live enemy is the one that hit */
+            BH_PWORK* e = &ene[i];
+            float x, z, d;
+            if (!(e->flg & 0x1) || (e->flg & 0x2)) continue;
+            x = e->px - plp->px; z = e->pz - plp->pz; d = x * x + z * z;
+            if (d < best) { best = d; dx = x; dz = z; }
+        }
+        if (best < 60.0f * 60.0f && best > 1e-4f) {
+            float l = sqrtf(best), c = cosf(vr_yaw), sn = sinf(vr_yaw);
+            dx /= l; dz /= l;
+            hit_side = dx * c - dz * sn;      /* right (cos, 0, -sin) */
+            hit_front = -dx * sn - dz * c;    /* forward (-sin, 0, -cos) */
+        } else { hit_side = 0; hit_front = 1; }
+        hit_ms = now ? now : 1;
+        {
+            extern void host_log(const char* fmt, ...);
+            host_log("vr: hit (life %d -> %d), from %s\n", last_hp, plp->hp, hit_side > 0.3f ? "the right" : hit_side < -0.3f ? "the left" : hit_front > 0 ? "the front" : "behind");
+        }
+    }
+    if (plp) last_hp = plp->hp;
+    if (hit_ms) {
+        float t = (now - hit_ms) / 1000.0f;
+        env = t < 0.08f ? t / 0.08f : expf(-(t - 0.08f) / 0.15f);   /* quick in, ~0.5 s out */
+        if (t > 1.0f) { hit_ms = 0; env = 0; }
+    }
+    tilt_roll = a * env * hit_side;               /* positive: the head rolls left (away from a hit on the right) */
+    tilt_pitch = a * 0.6f * env * hit_front;      /* positive: the head goes back / looks up (away from a hit in front) */
+}
+
+static void make_Wg(float Wg[16]);
+
 /* end of tps_camera(), the third-person camera already in `cam`: replace it with the head's */
 void vr_camera(void)
 {
@@ -126,7 +190,7 @@ void vr_camera(void)
             host_log("vr: camera %s\n", names[why]);
             last = why;
         }
-        if (why) { vr_active = 0; return; }
+        if (why) { extern volatile int g_vr_danger; g_vr_danger = 0; vr_active = 0; return; }
     }
 
     {   /* heading: the player's own with controllers (right stick), else the character's facing */
@@ -143,18 +207,16 @@ void vr_camera(void)
     }
     yb = vr_yaw;
     cb = cosf(yb); sb = sinf(yb);
+    (void)cb; (void)sb;
+    hit_update();
+    if (g_vr_danger_fx) {   /* the renderer's danger vignette: life in Danger (the game's limp) */
+        extern volatile int g_vr_danger;
+        g_vr_danger = plp->exp0 && ((EXP_WORK*)plp->exp0)->dmlvl >= 2 && plp->hp > 0;
+    }
 
     /* Wg: recentred tracking space (metres) -> world: scaled, turned with the body, the
-       recentred origin (the head at recentring) at the player's eyes */
-    vr_mat_identity(Wg);
-    Wg[0] = cb * s;  Wg[8] = sb * s;
-    Wg[5] = s;
-    Wg[2] = -sb * s; Wg[10] = cb * s;
-    {
-        float b[3];
-        play_base(b);
-        Wg[12] = b[0]; Wg[13] = b[1] + g_vr_eye_height / 10.0f; Wg[14] = b[2];
-    }
+       recentred origin (the head at recentring) at the player's eyes, tilted by a hit */
+    make_Wg(Wg);
     xr_recenter_matrix(rec);
     vr_mat_mul(frame_W, Wg, rec);   /* local -> world */
     memcpy(frame_Wg, Wg, sizeof(Wg));
@@ -164,11 +226,9 @@ void vr_camera(void)
     cam.py = Wg[1] * h.px + Wg[5] * h.py + Wg[9] * h.pz + Wg[13];
     cam.pz = Wg[2] * h.px + Wg[6] * h.py + Wg[10] * h.pz + Wg[14];
     quat_to_rows(hr, &h);
-    for (int i = 0; i < 3; i++) {   /* R = Ry(yb) * head */
-        R[0 * 3 + i] = cb * hr[0 * 3 + i] + sb * hr[2 * 3 + i];
-        R[1 * 3 + i] = hr[1 * 3 + i];
-        R[2 * 3 + i] = -sb * hr[0 * 3 + i] + cb * hr[2 * 3 + i];
-    }
+    for (int i = 0; i < 3; i++)       /* R = (Wg's rotation) * head */
+        for (int j = 0; j < 3; j++)
+            R[i * 3 + j] = (Wg[0 * 4 + i] * hr[0 * 3 + j] + Wg[1 * 4 + i] * hr[1 * 3 + j] + Wg[2 * 4 + i] * hr[2 * 3 + j]) / s;
     /* R = Ry(yaw) Rx(pitch) Rz(roll): the order bhControlCamera applies (inverted) */
     ax[1] = asinf(fmaxf(-1.0f, fminf(1.0f, -R[5])));   /* pitch */
     ax[0] = atan2f(R[2], R[8]);                        /* yaw */
@@ -181,10 +241,21 @@ void vr_camera(void)
     tps_vr_view(TO_ANGLE(ax[0]), TO_ANGLE(ax[1]));   /* walking and head aim relative to where the head looks */
     vr_frame = 1;
     vr_active = 1;
+    cam_ran = 1;
     cam_gen++;   /* the next game frame computes its base anew */
 }
 
 int vr_on(void) { return vr_active && xr_stereo_ready(); }
+
+/* tps_pad(), once per game frame at the pad read: whether the last frame was played with the
+   VR camera (normal play) - in menus, the inventory and the map it does not run */
+void vr_pad_frame(void) { playing = cam_ran; cam_ran = 0; }
+int vr_playing(void) { return vr_on() && playing; }
+
+static int knife_equipped(void)
+{
+    return plp && plp->wpnr_no >= 0 && plp->wpnr_no < 23 && (WpnTab[plp->wpnr_no].flg & 0x40000000);
+}
 
 /* free aim: the right controller's ray in the world (origin, unit direction); 0 if not aiming by hand */
 int vr_hand_ray(NJS_POINT3* o, NJS_POINT3* d)
@@ -218,10 +289,10 @@ unsigned vr_tps_keys(void)
     if (in.lx > 0.4f) k |= 8;            /* TPS_K_RIGHT */
     if (in.ltrig > 0.5f || (in.buttons & VRB_LSTICK)) k |= 16;   /* TPS_K_RUN */
     if (in.buttons & VRB_A) k |= 32;     /* TPS_K_ACTION */
-    if (in.buttons & VRB_Y) k |= 64;     /* TPS_K_STATUS */
+    if ((in.buttons & VRB_Y) && in.ltrig <= 0.5f) k |= 64;   /* TPS_K_STATUS (LT + Y is Select, vr_pad_select) */
     if (in.buttons & VRB_X) k |= 128;    /* TPS_K_MAP */
     if (in.rgrip > 0.5f) k |= 256;       /* TPS_K_AIM */
-    if (in.rtrig > 0.5f) k |= 512;       /* TPS_K_FIRE */
+    if (in.rtrig > 0.5f && !(vr_playing() && knife_equipped() && g_vr_slash_speed > 0)) k |= 512;   /* TPS_K_FIRE (the knife cuts by swinging) */
     if (in.buttons & VRB_B) k |= 1024;   /* TPS_K_CANCEL */
     return k;
 }
@@ -238,6 +309,42 @@ static void make_Wg(float Wg[16])
         float b[3];
         play_base(b);
         Wg[12] = b[0]; Wg[13] = b[1] + g_vr_eye_height / 10.0f; Wg[14] = b[2];
+    }
+    if ((tilt_roll != 0 || tilt_pitch != 0)) {   /* the hit tilt about the head, in its own heading */
+        VrPose h;
+        if (xr_head_pose(&h)) {
+            float hr[9], fx, fz, l, M[16], T[16], X[16], k;
+            float axes[2][3], ang[2] = { -tilt_roll, tilt_pitch };
+            quat_to_rows(hr, &h);
+            fx = -hr[2]; fz = -hr[8]; l = sqrtf(fx * fx + fz * fz);
+            if (l > 1e-3f) {
+                fx /= l; fz /= l;
+                axes[0][0] = fx; axes[0][1] = 0; axes[0][2] = fz;     /* forward: roll */
+                axes[1][0] = -fz; axes[1][1] = 0; axes[1][2] = fx;    /* right: pitch */
+                vr_mat_identity(M);
+                for (int q = 0; q < 2; q++) {   /* M = M * Rot(axis, angle) (Rodrigues, column-major) */
+                    float c = cosf(ang[q]), sn = sinf(ang[q]), *u = axes[q], Rm[16];
+                    vr_mat_identity(Rm);
+                    for (int i = 0; i < 3; i++)
+                        for (int j = 0; j < 3; j++) {
+                            k = u[i] * u[j] * (1 - c) + (i == j ? c : 0);
+                            if (i != j) {
+                                int m = 3 - i - j;   /* the third index */
+                                float sg = ((i + 1) % 3 == j) ? -1.0f : 1.0f;
+                                k += sg * u[m] * sn;
+                            }
+                            Rm[j * 4 + i] = k;
+                        }
+                    vr_mat_mul(M, M, Rm);
+                }
+                /* X = T(h) M T(-h) */
+                vr_mat_identity(T); T[12] = h.px; T[13] = h.py; T[14] = h.pz;
+                vr_mat_mul(X, T, M);
+                vr_mat_identity(T); T[12] = -h.px; T[13] = -h.py; T[14] = -h.pz;
+                vr_mat_mul(X, X, T);
+                vr_mat_mul(Wg, Wg, X);
+            }
+        }
     }
 }
 
@@ -304,6 +411,53 @@ static void log_hand_objects(void)
     if (sig != last) { last = sig; vr_log("vr: objects on the player:%s\n", buf[0] ? buf : " none"); }
 }
 
+/* The knife cuts by swinging the right hand: faster than vr_slash_speed starts a cut, which
+   for a few game frames tests the blade (the hand to the knife's tip, wp_fps1 on node 9) with
+   the game's own knife hit (damage, sound, sparks, the bounce off walls); the next cut can
+   start half a second later. */
+static void vr_slash(BH_PWORK* p, const VrPose* hp, const float* H)
+{
+    static float lp[3];
+    static uint64_t lt, next_ms;
+    static int have, swing;
+    uint64_t now = SDL_GetTicksNS();
+    float v[3] = { 0, 0, 0 }, sp = 0;
+    if (have && now > lt) {
+        float dt = (now - lt) / 1e9f;
+        v[0] = (hp->px - lp[0]) / dt; v[1] = (hp->py - lp[1]) / dt; v[2] = (hp->pz - lp[2]) / dt;
+        sp = sqrtf(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+        if (dt > 0.2f) sp = 0;   /* a pause, not a swing */
+    }
+    lp[0] = hp->px; lp[1] = hp->py; lp[2] = hp->pz; lt = now; have = 1;
+    if (!knife_equipped() || g_vr_slash_speed <= 0 || p->mode0 != 1 || !vr_playing()) { swing = 0; return; }
+    if (!swing && sp * 100.0f > g_vr_slash_speed && now / 1000000 >= next_ms) {
+        swing = 4;
+        next_ms = now / 1000000 + 500;
+        vr_log("vr: knife cut (hand %.1f m/s)\n", sp);
+    }
+    if (swing > 0) {
+        GA_WORK gap;
+        NJS_POINT3 tip;
+        const NJS_POINT3* tp = &WpnTab[p->wpnr_no].wp_fps1;
+        float c = cosf(vr_yaw), sn = sinf(vr_yaw), wx = c * v[0] + sn * v[2], wz = -sn * v[0] + c * v[2];
+        tip.x = H[0] * tp->x + H[4] * tp->y + H[8] * tp->z + H[12];
+        tip.y = H[1] * tp->x + H[5] * tp->y + H[9] * tp->z + H[13];
+        tip.z = H[2] * tp->x + H[6] * tp->y + H[10] * tp->z + H[14];
+        memset(&gap, 0, sizeof(gap));
+        gap.at_flg = p->at_flg;
+        gap.wpn_no = p->wpnr_no;
+        gap.r = WpnTab[p->wpnr_no].r;
+        gap.ax = p->wax;
+        gap.ay = (wx != 0 || wz != 0) ? (int)(atan2f(-wx, -wz) * (32768.0f / 3.14159265f)) & 0xFFFF : p->ay;   /* the cut's direction */
+        gap.px = tip.x; gap.py = tip.y; gap.pz = tip.z;
+        gap.gx = H[12]; gap.gy = H[13]; gap.gz = H[14];
+        gap.vx = gap.px - gap.gx; gap.vy = gap.py - gap.gy; gap.vz = gap.pz - gap.gz;
+        if (swing == 4) CallPlayerWeaponSeEx(&tip, 276, 0);
+        bhCheckKnifeAtari(&gap);
+        swing--;
+    }
+}
+
 void vr_hand(BH_PWORK* p)
 {
     static float rrel[2][2][64][9];          /* [hand][0 aim grip, 1 body grip][weapon] */
@@ -353,6 +507,31 @@ void vr_hand(BH_PWORK* p)
         hp = side ? &in.aiml : &in.aim;
         if (!ctl || !(side ? in.aiml_valid : in.aim_valid)) { hand_log(side, 1, wn); continue; }
         R = rok[side][0][wn] ? rrel[side][0][wn] : rrel[side][1][wn];
+        if (side == 0 && knife_equipped()) {   /* the knife: its blade along the controller (cut by swinging) */
+            static float Rk[9];
+            const NJS_POINT3* tp = &WpnTab[p->wpnr_no].wp_fps1;
+            float b[3] = { tp->x, tp->y, tp->z }, l = sqrtf(b[0] * b[0] + b[1] * b[1] + b[2] * b[2]);
+            if (l > 1e-3f) {
+                float u[3], t[3] = { 0, 0, -1 }, ax[3], c, sn, Q[9];
+                for (int i = 0; i < 3; i++) b[i] /= l;
+                for (int i = 0; i < 3; i++) u[i] = R[i * 3 + 0] * b[0] + R[i * 3 + 1] * b[1] + R[i * 3 + 2] * b[2];   /* the blade in the controller's frame */
+                ax[0] = u[1] * t[2] - u[2] * t[1]; ax[1] = u[2] * t[0] - u[0] * t[2]; ax[2] = u[0] * t[1] - u[1] * t[0];
+                c = u[0] * t[0] + u[1] * t[1] + u[2] * t[2];
+                sn = sqrtf(ax[0] * ax[0] + ax[1] * ax[1] + ax[2] * ax[2]);
+                if (sn > 1e-4f) {   /* Q: the shortest turn taking the blade to the controller's forward */
+                    for (int i = 0; i < 3; i++) ax[i] /= sn;
+                    for (int i = 0; i < 3; i++)
+                        for (int j = 0; j < 3; j++) {
+                            float k = ax[i] * ax[j] * (1 - c) + (i == j ? c : 0);
+                            if (i != j) { int m = 3 - i - j; k += (((i + 1) % 3 == j) ? -1.0f : 1.0f) * ax[m] * sn; }
+                            Q[i * 3 + j] = k;
+                        }
+                    for (int i = 0; i < 3; i++)
+                        for (int j = 0; j < 3; j++) Rk[i * 3 + j] = Q[i * 3 + 0] * R[0 * 3 + j] + Q[i * 3 + 1] * R[1 * 3 + j] + Q[i * 3 + 2] * R[2 * 3 + j];
+                    R = Rk;
+                }
+            }
+        }
         quat_to_rows(ra, hp);
         for (int j = 0; j < 3; j++) {   /* C = Ry(vr_yaw) * Rhand */
             C[0 * 3 + j] = cy * ra[0 * 3 + j] + sy * ra[2 * 3 + j];
@@ -381,6 +560,7 @@ void vr_hand(BH_PWORK* p)
         memcpy(hand_pos[side], P, sizeof(P));
         hand_ok[side] = 1;
         hand_log(side, 0, wn);
+        if (side == 0) vr_slash(p, hp, H);
     }
 }
 
@@ -443,6 +623,7 @@ int vr_move_stick(float* f, float* r)
 }
 int vr_run_held(void) { VrInput in; return xr_input(&in) && (in.ltrig > 0.5f || (in.buttons & VRB_LSTICK)); }
 
+int vr_pad_select(void) { VrInput in; return xr_input(&in) && in.ltrig > 0.5f && (in.buttons & VRB_Y); }   /* LT + Y: Select */
 int vr_pad_start(void) { VrInput in; return xr_input(&in) && (in.buttons & VRB_MENU); }        /* left menu button: Start */
 int vr_quick_knife(void) { VrInput in; return xr_input(&in) && in.lgrip > 0.5f; }             /* left grip: quick knife */
 
