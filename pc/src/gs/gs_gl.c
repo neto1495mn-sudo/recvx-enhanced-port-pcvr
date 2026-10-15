@@ -129,6 +129,18 @@ static GLuint prog, vao, vbo, present_prog, present_vao, svao, svbo;
 static GLint u_vr_on, u_vr_src, u_vr_dst, u_vr_m0, u_vr_m1, u_vr_m2, u_vr_m3, u_vr_zab;
 /* VR re-projection of the draws being replayed for an eye (gs_present_vr); off otherwise */
 static struct { int on; float src[4], dst[4], m[16], zab[2]; } vr_u;
+/* VR diagnosis: what the first eye's replay draws, by path (logged now and then while stereo is on) */
+static struct { int on; unsigned n3d, nraw, n2d; int ns; float s[8][3]; } vr_st;
+static void vr_stat_vertex(const GlVertex* o)
+{
+    if (!vr_st.on) return;
+    if (o->vr > 1.5f) vr_st.nraw++;
+    else if (o->vr > 0.5f) vr_st.n3d++;
+    else {
+        vr_st.n2d++;
+        if (vr_st.ns < 8 && (vr_st.n2d % 7) == 1) { vr_st.s[vr_st.ns][0] = o->x; vr_st.s[vr_st.ns][1] = o->y; vr_st.s[vr_st.ns][2] = o->z; vr_st.ns++; }
+    }
+}
 static GLint u_rt_size, u_rt_margin, u_tme, u_tfx, u_tcc, u_fst, u_texsize, u_fge, u_fogcol, u_ate, u_atst, u_aref,
              u_tex, u_tex_alpha_scale, u_texofs, u_premul, u_zscale, u_clamp_mode, u_clamp_vals, u_afail_pass, u_rt16;
 static GLint up_tex, up_rect;
@@ -1307,7 +1319,12 @@ static void push(const GsVertex* v, const GsVertex* attr, float s, float t)
     GlVertex* o = &vbuf[vcount++];
     o->x = v->x; o->y = v->y; o->z = attr->z; o->w = 1.0f;
     o->clip[0] = o->clip[1] = 1.0f;
-    { extern int gs_raw_vr; o->vr = gs_raw_vr ? 2.0f : 0.0f; }   /* 2: a 3D point's sprite/line corner (GS depth -> view depth) */
+    {   /* 2: a 3D point drawn through the GS registers (sprites/lines of 3D points, VU1 program output):
+           the view depth comes back from its GS depth */
+        extern int gs_raw_vr, gs_vu1_vr;
+        o->vr = (gs_raw_vr || gs_vu1_vr) ? 2.0f : 0.0f;
+        vr_stat_vertex(o);
+    }
     o->s = s; o->t = t; o->q = attr->q;
     const float* u = u8_unit();
     o->r = u[attr->r]; o->g = u[attr->g]; o->b = u[attr->b]; o->a = u[attr->a];
@@ -1411,6 +1428,7 @@ static void native_to_gl(unsigned int prim, const NativeVertex* v, int n, GlVert
             o->fog = (float)((int32_t)q->fog & 0xFF);   /* XYZF2 F: FTOI4, low 8 bits */
             o->clip[0] = q->near_d; o->clip[1] = q->far_d;
             o->vr = (q->cull & 0x80) ? 1.0f : 0.0f;
+            vr_stat_vertex(o);
         }
 }
 
@@ -1920,7 +1938,18 @@ static int present_vr_stereo(const struct Frame* cur)
         memcpy(vr_u.m, M, sizeof(M));
         vr_u.zab[0] = v->za; vr_u.zab[1] = v->zb;
         vr_u.on = 1;
-        stream_replay_exact(cur);
+        {
+            static unsigned nlog;
+            int logit = e == 0 && nlog < 40 && (frame_no % 90) == 0;
+            if (logit) memset(&vr_st, 0, sizeof(vr_st)), vr_st.on = 1;
+            stream_replay_exact(cur);
+            if (logit) {
+                vr_st.on = 0; nlog++;
+                host_log("vr: frame %llu vertices: 3D %u, GS-depth (sprites/VU1) %u, flat 2D %u\n",
+                         (unsigned long long)frame_no, vr_st.n3d, vr_st.nraw, vr_st.n2d);
+                for (int k = 0; k < vr_st.ns; k++) host_log("vr:   flat 2D sample x %.1f y %.1f z %.0f\n", vr_st.s[k][0], vr_st.s[k][1], vr_st.s[k][2]);
+            }
+        }
         vr_u.on = 0;
         rt = rt_find(gs.disp_fbp, gs.disp_fbw ? gs.disp_fbw : 10);
         tex = xr_eye_target(e, w, h);

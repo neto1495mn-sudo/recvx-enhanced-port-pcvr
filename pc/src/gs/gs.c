@@ -155,8 +155,11 @@ void gs_upload_image(const uint8_t* src, uint32_t bytes) { stream_image(src, byt
 static void flush_for(uint64_t old, uint64_t v) { if (old != v || gs_batch_two_pass()) gs_flush(); }
 
 /* render thread: the GS register file */
+int gs_vu1_vr;   /* VR: between the 0x7E markers, the GS vertices came from VU1 programs (3D) */
+
 void gs_exec_reg(int reg, uint64_t v)
 {
+    if (reg == 0x7E) { gs_vu1_vr = (int)(v & 1); return; }   /* VR marker (vif.c vu1_xgkick) */
     gs_reg_serial++;
     switch (reg) {
     case 0x00: gs.prim = v & 0x7FF; gs.qcount = 0; break;

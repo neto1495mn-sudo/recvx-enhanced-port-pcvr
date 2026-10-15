@@ -46,6 +46,12 @@ static void vu1_start(uint32_t addr)
 
 void vu1_xgkick(const VuVec* mem, uint32_t qw, uint32_t mask)
 {
+    /* VR: what the emulated VU1 programs draw is 3D projected by them (Z = -b * Iz - a): marked
+       so the renderer can re-project it per eye (gs_gl.c push); only while stereo is on */
+    extern int xr_stereo_ready(void);
+    extern void gs_write_reg(int reg, uint64_t v);
+    int vr_mark = xr_stereo_ready();
+    if (vr_mark) gs_write_reg(0x7E, 1);
     /* walk GIF tags in VU1 memory until EOP */
     for (int guard = 0; guard < 1024; guard++) {
         const uint32_t* tag = mem[qw & mask].u;
@@ -64,6 +70,7 @@ void vu1_xgkick(const VuVec* mem, uint32_t qw, uint32_t mask)
         qw += qwc + 1;
         if (eop) break;
     }
+    if (vr_mark) gs_write_reg(0x7E, 0);
 }
 
 /* ---- UNPACK ---- */
