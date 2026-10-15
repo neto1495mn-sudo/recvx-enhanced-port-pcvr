@@ -1926,6 +1926,61 @@ static const char* vig_fs =
     "in vec2 v_t; uniform float u_amt; out vec4 o;\n"
     "void main(){ float r = length(v_t); float a = smoothstep(0.45, 1.25, r) * u_amt; o = vec4(0.75, 0.0, 0.0, a); }\n";
 
+/* VR aiming sights (VrView.sight, vr_glue.c sight_add): a small white ring with a thin dark
+   edge at each point, drawn over the eye image; its size is an angle (vr_sight_size: hundredths
+   of a degree across) */
+int g_vr_sight_size = 120;
+static GLuint sight_prog;
+static GLint us_rect;
+static const char* sight_vs =
+    "#version 330 core\n"
+    "uniform vec4 u_rect;\n"   /* centre (NDC) and half size (NDC) */
+    "out vec2 v_c;\n"
+    "void main(){\n"
+    "  vec2 c = vec2((gl_VertexID & 1) != 0 ? 1.0 : -1.0, (gl_VertexID & 2) != 0 ? 1.0 : -1.0);\n"
+    "  v_c = c;\n"
+    "  gl_Position = vec4(u_rect.xy + c * u_rect.zw, 0.0, 1.0);\n"
+    "}\n";
+static const char* sight_fs =
+    "#version 330 core\n"
+    "in vec2 v_c; out vec4 o;\n"
+    "void main(){\n"
+    "  float r = length(v_c), aa = fwidth(r);\n"
+    "  float ring = smoothstep(0.50 - aa, 0.50 + aa, r) * (1.0 - smoothstep(0.72 - aa, 0.72 + aa, r));\n"
+    "  float edge = smoothstep(0.36 - aa, 0.36 + aa, r) * (1.0 - smoothstep(0.90 - aa, 0.90 + aa, r));\n"
+    "  vec3 col = mix(vec3(0.0), vec3(1.0), ring);\n"
+    "  float a = max(ring * 0.95, edge * 0.45);\n"
+    "  if (a <= 0.0) discard;\n"
+    "  o = vec4(col, a);\n"
+    "}\n";
+
+static void draw_sights(const VrView* v, const float M[16], const VrEye* E, int w, int h)
+{
+    if (!v || v->sight_n <= 0) return;
+    if (!sight_prog) { sight_prog = compile(sight_vs, sight_fs); us_rect = glGetUniformLocation(sight_prog, "u_rect"); }
+    glViewport(0, 0, w, h);
+    glEnable(GL_BLEND);
+    glBlendEquationSeparate(GL_FUNC_ADD, GL_FUNC_ADD);
+    glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ZERO, GL_ONE);
+    glUseProgram(sight_prog);
+    glBindVertexArray(present_vao);
+    for (int i = 0; i < v->sight_n && i < 2; i++) {
+        const float* p = v->sight[i];
+        float V[3], e[3], tx, ty, half, nx, ny;
+        for (int k = 0; k < 3; k++) V[k] = v->G[k] * p[0] + v->G[4 + k] * p[1] + v->G[8 + k] * p[2] + v->G[12 + k];   /* world -> V */
+        for (int k = 0; k < 3; k++) e[k] = M[k] * V[0] + M[4 + k] * V[1] + M[8 + k] * V[2] + M[12 + k];               /* V -> eye (x right, y down, z forward) */
+        if (e[2] < 0.05f) continue;
+        tx = e[0] / e[2]; ty = -e[1] / e[2];                                    /* tangents right, up */
+        nx = (tx - E->l) / (E->r - E->l) * 2.0f - 1.0f;
+        ny = (ty - E->d) / (E->u - E->d) * 2.0f - 1.0f;
+        half = tanf(g_vr_sight_size / 100.0f * (3.14159265f / 360.0f)) / 0.9f;   /* the ring's outer edge at 0.9 */
+        glUniform4f(us_rect, nx, ny, half / (E->r - E->l) * 2.0f, half / (E->u - E->d) * 2.0f);
+        glDrawArrays(0x0005 /* GL_TRIANGLE_STRIP */, 0, 4);
+    }
+    glBindVertexArray(vao);
+    glDisable(GL_BLEND);
+}
+
 static void draw_vignette(const VrEye* E, int w, int h)
 {
     float t, beat, amt;
@@ -2060,6 +2115,7 @@ static int present_vr_stereo(const struct Frame* cur)
             glBindFramebuffer(GL_FRAMEBUFFER, vr_fbo);
             glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
             draw_area_to(rt->tex, rt->vw, rt->vh, w, h);
+            draw_sights(v, M, E, w, h);
             draw_vignette(E, w, h);
             glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
             glBindFramebuffer(GL_FRAMEBUFFER, 0);

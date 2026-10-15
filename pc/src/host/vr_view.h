@@ -32,6 +32,8 @@ typedef struct {
     float W[16];                /* local -> world */
     float cx, cy, kx, ky;       /* the game's projection: screen = c * Vz + k * V.xy (GS pixels, before XYOFFSET) */
     float za, zb;               /* GS depth of a view depth: z = -zb / Vz - za (Ps2_zbuff_a/b) */
+    int   sight_n;              /* aiming sights to draw (0..2): where each gun's shot would hit */
+    float sight[2][3];          /* their points (world) */
 } VrView;
 
 /* small 4x4 helpers (column-major), vr_math.c */

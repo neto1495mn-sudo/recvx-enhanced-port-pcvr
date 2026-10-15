@@ -1,6 +1,6 @@
 /* User settings: <save_dir>/recvx.ini, "key = value" lines. */
 #include "xr.h"
-extern int g_vr_scale, g_vr_eye_height, g_vr_fov, g_vr_turn, g_vr_hand_aim, g_vr_fx_fix, g_vr_gun_min, g_vr_hand_offset, g_vr_slash_speed, g_vr_hit_tilt, g_vr_danger_fx, g_vr_eye_shape, g_vr_screen_angle, g_vr_left_mirror, g_vr_dmg_head, g_vr_dmg_body, g_vr_dmg_arm, g_vr_dmg_leg, g_vr_recoil, g_vr_haptics, g_vr_hud_dist, g_vr_hud_angle;   /* pc/glue/vr_glue.c */
+extern int g_vr_scale, g_vr_eye_height, g_vr_fov, g_vr_turn, g_vr_hand_aim, g_vr_fx_fix, g_vr_gun_min, g_vr_hand_offset, g_vr_slash_speed, g_vr_hit_tilt, g_vr_danger_fx, g_vr_eye_shape, g_vr_screen_angle, g_vr_left_mirror, g_vr_dmg_head, g_vr_dmg_body, g_vr_dmg_arm, g_vr_dmg_leg, g_vr_recoil, g_vr_haptics, g_vr_hud_dist, g_vr_hud_angle, g_vr_sight, g_vr_sight_size;   /* pc/glue/vr_glue.c */
 #include "../ps2_platform.h"
 #include "coop.h"
 #include "actors.h"
@@ -84,6 +84,8 @@ static const struct { const char* key; int* val; int lo, hi; } keys[] = {
     { "vr_dmg_arm", &g_vr_dmg_arm, 0, 1000 },
     { "vr_dmg_leg", &g_vr_dmg_leg, 0, 1000 },
     { "vr_recoil", &g_vr_recoil, 0, 1 },
+    { "vr_sight", &g_vr_sight, 0, 1 },
+    { "vr_sight_size", &g_vr_sight_size, 10, 400 },
     { "vr_haptics", &g_vr_haptics, 0, 1 },
     { "vr_hud_dist", &g_vr_hud_dist, 30, 1000 },
     { "vr_hud_angle", &g_vr_hud_angle, 0, 120 },
