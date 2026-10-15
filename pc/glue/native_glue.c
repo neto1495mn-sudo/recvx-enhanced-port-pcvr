@@ -41,6 +41,20 @@ static int vr_big(float x, float y, const void* verts, int n, size_t stride)
     return (x1 - x0) > 320.0f || (y1 - y0) > 240.0f;
 }
 
+/* VR: a big polygon is a screen layer (fade, filter, copy: kept over the whole view) only when it
+   covers the whole screen or lies flat at one depth; a big one whose corners recede in depth is a
+   3D surface close to the camera - blood on the floor seen from near - and stays in the world */
+static int vr_screen_layer(const NativeVertex* v, int n)
+{
+    float x0 = v[0].x, x1 = v[0].x, y0 = v[0].y, y1 = v[0].y, z0 = v[0].z, z1 = v[0].z;
+    for (int i = 1; i < n; i++) {
+        x0 = fminf(x0, v[i].x); x1 = fmaxf(x1, v[i].x); y0 = fminf(y0, v[i].y); y1 = fmaxf(y1, v[i].y);
+        z0 = fminf(z0, v[i].z); z1 = fmaxf(z1, v[i].z);
+    }
+    if (!((x1 - x0) > 320.0f || (y1 - y0) > 240.0f)) return 0;
+    return ((x1 - x0) >= 600.0f && (y1 - y0) >= 400.0f) || (z1 - z0) <= 0.002f * fabsf(z1) + 1.0f;
+}
+
 static float clamp01(float v) { return v < 0.0f ? 0.0f : v > 1.0f ? 1.0f : v; }
 
 /* vu1GetVertexColor* (vf18 ambient, vf19 diffuse, vf20 specular, vf21.w alpha ratio) */
@@ -196,7 +210,8 @@ uint32_t pc_native_prim(unsigned int prim, const unsigned int* dp, int n, int cl
             o->z = Ps2_zbuff_a + Ps2_zbuff_b / z;
         }
     }
-    if (!clip_3d_on && n > 0 && vr_big(v[0].x, v[0].y, v, n, sizeof(NativeVertex)))   /* a screen layer: stays 2D */
+    int layer = !clip_3d_on && n > 0 && vr_screen_layer(v, n);
+    if (layer)   /* a screen layer: stays 2D */
         for (int i = 0; i < n; i++) v[i].cull &= (uint8_t)~0x40;
     else if (!clip_3d_on && n > 0 && g_vr_fx_fix) {
         /* VR: one effect polygon with some corners in the world (0x40) and some not - those came out
@@ -214,7 +229,7 @@ uint32_t pc_native_prim(unsigned int prim, const unsigned int* dp, int n, int cl
     if (!clip_3d_on && n > 0) {   /* tall (more than half the screen top to bottom): a screen layer VR keeps over the whole view (0x20); wide and low goes on the panel */
         float y0 = v[0].y, y1 = v[0].y;
         for (int i = 1; i < n; i++) { y0 = fminf(y0, v[i].y); y1 = fmaxf(y1, v[i].y); }
-        if (y1 - y0 > 240.0f) for (int i = 0; i < n; i++) v[i].cull |= 0x20;
+        if (y1 - y0 > 240.0f && (layer || !(v[0].cull & 0x40))) for (int i = 0; i < n; i++) v[i].cull |= 0x20;   /* (not a big effect in the world) */
     }
     return native_defer(prim, v, n, deferred ? pc_cur_mesh : 0, pc_cur_strip);
 }

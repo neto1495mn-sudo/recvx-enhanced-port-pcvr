@@ -1409,6 +1409,7 @@ static const float* u8_unit(void)
 /* VR: the primitive being pushed covers more than half the screen either way (full-screen
    layers, copies, fades): never taken for a projected effect (vr_fx_fix) */
 static int prim_big;
+static int prim_layer;  /* VR: big and covering the whole screen or flat at one depth: a screen layer (big receding effects stay in the world) */
 static int prim_tall;   /* VR: covers more than half the screen top to bottom - a screen layer (fades, filters, copies); wide and low (message bands) goes on the panel */
 
 static void push(const GsVertex* v, const GsVertex* attr, float s, float t)
@@ -1421,7 +1422,7 @@ static void push(const GsVertex* v, const GsVertex* attr, float s, float t)
            itself are; overlays have depth 0): the view depth comes back from its GS depth */
         extern int gs_raw_vr, gs_vu1_vr, gs_in_raw, gs_raw_ui, g_vr_fx_fix;
         int fx = g_vr_fx_fix && o->z > 100.0f && !gs_raw_ui;
-        if (fx && prim_big) { fx = 0; if (vr_st.on) vr_st.nbig++; }   /* a screen layer, not an effect */
+        if (fx && prim_layer) { fx = 0; if (vr_st.on) vr_st.nbig++; }   /* a screen layer, not an effect */
         o->vr = (gs_raw_vr || gs_vu1_vr || fx) ? 2.0f : prim_tall ? 0.0f : 3.0f;   /* 3: the game's 2D, on the VR panel; 0: screen layers */
         vr_stat_vertex_p(o, gs_in_raw ? 'S' : 'R');
     }
@@ -1469,13 +1470,16 @@ void gs_draw_primitive(int type, const GsVertex* v, int count, const GsContext* 
     {
         float x0 = v[0].x, x1 = v[0].x, y0 = v[0].y, y1 = v[0].y;
         for (int i = 1; i < count; i++) { x0 = fminf(x0, v[i].x); x1 = fmaxf(x1, v[i].x); y0 = fminf(y0, v[i].y); y1 = fmaxf(y1, v[i].y); }
+        float z0 = v[0].z, z1 = v[0].z;
+        for (int i = 1; i < count; i++) { z0 = fminf(z0, v[i].z); z1 = fmaxf(z1, v[i].z); }
         prim_big = (x1 - x0) > 320.0f || (y1 - y0) > 240.0f;
-        prim_tall = (y1 - y0) > 240.0f;
+        prim_layer = prim_big && (((x1 - x0) >= 600.0f && (y1 - y0) >= 400.0f) || (z1 - z0) <= 0.002f * fabsf(z1) + 1.0f);
+        prim_tall = (y1 - y0) > 240.0f && (prim_layer || z1 <= 100.0f);
     }
     {   /* VR (as native_glue.c): a polygon with corners both in the world (GS depth) and not - the
            others behind or too close to the camera - stretched between the world and the panel: left out */
         extern int gs_raw_vr, gs_vu1_vr, gs_raw_ui, g_vr_fx_fix;
-        if (vr_u.on && g_vr_fx_fix && !gs_raw_vr && !gs_vu1_vr && !gs_raw_ui && !prim_big && count > 1) {
+        if (vr_u.on && g_vr_fx_fix && !gs_raw_vr && !gs_vu1_vr && !gs_raw_ui && !prim_layer && count > 1) {
             int fx = 0, other = 0;
             for (int i = 0; i < count; i++) { if (v[i].z > 100.0f) fx++; else other++; }
             if (fx && other) return;
