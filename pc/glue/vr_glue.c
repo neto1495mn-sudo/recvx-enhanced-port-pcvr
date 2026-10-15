@@ -637,9 +637,24 @@ int vr_shot_wakes(BH_PWORK* pp, GA_WORK* gap)
     }
     dx = pp->px - plp->px; dz = pp->pz - plp->pz;
     if (dx * dx + dz * dz < 30.0f * 30.0f * (g_vr_scale / 100.0f) * (g_vr_scale / 100.0f)) return 0;
-    {
-        static int nlog;
-        if (nlog++ < 100) vr_log("vr: shot at a sleeping zombie (enemy %d, type %d, flg %x, stflg %x, mode %d/%d/%d, hp %d)\n", (int)(pp - ene), pp->type, pp->flg, pp->stflg, pp->mode0, pp->mode1, pp->mode2, pp->hp);
+    if (pp->mlwP && pp->mlwP->owP && pp->mlwP->obj_num > 1) {
+        /* its body capsule as it lies now: the game does not move it while asleep, and the shot
+           test starts from that capsule's middle (a stale one is "behind the gun": every shot missed) */
+        O_WORK* o = pp->mlwP->owP;
+        float best = -1, ox = pp->watr.c1.x, oy = pp->watr.c1.y, oz = pp->watr.c1.z;
+        int far = 0;
+        for (int j = 1; j < (int)pp->mlwP->obj_num && j < 64; j++) {
+            float ex = o[j].mtx[12] - o[0].mtx[12], ey = o[j].mtx[13] - o[0].mtx[13], ez = o[j].mtx[14] - o[0].mtx[14], l2 = ex * ex + ey * ey + ez * ez;
+            if (l2 > best) { best = l2; far = j; }
+        }
+        pp->watr.c1.x = o[far].mtx[12]; pp->watr.c1.y = o[far].mtx[13]; pp->watr.c1.z = o[far].mtx[14];
+        pp->watr.c2.x = o[0].mtx[12]; pp->watr.c2.y = o[0].mtx[13]; pp->watr.c2.z = o[0].mtx[14];
+        if (pp->watr.r < 2.0f) pp->watr.r = 2.5f;
+        {
+            static int nlog;
+            if (nlog++ < 60) vr_log("vr: shot at a sleeping zombie (enemy %d, type %d, mode %d/%d/%d, hp %d): body capsule moved %.1f units to it\n", (int)(pp - ene), pp->type, pp->mode0, pp->mode1, pp->mode2, pp->hp,
+                                    sqrtf((ox - pp->watr.c1.x) * (ox - pp->watr.c1.x) + (oy - pp->watr.c1.y) * (oy - pp->watr.c1.y) + (oz - pp->watr.c1.z) * (oz - pp->watr.c1.z)));
+        }
     }
     return 1;
 }
