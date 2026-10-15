@@ -344,27 +344,15 @@ static void aim_walk_update(void)
         if (run) run_spd += (d - run_spd) * 0.05f;   /* the game's own steps, averaged */
         else walk_spd += (d - walk_spd) * 0.05f;
     }
-    {   /* diagnosis (vr: aim walk), twice a second while aiming with the stick out */
-        static int n, nlog;
-        if (stick && plp->mode1 == 1 && (n++ % 15) == 0 && nlog < 200) {
-            nlog++;
-            vr_log("vr: aim walk: mode %d/%d/%d msg %d stick %.2f %.2f speed %.2f/%.2f at %.1f %.1f, %.2f since last frame\n",
-                   plp->mode0, plp->mode1, plp->mode2, (sys->st_flg & 0x200) != 0, in.lx, in.ly, walk_spd, run_spd, plp->px, plp->pz, last_ok ? d : -1.0f);
-        }
-    }
     if (g_vr_aim_walk && stick && plp->mode0 == 1 && plp->mode1 == 1 && !(sys->st_flg & 0x200)) {
         float a = (float)cam.ay * (3.14159265f / 32768.0f), fx = sinf(a), fz = -cosf(a), rx = cosf(a), rz = sinf(a);
-        float m = sqrtf(in.lx * in.lx + in.ly * in.ly), mx, mz, sp = (run && !dual_equipped()) ? run_spd : walk_spd;
+        float m = sqrtf(in.lx * in.lx + in.ly * in.ly), mx, mz, sp = 0.6f * walk_spd;   /* aiming: no running, 60% of her walk */
         if (m > 1.0f) m = 1.0f;
         mx = (fx * in.ly + rx * in.lx); mz = (fz * in.ly + rz * in.lx);
         d = sqrtf(mx * mx + mz * mz);
         if (d > 1e-4f) {
             mx = mx / d * sp * m; mz = mz / d * sp * m;
-            {
-                static int n2, nlog2;
-                int how = body_move(mx, mz);
-                if ((n2++ % 15) == 0 && nlog2 < 200) { nlog2++; vr_log("vr: aim walk: step %.2f %.2f %s\n", mx, mz, how == 3 ? "moved" : how ? "slid along a wall" : "blocked by a wall"); }
-            }
+            body_move(mx, mz);
         }
     }
 }
