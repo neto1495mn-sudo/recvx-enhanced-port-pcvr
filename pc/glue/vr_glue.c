@@ -325,6 +325,50 @@ static void body_follow(const VrPose* h)
     body_move(dx, dz);   /* (sliding along a wall) */
 }
 
+/* ini vr_debug_log: the enemies' diary - every change of an enemy's state, life, hittability,
+   scene control and position jumps (or walks through a wall), with the time and room, so a
+   misbehaving zombie can be followed in recvx.log. Only changes are written. */
+int g_vr_debug_log = 1;
+static void enemy_diary(void)
+{
+    static struct { int seen, m, hp, flg, type; float x, z; } last[128];
+    static int room = -1;
+    static const char* m0[] = { "init", "move", "grab", "damage", "die", "event", "6", "7" };
+    int r = sys->stg_no * 1000 + sys->rom_no * 10 + sys->rcase;
+    double t = SDL_GetTicks() / 1000.0;
+    if (!g_vr_debug_log) return;
+    if (r != room) { room = r; memset(last, 0, sizeof(last)); vr_log("diary %.1f: room RM_%04d, %d enemy slots\n", t, r, sys->ewk_n); }
+    for (int i = 0; i < sys->ewk_n && i < 128; i++) {
+        BH_PWORK* e = &ene[i];
+        int m = e->mode0 << 24 | e->mode1 << 16 | e->mode2 << 8 | e->mode3, f = (int)(e->flg & 0x40023);
+        if (!(e->flg & 1)) { if (last[i].seen) { vr_log("diary %.1f: enemy %d (id %d) gone\n", t, i, e->id); last[i].seen = 0; } continue; }
+        if (!last[i].seen) {
+            vr_log("diary %.1f: enemy %d id %d type %d at (%.0f %.0f), mode %s %d/%d/%d, life %d, %s%s\n", t, i, e->id, e->type, e->px, e->pz,
+                   m0[e->mode0 & 7], e->mode1, e->mode2, e->mode3, e->hp, (e->flg & 0x20) ? "hittable" : "unhittable", (e->flg & 0x40000) ? ", held by a scene" : "");
+        } else {
+            float dx = e->px - last[i].x, dz = e->pz - last[i].z, d = sqrtf(dx * dx + dz * dz);
+            if (m != last[i].m) vr_log("diary %.1f: enemy %d mode %s %d/%d/%d (was %s %d/%d/%d), life %d\n", t, i, m0[e->mode0 & 7], e->mode1, e->mode2, e->mode3,
+                                       m0[(last[i].m >> 24) & 7], (last[i].m >> 16) & 0xFF, (last[i].m >> 8) & 0xFF, last[i].m & 0xFF, e->hp);
+            if (e->hp != last[i].hp) vr_log("diary %.1f: enemy %d life %d -> %d (mode %s)\n", t, i, last[i].hp, e->hp, m0[e->mode0 & 7]);
+            if ((f ^ last[i].flg) & 0x20) vr_log("diary %.1f: enemy %d now %s (mode %s %d/%d/%d)\n", t, i, (f & 0x20) ? "hittable" : "unhittable", m0[e->mode0 & 7], e->mode1, e->mode2, e->mode3);
+            if ((f ^ last[i].flg) & 0x40000) vr_log("diary %.1f: enemy %d %s a scene\n", t, i, (f & 0x40000) ? "held by" : "let go by");
+            if (e->type != last[i].type) vr_log("diary %.1f: enemy %d type %d -> %d\n", t, i, last[i].type, e->type);
+            if (d > 15.0f) vr_log("diary %.1f: enemy %d jumped %.0f units to (%.0f %.0f)\n", t, i, d, e->px, e->pz);
+            else if (d > 0.3f) {   /* a step across a wall (the game's own wall test, from where it stood) */
+                NJS_LINE line;
+                NJS_POINT3 apos = sys->apos;
+                ATR_WORK* ahtp = sys->ahtp;
+                float len;
+                line.px = last[i].x; line.py = e->py + 6.0f; line.pz = last[i].z;
+                line.vx = dx; line.vy = 0; line.vz = dz;
+                if (bhCheckL2Wall(&line, 0x400, &len) && len < d) vr_log("diary %.1f: enemy %d stepped through a wall at (%.0f %.0f), mode %s %d/%d/%d\n", t, i, e->px, e->pz, m0[e->mode0 & 7], e->mode1, e->mode2, e->mode3);
+                sys->apos = apos; sys->ahtp = ahtp;
+            }
+        }
+        last[i].seen = 1; last[i].m = m; last[i].hp = e->hp; last[i].flg = f; last[i].type = e->type; last[i].x = e->px; last[i].z = e->pz;
+    }
+}
+
 /* Walking while aiming: the game holds Claire still with a weapon raised; in VR the left stick
    moves her where the head looks at the speed she walks (runs, with the run trigger) - measured
    from her own walking (not stairs, not the room's walking) - through the game's walls. */
@@ -519,6 +563,7 @@ void vr_camera(void)
 
     /* Wg: recentred tracking space (metres) -> world: scaled, turned with the body, the
        recentred origin (the head at recentring) at the player's eyes, tilted by a hit */
+    enemy_diary();
     aim_walk_update();
     body_follow(&h);
     last_px = plp->px; last_pz = plp->pz; last_ok = 1;
@@ -677,7 +722,7 @@ int vr_part_damage(BH_PWORK* pp, int kno, int d0, int d1)
     } else mult = (part == 1 ? g_vr_dmg_head : part == 2 ? g_vr_dmg_arm : g_vr_dmg_leg) / 100.0f;
     out = (int)(add * mult + 0.5f);
     if (out < 1) out = 1;
-    { static int nlog; if (nlog++ < 300) vr_log("vr: hit zombie %s x%.2f (%d -> %d)\n", names[part], mult, add, out); }
+    { static int nlog; if (nlog++ < 300 || g_vr_debug_log) vr_log("vr: hit zombie %d %s x%.2f (%d -> %d)\n", (int)(pp - ene), names[part], mult, add, out); }
     return d0 + out;
 }
 

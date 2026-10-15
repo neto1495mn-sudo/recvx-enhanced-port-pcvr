@@ -78,10 +78,15 @@ void ps2_poll_interrupts(void)
 }
 
 /* Block until the next VBLANK interrupt has been delivered. */
+int g_fast_doors = 1;   /* ini fast_doors: room loads (black screen, NowLoadDisp) run as fast as the PC goes */
+int pc_fast_doors(void) { return g_fast_doors; }
+
 void ps2_wait_vblank(void)
 {
     uint64_t target;
+    extern unsigned char NowLoadDisp;   /* (system.c: the game is loading a room behind a black screen) */
     prof_push(PROF_WAIT);
+    if (g_fast_doors && NowLoadDisp) next_vblank_ns = SDL_GetTicksNS();   /* no pacing: nothing is shown */
     if (!next_vblank_ns) next_vblank_ns = SDL_GetTicksNS() + NTSC_VBLANK_NS;
     target = next_vblank_ns;
     for (;;) {
