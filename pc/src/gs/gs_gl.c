@@ -150,7 +150,7 @@ static void vr_stat_vertex_p(const GlVertex* o, char path)
 }
 static void vr_stat_vertex(const GlVertex* o) { vr_stat_vertex_p(o, 'N'); }
 static GLint u_rt_size, u_rt_margin, u_tme, u_tfx, u_tcc, u_fst, u_texsize, u_fge, u_fogcol, u_ate, u_atst, u_aref,
-             u_tex, u_tex_alpha_scale, u_texofs, u_premul, u_zscale, u_clamp_mode, u_clamp_vals, u_afail_pass, u_rt16;
+             u_tex, u_tex_alpha_scale, u_texofs, u_premul, u_zscale, u_clamp_mode, u_clamp_vals, u_afail_pass, u_rt16, u_dbg;
 static GLint up_tex, up_rect;
 
 static const char* vs_src =
@@ -172,7 +172,7 @@ static const char* vs_src =
        interpolation; native 3D triangles stay whole where VU1 would have cut them at the guard
        band, and screen-linear colour/fog across a triangle reaching far off-screen near the
        camera is wrong (walls came out fully fogged in third-person view) */
-    "out vec3 v_stq; out vec4 v_col; out float v_fog;\n"
+    "out vec3 v_stq; out vec4 v_col; out float v_fog; flat out float v_path;\n"
     "void main(){\n"
     "  vec4 P = a_pos;\n"
     "  vec2 clip = a_clip;\n"
@@ -201,12 +201,12 @@ static const char* vs_src =
     "  vec2 p = (vec2(P.x + u_rt_margin * w, P.y) / u_rt_size) * 2.0 - w;\n"
     "  gl_Position = vec4(p, P.z * u_zscale * 2.0 - w, w);\n"
     "  gl_ClipDistance[0] = clip.x; gl_ClipDistance[1] = clip.y;\n"
-    "  v_stq = a_stq; v_col = a_col; v_fog = a_fog;\n"
+    "  v_stq = a_stq; v_col = a_col; v_fog = a_fog; v_path = a_vr;\n"
     "}\n";
 
 static const char* fs_src =
     "#version 330 core\n"
-    "in vec3 v_stq; in vec4 v_col; in float v_fog;\n"
+    "in vec3 v_stq; in vec4 v_col; in float v_fog; flat in float v_path; uniform int u_dbg;\n"
     "uniform sampler2D u_tex;\n"
     "uniform int u_tme, u_tfx, u_tcc, u_fst, u_fge, u_ate, u_atst, u_premul, u_afail_pass;\n"
     "uniform float u_aref, u_tex_alpha_scale;\n"
@@ -256,6 +256,10 @@ static const char* fs_src =
     "  float as = c.a / 128.0;\n"
     "  vec3 rgb = c.rgb / 255.0;\n"
     "  if (u_premul == 1) rgb *= (1.0 + as);\n"
+    "  if (u_dbg != 0) {\n"   /* vr_debug_cores: the path of each draw tinted (diagnosis) */
+    "    vec3 k = v_path > 2.5 ? vec3(1.0, 0.9, 0.0) : v_path > 2.1 ? vec3(0.0, 1.0, 0.0) : v_path > 1.5 ? vec3(0.1, 0.3, 1.0) : v_path < 0.5 ? vec3(1.0, 0.0, 1.0) : rgb;\n"
+    "    rgb = mix(rgb, k, 0.7);\n"
+    "  }\n"
     "  o_col = vec4(rgb, as);\n"
     "}\n";
 
@@ -308,7 +312,7 @@ void gs_renderer_init(void)
     prog = compile(vs_src, fs_src);
 #define U(n) u_##n = glGetUniformLocation(prog, "u_" #n)
     U(rt_size); U(rt_margin); U(tme); U(tfx); U(tcc); U(fst); U(texsize); U(fge); U(fogcol); U(ate); U(atst); U(aref);
-    U(tex); U(tex_alpha_scale); U(texofs); U(premul); U(zscale); U(clamp_mode); U(clamp_vals); U(afail_pass); U(rt16);
+    U(tex); U(tex_alpha_scale); U(texofs); U(premul); U(zscale); U(clamp_mode); U(clamp_vals); U(afail_pass); U(rt16); U(dbg);
     U(vr_on); U(vr_src); U(vr_dst); U(vr_m0); U(vr_m1); U(vr_m2); U(vr_m3); U(vr_zab); U(vr_zs); U(vr_hud);
 #undef U
     present_prog = compile(present_vs, present_fs);
@@ -1277,6 +1281,7 @@ void gs_flush(void)
 
     apply_blend(st, &premul);
     uni1i(u_premul, premul);
+    { extern int g_vr_debug_cores; uni1i(u_dbg, g_vr_debug_cores && vr_u.on); }
 
     /* texture */
     tme = (st->prim >> 4) & 1;
@@ -1537,7 +1542,7 @@ static void native_to_gl(unsigned int prim, const NativeVertex* v, int n, GlVert
             o->r = u[p->r]; o->g = u[p->g]; o->b = u[p->b]; o->a = u[p->a];
             o->fog = (float)((int32_t)q->fog & 0xFF);   /* XYZF2 F: FTOI4, low 8 bits */
             o->clip[0] = q->near_d; o->clip[1] = q->far_d;
-            o->vr = (q->cull & 0x80) ? 1.0f : (q->cull & 0x40) ? 2.0f : (q->cull & 0x20) ? 0.0f : 3.0f;   /* 2: 2D with a GS depth (vr_fx_fix); 3: 2D on the VR panel; 0: screen layers */
+            o->vr = (q->cull & 0x80) ? 1.0f : (q->cull & 0x40) ? 2.25f : (q->cull & 0x20) ? 0.0f : 3.0f;   /* (2.25: a native effect - the same path, told apart by vr_debug_cores) */   /* 2: 2D with a GS depth (vr_fx_fix); 3: 2D on the VR panel; 0: screen layers */
             vr_stat_vertex(o);
         }
 }
@@ -2163,6 +2168,7 @@ static void draw_area_to(GLuint tex, int rt_vw, int rt_vh, int w, int h)
    their own poses (fixed in the room) while it fades to black and the next room loads; the next
    room then fades in. vr_fade: brightness 1 .. 0. */
 int g_vr_door_fade = 1;   /* ini vr_door_fade */
+int g_vr_debug_cores = 0; /* ini vr_debug_cores: tint each VR draw path (green: native effects, blue: GS-register effects, yellow: the panel, magenta: screen layers) */
 static GLuint hold_tex[2], hold_fbo, fade_prog;
 static GLint uf_tex, uf_rect, uf_k, uf_mode;
 static int hold_w, hold_h, hold_valid;
