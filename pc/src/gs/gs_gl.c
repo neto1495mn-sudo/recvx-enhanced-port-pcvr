@@ -527,7 +527,6 @@ static int wanted_margin(void)
     int ww, wh;
     float k;
     if (g_config.aspect != ASPECT_WIDE) return 0;
-    if (xr_active() && g_vr_stereo) return 0;   /* VR: 4:3 eye images (a headset eye is nearly square; the VR camera culls wide anyway) */
     SDL_GetWindowSizeInPixels(g_window, &ww, &wh);
     k = (ww * 3.0f) / (wh * 4.0f);
     if (k <= 1.0f) return 0;
