@@ -151,6 +151,34 @@ static void add_file(const char* dir, const char* name)
     }
 }
 
+/* ignorar.txt: one pack file name per line (or its first part: the texture hash, with or
+   without the palette hash) - those textures stay as the game's own */
+#define MAX_IGNORE 1024
+static struct { uint64_t h, clut; int any_clut; } ign[MAX_IGNORE];
+static int nign;
+static void read_ignore(const char* path)
+{
+    FILE* f = fopen(path, "rb");
+    char line[512];
+    if (!f) return;
+    while (fgets(line, sizeof(line), f) && nign < MAX_IGNORE) {
+        const char* s = line;
+        uint64_t h, c;
+        while (*s == ' ' || *s == '\t' || *s == '\xEF' || *s == '\xBB' || *s == '\xBF') s++;   /* (a UTF-8 mark from Notepad) */
+        if (!parse_hex(&s, &h)) continue;
+        ign[nign].h = h; ign[nign].any_clut = 1;
+        if (*s == '-') {
+            const char* t = s + 1;
+            const char* u = t;
+            if (parse_hex(&t, &c) && *t == '-') { ign[nign].clut = c; ign[nign].any_clut = 0; }   /* h-clut-bits */
+            (void)u;
+        }
+        nign++;
+    }
+    fclose(f);
+    host_log("tex: %s: %d textures left as the game's own\n", path, nign);
+}
+
 static void scan(const char* dir, int depth)
 {
     DIR* d = opendir(dir);
@@ -163,6 +191,7 @@ static void scan(const char* dir, int depth)
         snprintf(p, sizeof(p), "%s/%s", dir, de->d_name);
         if (stat(p, &st) != 0) continue;
         if (S_ISDIR(st.st_mode)) { if (depth < 6) scan(p, depth + 1); }
+        else if (!SDL_strcasecmp(de->d_name, "ignorar.txt") || !SDL_strcasecmp(de->d_name, "ignore.txt")) read_ignore(p);
         else add_file(dir, de->d_name);
     }
     closedir(d);
@@ -178,6 +207,9 @@ static void init(void)
     scan(dir, 0);
     if (!tab_n && base) scan("textures", 0);   /* (started from another folder) */
     host_log("tex: %u replacement textures found in %s (%u other files) in %u ms\n", tab_n, dir, skipped, (unsigned)(SDL_GetTicks() - t0));
+    for (int k = 0; k < nign; k++)   /* the ignore list wins over the pack */
+        for (uint32_t i = 0; i < tab_cap; i++)
+            if (tab[i].path && tab[i].h == ign[k].h && (ign[k].any_clut || tab[i].clut == ign[k].clut)) tab[i].failed = 2;
 }
 
 int trep_active(void)
@@ -428,7 +460,8 @@ unsigned int trep_lookup(uint64_t tex0, uint64_t texa)
         if (!mips || e->w > g_tex_hd_max || e->ht > g_tex_hd_max) queue_convert(e);
         {
             static int nlog;
-            if (nlog++ < 100) host_log("tex: HD %s (%u KB, %u MB in use)\n", e->path, bytes >> 10, (unsigned)(used_bytes >> 20));
+            const char* name = strrchr(e->path, '/');
+            if (nlog++ < 1000) host_log("tex: HD at %.1f s: %s (%u KB, %u MB in use)\n", SDL_GetTicks() / 1000.0, name ? name + 1 : e->path, bytes >> 10, (unsigned)(used_bytes >> 20));
         }
     }
     if (!e->tex) return 0;
