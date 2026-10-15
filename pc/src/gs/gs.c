@@ -51,12 +51,15 @@ static void make_vertex(GsVertex* v, uint32_t x, uint32_t y, uint32_t z, uint32_
 }
 
 /* native raw primitives (native.h): the GS vertex kick for given register values */
+int gs_raw_vr;   /* gs_draw_raw of 3D points: the vertices pushed are re-projected in VR (gs_gl.c push) */
+
 void gs_draw_raw(unsigned int prim, const NativeRawVertex* in, int n)
 {
     const GsContext* c = &gs.ctx[(prim >> 9) & 1];
     uint32_t ofx = c->xyoffset & 0xFFFF, ofy = (c->xyoffset >> 32) & 0xFFFF;
     int type = (int)(prim & 7), q = 0;
     GsVertex qv[3];
+    gs_raw_vr = n > 0 && in[0].vr3d;
     for (int i = 0; i < n; i++) {
         const NativeRawVertex* p = &in[i];
         GsVertex v;
@@ -79,6 +82,7 @@ void gs_draw_raw(unsigned int prim, const NativeRawVertex* in, int n)
             break;
         }
     }
+    gs_raw_vr = 0;
 }
 
 static void vertex_kick(uint32_t x, uint32_t y, uint32_t z, uint32_t f, int draw)

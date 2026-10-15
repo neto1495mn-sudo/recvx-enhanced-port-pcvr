@@ -202,6 +202,7 @@ uint32_t pc_native_prim_raw(unsigned int prim, const unsigned int* dp, int n, in
         o->u = (uint16_t)(dp[0] & 0x3FFF); o->v = (uint16_t)(dp[1] & 0x3FFF);
         o->r = (uint8_t)dp[4]; o->g = (uint8_t)dp[5]; o->b = (uint8_t)dp[6]; o->a = (uint8_t)dp[7];
         o->adc = clip_3d_on && (clip_flag != 0 || (dp[3] & 0x8000));
+        o->vr3d = clip_3d_on ? 1 : 0;
     }
     return native_defer_raw(prim, v, n);
 }

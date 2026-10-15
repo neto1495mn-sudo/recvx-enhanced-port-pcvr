@@ -126,9 +126,9 @@ static DrawState batch_state;
 static int batch_valid;
 
 static GLuint prog, vao, vbo, present_prog, present_vao, svao, svbo;
-static GLint u_vr_on, u_vr_src, u_vr_dst, u_vr_m0, u_vr_m1, u_vr_m2, u_vr_m3;
+static GLint u_vr_on, u_vr_src, u_vr_dst, u_vr_m0, u_vr_m1, u_vr_m2, u_vr_m3, u_vr_zab;
 /* VR re-projection of the draws being replayed for an eye (gs_present_vr); off otherwise */
-static struct { int on; float src[4], dst[4], m[16]; } vr_u;
+static struct { int on; float src[4], dst[4], m[16], zab[2]; } vr_u;
 static GLint u_rt_size, u_rt_margin, u_tme, u_tfx, u_tcc, u_fst, u_texsize, u_fge, u_fogcol, u_ate, u_atst, u_aref,
              u_tex, u_tex_alpha_scale, u_texofs, u_premul, u_zscale, u_clamp_mode, u_clamp_vals, u_afail_pass, u_rt16;
 static GLint up_tex, up_rect;
@@ -147,7 +147,7 @@ static const char* vs_src =
        (columns) take V to the eye's view (same axes: x right, y down, z forward), which is
        projected with the eye's frustum onto the display area (u_vr_dst: c', k'). The GS depth
        is kept, so the game's depth tests between draws behave as before. */
-    "uniform int u_vr_on; uniform vec4 u_vr_src, u_vr_dst, u_vr_m0, u_vr_m1, u_vr_m2, u_vr_m3;\n"
+    "uniform int u_vr_on; uniform vec4 u_vr_src, u_vr_dst, u_vr_m0, u_vr_m1, u_vr_m2, u_vr_m3; uniform vec2 u_vr_zab;\n"
     /* everything perspective-correct: for GS vertices w = 1, so that is the GS's screen-space
        interpolation; native 3D triangles stay whole where VU1 would have cut them at the guard
        band, and screen-linear colour/fog across a triangle reaching far off-screen near the
@@ -157,12 +157,14 @@ static const char* vs_src =
     "  vec4 P = a_pos;\n"
     "  vec2 clip = a_clip;\n"
     "  if (u_vr_on != 0 && a_vr > 0.5) {\n"
+    /* a_vr 2: sprite/line corners of 3D points (w = 1): the view depth from the GS depth, z = -b / Vz - a */
+    "    if (a_vr > 1.5) P = vec4(P.xy, P.z, 1.0) * (-u_vr_zab.y / (P.z + u_vr_zab.x));\n"
     "    float vz = P.w;\n"
     "    vec3 V = vec3((P.x - u_vr_src.x * vz) / u_vr_src.z, (P.y - u_vr_src.y * vz) / u_vr_src.w, vz);\n"
     "    vec4 E = u_vr_m0 * V.x + u_vr_m1 * V.y + u_vr_m2 * V.z + u_vr_m3;\n"
     "    float zg = P.z / vz;\n"
     "    P = vec4(u_vr_dst.x * E.z + u_vr_dst.z * E.x, u_vr_dst.y * E.z + u_vr_dst.w * E.y, zg * E.z, E.z);\n"
-    "    clip.x = E.z - 0.03;\n"   /* 3 cm in front of the eye (E is in metres) */
+    "    clip = vec2(E.z - 0.03, a_vr > 1.5 ? 1.0 : clip.y);\n"   /* 3 cm in front of the eye (E is in metres) */
     "  }\n"
     "  float w = P.w;\n"
     "  vec2 p = (vec2(P.x + u_rt_margin * w, P.y) / u_rt_size) * 2.0 - w;\n"
@@ -276,7 +278,7 @@ void gs_renderer_init(void)
 #define U(n) u_##n = glGetUniformLocation(prog, "u_" #n)
     U(rt_size); U(rt_margin); U(tme); U(tfx); U(tcc); U(fst); U(texsize); U(fge); U(fogcol); U(ate); U(atst); U(aref);
     U(tex); U(tex_alpha_scale); U(texofs); U(premul); U(zscale); U(clamp_mode); U(clamp_vals); U(afail_pass); U(rt16);
-    U(vr_on); U(vr_src); U(vr_dst); U(vr_m0); U(vr_m1); U(vr_m2); U(vr_m3);
+    U(vr_on); U(vr_src); U(vr_dst); U(vr_m0); U(vr_m1); U(vr_m2); U(vr_m3); U(vr_zab);
 #undef U
     present_prog = compile(present_vs, present_fs);
     up_tex = glGetUniformLocation(present_prog, "u_tex");
@@ -1155,6 +1157,7 @@ void gs_flush(void)
         uni4f(u_vr_m1, vr_u.m[4], vr_u.m[5], vr_u.m[6], vr_u.m[7]);
         uni4f(u_vr_m2, vr_u.m[8], vr_u.m[9], vr_u.m[10], vr_u.m[11]);
         uni4f(u_vr_m3, vr_u.m[12], vr_u.m[13], vr_u.m[14], vr_u.m[15]);
+        uni2f(u_vr_zab, vr_u.zab[0], vr_u.zab[1]);
     }
     {
         uint32_t zpsm = (st->ctx.zbuf >> 24) & 0xF;
@@ -1304,7 +1307,7 @@ static void push(const GsVertex* v, const GsVertex* attr, float s, float t)
     GlVertex* o = &vbuf[vcount++];
     o->x = v->x; o->y = v->y; o->z = attr->z; o->w = 1.0f;
     o->clip[0] = o->clip[1] = 1.0f;
-    o->vr = 0.0f;
+    { extern int gs_raw_vr; o->vr = gs_raw_vr ? 2.0f : 0.0f; }   /* 2: a 3D point's sprite/line corner (GS depth -> view depth) */
     o->s = s; o->t = t; o->q = attr->q;
     const float* u = u8_unit();
     o->r = u[attr->r]; o->g = u[attr->g]; o->b = u[attr->b]; o->a = u[attr->a];
@@ -1915,6 +1918,7 @@ static int present_vr_stereo(const struct Frame* cur)
         vr_u.dst[2] = dw / (r - l);
         vr_u.dst[3] = 480.0f / (u - d);
         memcpy(vr_u.m, M, sizeof(M));
+        vr_u.zab[0] = v->za; vr_u.zab[1] = v->zb;
         vr_u.on = 1;
         stream_replay_exact(cur);
         vr_u.on = 0;

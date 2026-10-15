@@ -31,6 +31,7 @@ typedef struct {
     float G[16];                /* world -> V */
     float W[16];                /* local -> world */
     float cx, cy, kx, ky;       /* the game's projection: screen = c * Vz + k * V.xy (GS pixels, before XYOFFSET) */
+    float za, zb;               /* GS depth of a view depth: z = -zb / Vz - za (Ps2_zbuff_a/b) */
 } VrView;
 
 /* small 4x4 helpers (column-major), vr_math.c */

@@ -111,6 +111,7 @@ void vr_after_draw(void)
     memcpy(v.W, frame_W, sizeof(v.W));
     v.cx = fVu1OffsetX; v.cy = fVu1OffsetY;
     v.kx = fVu1AspectW * fVu1Projection; v.ky = fVu1AspectH * fVu1Projection;
+    { extern float Ps2_zbuff_a, Ps2_zbuff_b; v.za = Ps2_zbuff_a; v.zb = Ps2_zbuff_b; }
     stream_vr_view(&v);
     vr_frame = 0;
 }
