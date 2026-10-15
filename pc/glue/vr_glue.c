@@ -54,6 +54,7 @@ int g_vr_dmg_head = 125, g_vr_dmg_body = 75, g_vr_dmg_body_max = 100, g_vr_dmg_a
 int g_vr_wake_shots = 1;     /* ini vr_wake_shots: a zombie still asleep can be shot from afar (and wakes) */
 int g_vr_precise_hits = 1;   /* ini vr_precise_hits: thin bullets hitting the enemy's body parts (its 3D), not the game's wide aim assist */
 int g_vr_barrel_pitch = 0;   /* ini vr_barrel_pitch: the barrel line turned up (+) or down (-), tenths of a degree */   /* ini vr_dmg_*: damage by the body part hit (zombies), percent */
+int g_vr_aim_walk = 1;       /* ini vr_aim_walk: the left stick walks while aiming, at the measured walking/running speed */
 int g_vr_roomscale = 1;      /* ini vr_roomscale: walking in the room moves Claire (with the game's walls) */
 int g_vr_manual_reload = 1;  /* ini vr_manual_reload: B drops the magazine, the left hand takes one at the holster and puts it in */
 int g_vr_prompts = 1;        /* ini vr_prompts: one "A" over what the action button would use, when right in front of it */
@@ -197,6 +198,7 @@ static int mk_n;
 static float mk_pt[12][3];
 static int mk_kind[12], mk_val[12];
 static int knife_equipped(void);
+static int dual_equipped(void);
 int vr_on(void);
 static float holster_w[3];          /* the holster (world), when a gun is in hand */
 static int holster_ok;
@@ -297,6 +299,40 @@ static void body_follow(const VrPose* h)
     if (body_free(dx, dz)) { plp->px += dx; plp->pz += dz; }
     else if (body_free(dx, 0)) plp->px += dx;   /* slide along the wall */
     else if (body_free(0, dz)) plp->pz += dz;
+}
+
+/* Walking while aiming: the game holds Claire still with a weapon raised; in VR the left stick
+   moves her where the head looks at the speed she walks (runs, with the run trigger) - measured
+   from her own walking (not stairs, not the room's walking) - through the game's walls. */
+static float walk_spd = 0.55f, run_spd = 1.1f;   /* units per game frame, until measured */
+static float last_px, last_pz;
+static int last_ok;
+
+static void aim_walk_update(void)
+{
+    VrInput in;
+    float dx = plp->px - last_px, dz = plp->pz - last_pz, d = sqrtf(dx * dx + dz * dz);
+    int stick, run;
+    if (!xr_input(&in)) { last_ok = 0; return; }
+    stick = in.lx * in.lx + in.ly * in.ly > 0.36f;
+    run = in.ltrig > 0.5f || (in.buttons & VRB_LSTICK);
+    if (last_ok && stick && plp->mode0 == 1 && plp->mode1 == 0 && plp->mode2 != 14 && plp->mode2 != 15 && d > 0.05f && d < 5.0f) {
+        if (run) run_spd += (d - run_spd) * 0.05f;   /* the game's own steps, averaged */
+        else walk_spd += (d - walk_spd) * 0.05f;
+    }
+    if (g_vr_aim_walk && stick && plp->mode0 == 1 && plp->mode1 == 1 && !(sys->st_flg & 0x200)) {
+        float a = (float)cam.ay * (3.14159265f / 32768.0f), fx = sinf(a), fz = -cosf(a), rx = cosf(a), rz = sinf(a);
+        float m = sqrtf(in.lx * in.lx + in.ly * in.ly), mx, mz, sp = (run && !dual_equipped()) ? run_spd : walk_spd;
+        if (m > 1.0f) m = 1.0f;
+        mx = (fx * in.ly + rx * in.lx); mz = (fz * in.ly + rz * in.lx);
+        d = sqrtf(mx * mx + mz * mz);
+        if (d > 1e-4f) {
+            mx = mx / d * sp * m; mz = mz / d * sp * m;
+            if (body_free(mx, mz)) { plp->px += mx; plp->pz += mz; }
+            else if (body_free(mx, 0)) plp->px += mx;
+            else if (body_free(0, mz)) plp->pz += mz;
+        }
+    }
 }
 
 /* Manual reload: B drops the magazine of the gun in hand (its rounds are kept aside, the gun
@@ -461,7 +497,9 @@ void vr_camera(void)
 
     /* Wg: recentred tracking space (metres) -> world: scaled, turned with the body, the
        recentred origin (the head at recentring) at the player's eyes, tilted by a hit */
+    aim_walk_update();
     body_follow(&h);
+    last_px = plp->px; last_pz = plp->pz; last_ok = 1;
     make_Wg(Wg);
     xr_recenter_matrix(rec);
     vr_mat_mul(frame_W, Wg, rec);   /* local -> world */
@@ -505,7 +543,7 @@ int vr_on(void) { return vr_active && xr_stereo_ready(); }
 /* in play: the VR camera ran in the last moments - in menus, the inventory, the map and the
    title it does not run (tps_pad, pad.c) */
 void vr_pad_frame(void) {}
-int vr_playing(void) { return vr_on() && SDL_GetTicks() - cam_ms < 100; }
+int vr_playing(void) { return vr_on() && SDL_GetTicks() - cam_ms < 100 && !(sys && (sys->st_flg & 0x200)); }   /* (a message or a question on screen: its own controls) */
 
 static int knife_equipped(void)
 {
