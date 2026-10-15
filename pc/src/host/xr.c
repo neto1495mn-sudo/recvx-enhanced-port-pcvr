@@ -23,6 +23,9 @@ int g_vr_request;
 int g_vr_screen_dist = 250;
 int g_vr_screen_width = 400;
 int g_vr_stereo = 1;
+int g_vr_res = 100;       /* ini vr_res: eye resolution, percent of the headset's recommended size */
+static int rec_eye_h;     /* the headset's recommended eye height (pixels) */
+int xr_recommended_eye_height(void) { return rec_eye_h; }
 
 /* recentring (shared): recentred = Ry(-yaw0) * (local - origin) */
 static SDL_SpinLock pose_lock;
@@ -385,7 +388,10 @@ int xr_init(void)
         XrViewConfigurationView vcv[2] = { { XR_TYPE_VIEW_CONFIGURATION_VIEW }, { XR_TYPE_VIEW_CONFIGURATION_VIEW } };
         uint32_t nv = 0;
         if (XR_SUCCEEDED(xrEnumerateViewConfigurationViews(inst, sys, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO, 2, &nv, vcv)) && nv == 2)
+        {
             host_log("vr: recommended eye size %ux%u\n", vcv[0].recommendedImageRectWidth, vcv[0].recommendedImageRectHeight);
+            rec_eye_h = (int)vcv[0].recommendedImageRectHeight;
+        }
     }
 
     /* required before xrCreateSession */

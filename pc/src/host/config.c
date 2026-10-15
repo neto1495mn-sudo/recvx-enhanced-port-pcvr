@@ -70,6 +70,7 @@ static const struct { const char* key; int* val; int lo, hi; } keys[] = {
     { "vr_turn", &g_vr_turn, 0, 90 },
     { "vr_hand_aim", &g_vr_hand_aim, 0, 1 },
     { "vr_fx_fix", &g_vr_fx_fix, 0, 1 },
+    { "vr_res", &g_vr_res, 25, 200 },
     { "tps", (int*)&g_tps.on, 0, 1 },
     { "tps_fov", &g_tps.fov, 30, 130 },
     { "tps_aim_fov", &g_tps.aim_fov, 20, 130 },

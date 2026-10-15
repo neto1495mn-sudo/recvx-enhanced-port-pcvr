@@ -460,6 +460,12 @@ float gs_wanted_scale(void)
 {
     int ww, wh;
     float s;
+    if (xr_active() && g_vr_stereo && xr_recommended_eye_height() > 0) {
+        /* VR: the eye images are the 480-line display area: enough lines for the headset's
+           recommended eye height (Quest 2: 1824 -> 4x), whatever the desktop setting */
+        s = ceilf((float)xr_recommended_eye_height() * (float)g_vr_res / 100.0f / 480.0f);
+        return s < 1.0f ? 1.0f : s > 8.0f ? 8.0f : s;
+    }
     if (g_config.scale > 0) return (float)g_config.scale;
     SDL_GetWindowSizeInPixels(g_window, &ww, &wh);
     s = floorf((float)wh / 448.0f + 0.5f);
@@ -521,6 +527,7 @@ static int wanted_margin(void)
     int ww, wh;
     float k;
     if (g_config.aspect != ASPECT_WIDE) return 0;
+    if (xr_active() && g_vr_stereo) return 0;   /* VR: 4:3 eye images (a headset eye is nearly square; the VR camera culls wide anyway) */
     SDL_GetWindowSizeInPixels(g_window, &ww, &wh);
     k = (ww * 3.0f) / (wh * 4.0f);
     if (k <= 1.0f) return 0;

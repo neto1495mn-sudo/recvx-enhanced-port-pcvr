@@ -314,7 +314,6 @@ int main(int argc, char** argv)
     if (xr_init() && g_vr_stereo) {   /* --vr: after the GL entry points are loaded */
         g_tps.on = 1;              /* stereo needs the free camera: the third-person hook hands it to the head */
         g_config.interpolate = 1;  /* replays of the executed frame (eyes, cinema in-betweens) */
-        if (g_config.scale == 0) g_config.scale = 3;   /* auto follows the window: the eyes need their own (1920x1440 per eye at 4:3) */
     }
     overlay_init(g_window, g_gl);
     audio_init();

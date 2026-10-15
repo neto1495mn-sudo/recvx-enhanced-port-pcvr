@@ -16,7 +16,9 @@
 extern int g_vr_request;        /* --vr / ini vr: try to start VR at boot */
 extern int g_vr_screen_dist;    /* ini vr_dist: cinema screen distance in cm (default 250) */
 extern int g_vr_screen_width;   /* ini vr_width: cinema screen width in cm (default 400) */
-extern int g_vr_stereo;         /* ini vr_stereo: 1 = first-person stereo in normal play (default), 0 = cinema only */
+extern int g_vr_stereo;
+extern int g_vr_res;            /* ini vr_res: eye resolution, percent of the headset's recommended size (default 100) */
+int xr_recommended_eye_height(void);         /* ini vr_stereo: 1 = first-person stereo in normal play (default), 0 = cinema only */
 
 int    xr_init(void);           /* after the GL context is current; 1 if a VR session was created */
 int    xr_active(void);         /* a VR session exists (it may not be visible yet) */
