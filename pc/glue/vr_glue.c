@@ -333,6 +333,9 @@ int vr_door_transition(void)
     return sys && ((sys->ts_flg & 0x100000) || NowLoadDisp);
 }
 
+int g_vr_shadows = 0;   /* ini vr_shadows: the game's screen-space shadows in VR (they float) */
+int vr_hide_shadows(void) { return vr_on() && !g_vr_shadows; }
+
 /* ini vr_debug_log: the enemies' diary - every change of an enemy's state, life, hittability,
    scene control and position jumps (or walks through a wall), with the time and room, so a
    misbehaving zombie can be followed in recvx.log. Only changes are written. */
