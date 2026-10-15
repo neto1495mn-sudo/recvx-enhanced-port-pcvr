@@ -50,7 +50,10 @@ int g_vr_slash_speed = 180;  /* ini vr_slash_speed: the knife cuts when the righ
 extern int g_vr_danger_fx;    /* gs_gl.c, ini vr_danger_fx */
 int g_vr_hit_tilt = 5;       /* ini vr_hit_tilt: the view tilts this many degrees away from a hit; 0 = off */
 int g_vr_left_mirror = 1;    /* ini vr_left_mirror: the left hand without a weapon holds its controller as the right does, mirrored (1/2/3: the bone axis mirrored x/y/z; 0 = the game's own pose) */
-int g_vr_dmg_head = 130, g_vr_dmg_body = 100, g_vr_dmg_arm = 75, g_vr_dmg_leg = 75;   /* ini vr_dmg_*: damage by the body part hit (zombies), percent */
+int g_vr_dmg_head = 125, g_vr_dmg_body = 75, g_vr_dmg_body_max = 100, g_vr_dmg_arm = 50, g_vr_dmg_leg = 50;   /* ini vr_dmg_*: damage by the body part hit (zombies), percent; the body's between _body and _body_max */
+int g_vr_wake_shots = 1;     /* ini vr_wake_shots: a zombie still asleep can be shot from afar (and wakes) */
+int g_vr_precise_hits = 1;   /* ini vr_precise_hits: thin bullets hitting the enemy's body parts (its 3D), not the game's wide aim assist */
+int g_vr_barrel_pitch = 0;   /* ini vr_barrel_pitch: the barrel line turned up (+) or down (-), tenths of a degree */   /* ini vr_dmg_*: damage by the body part hit (zombies), percent */
 int g_vr_roomscale = 1;      /* ini vr_roomscale: walking in the room moves Claire (with the game's walls) */
 int g_vr_manual_reload = 1;  /* ini vr_manual_reload: B drops the magazine, the left hand takes one at the holster and puts it in */
 int g_vr_prompts = 1;        /* ini vr_prompts: one "A" over what the action button would use, when right in front of it */
@@ -546,6 +549,34 @@ static void shot_feedback(int side, int wno)
     if (g_vr_haptics) xr_haptic(side, k > 1.0f ? 1.0f : 0.3f + 0.6f * k, k > 1.0f ? 90 : 50);
 }
 
+static int player_shot(const GA_WORK* gap)
+{
+    return gap && plp && gap->wpn_no == plp->wpnr_no && gap->ax == plp->wax && gap->ay == plp->way;
+}
+
+/* weapon.c bhCheckGunAtari: in VR the player's shots (but the shotgun's spread) hit the
+   enemies' body parts (their capsules on the skeleton, as the 3D is), not one body capsule */
+int vr_precise_parts(GA_WORK* gap)
+{
+    return vr_on() && g_vr_precise_hits && player_shot(gap) && gap->wpn_no >= 0 && gap->wpn_no < 23 && !(WpnTab[gap->wpn_no].flg & 0x80000000);
+}
+
+/* weapon.c bhCheckGunAtari: a zombie the game has not woken yet (not hittable until it does)
+   can be shot from afar by the player in VR - the hit wakes it as the game's own reaction to
+   damage. Not within 3 m: the game's grabs and bites are its own. */
+int vr_shot_wakes(BH_PWORK* pp, GA_WORK* gap)
+{
+    float dx, dz;
+    if (!vr_on() || !g_vr_wake_shots || !player_shot(gap) || !pp || (pp->id != 1 && pp->id != 26)) return 0;
+    dx = pp->px - plp->px; dz = pp->pz - plp->pz;
+    if (dx * dx + dz * dz < 30.0f * 30.0f * (g_vr_scale / 100.0f) * (g_vr_scale / 100.0f)) return 0;
+    {
+        static int nlog;
+        if (nlog++ < 100) vr_log("vr: shot at a sleeping zombie (enemy %d, flg %x, stflg %x, mode %d/%d/%d)\n", (int)(pp - ene), pp->flg, pp->stflg, pp->mode0, pp->mode1, pp->mode2);
+    }
+    return 1;
+}
+
 /* weapon.c bhCheckGunAtari, after the damage of a player's hit is added (and the knife's):
    in VR, scaled by the part of a zombie's body hit - the hit point (dpx..) against the enemy:
    the top of it the head, the lower part the legs, away from the body capsule's axis the arms */
@@ -569,7 +600,10 @@ int vr_part_damage(BH_PWORK* pp, int kno, int d0, int d1)
         dx = px - ax * t; dy = py - ay * t; dz = pz - az * t;
         if (dx * dx + dy * dy + dz * dz > (c->r * 0.85f) * (c->r * 0.85f)) part = 2;
     }
-    mult = (part == 1 ? g_vr_dmg_head : part == 2 ? g_vr_dmg_arm : part == 3 ? g_vr_dmg_leg : g_vr_dmg_body) / 100.0f;
+    if (part == 0) {   /* the body: anywhere between vr_dmg_body and vr_dmg_body_max */
+        int lo = g_vr_dmg_body, hi = g_vr_dmg_body_max > g_vr_dmg_body ? g_vr_dmg_body_max : g_vr_dmg_body;
+        mult = (lo + (hi > lo ? rand() % (hi - lo + 1) : 0)) / 100.0f;
+    } else mult = (part == 1 ? g_vr_dmg_head : part == 2 ? g_vr_dmg_arm : g_vr_dmg_leg) / 100.0f;
     out = (int)(add * mult + 0.5f);
     if (out < 1) out = 1;
     { static int nlog; if (nlog++ < 300) vr_log("vr: hit zombie %s x%.2f (%d -> %d)\n", names[part], mult, add, out); }
@@ -798,7 +832,7 @@ static void mk_add(int kind, const float p[3], int val)
 /* the barrel of the weapon in each hand (world, unit), set by vr_hand: where the game's own aim
    pose points that weapon, carried by the hand - the controller's forward through the hand
    pose, turned by how this weapon sits in the hand compared with it */
-static float barrel_w[2][3];
+static float barrel_w[2][3], muzzle_w[2][3];
 static int barrel_ok[2];
 static int barrel_dir(int side, float d[3])
 {
@@ -830,7 +864,8 @@ static void sight_add(const float* H, int side, int wno)
     NJS_POINT3 apos;
     ATR_WORK* ahtp;
     if (!barrel_dir(side, d)) return;
-    o[0] = H[8] * z + H[12]; o[1] = H[9] * z + H[13]; o[2] = H[10] * z + H[14];   /* the muzzle (wp_fps1.z on the hand) */
+    o[0] = muzzle_w[side][0]; o[1] = muzzle_w[side][1]; o[2] = muzzle_w[side][2];
+    (void)z; (void)H;   /* from the muzzle (vr_hand) */
     line.px = o[0]; line.py = o[1]; line.pz = o[2];
     line.vx = d[0] * dist; line.vy = d[1] * dist; line.vz = d[2] * dist;
     apos = sys->apos; ahtp = sys->ahtp;
@@ -986,13 +1021,24 @@ void vr_hand(BH_PWORK* p)
             }
         }
         H[12] = P[0]; H[13] = P[1]; H[14] = P[2];
-        {   /* the barrel: Hrot * Rw^T * (0, 0, -1), Rw this weapon's own aim grip (the pose used if not learned) */
-            const float* Rw = rok[side][0][wn] ? rrel[side][0][wn] : R;
-            float u[3] = { -Rw[6], -Rw[7], -Rw[8] }, l;
-            for (int i = 0; i < 3; i++) barrel_w[side][i] = H[0 * 4 + i] * u[0] + H[1 * 4 + i] * u[1] + H[2 * 4 + i] * u[2];
-            l = sqrtf(barrel_w[side][0] * barrel_w[side][0] + barrel_w[side][1] * barrel_w[side][1] + barrel_w[side][2] * barrel_w[side][2]);
-            barrel_ok[side] = l > 1e-4f;
-            if (barrel_ok[side]) for (int i = 0; i < 3; i++) barrel_w[side][i] /= l;
+        {   /* the barrel as the gun is drawn: along the hand node's x axis (the guns' muzzle
+               points, wp_fps1, lie along it: x the length, z the barrel's height), from the
+               muzzle; the way the controller points picks its sense; vr_barrel_pitch tunes it */
+            float f[3] = { -C[0 * 3 + 2], -C[1 * 3 + 2], -C[2 * 3 + 2] }, *d = barrel_w[side], l;
+            const NJS_POINT3* m = (p->wpnr_no >= 0 && p->wpnr_no < 23) ? &WpnTab[p->wpnr_no].wp_fps1 : NULL;
+            d[0] = H[0]; d[1] = H[1]; d[2] = H[2];
+            l = sqrtf(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+            barrel_ok[side] = l > 1e-4f && m;
+            if (barrel_ok[side]) {
+                float sg = (d[0] * f[0] + d[1] * f[1] + d[2] * f[2]) < 0 ? -1.0f : 1.0f;
+                for (int k = 0; k < 3; k++) d[k] = d[k] / l * sg;
+                if (g_vr_barrel_pitch) {   /* turned towards up */
+                    float a = g_vr_barrel_pitch / 10.0f * (3.14159265f / 180.0f), u[3] = { -d[0] * d[1], 1.0f - d[1] * d[1], -d[2] * d[1] }, ul;
+                    ul = sqrtf(u[0] * u[0] + u[1] * u[1] + u[2] * u[2]);
+                    if (ul > 1e-4f) for (int k = 0; k < 3; k++) d[k] = d[k] * cosf(a) + u[k] / ul * sinf(a);
+                }
+                for (int k = 0; k < 3; k++) muzzle_w[side][k] = H[0 * 4 + k] * m->x + H[1 * 4 + k] * m->y + H[2 * 4 + k] * m->z + H[12 + k];
+            }
         }
         memcpy(hand_pos[side], P, sizeof(P));
         hand_ok[side] = 1;
@@ -1036,11 +1082,14 @@ int vr_gun_ray(GA_WORK* gap)
         quat_to_rows(r, hp);
         f[0] = -r[2]; f[1] = -r[5]; f[2] = -r[8];   /* -z of the controller */
         d.x = c * f[0] + s * f[2]; d.y = f[1]; d.z = -s * f[0] + c * f[2];
-        if (barrel_dir(side, bd)) { d.x = bd[0]; d.y = bd[1]; d.z = bd[2]; }   /* along the barrel in the hand */
+        int along = barrel_dir(side, bd);
+        if (along) { d.x = bd[0]; d.y = bd[1]; d.z = bd[2]; }   /* along the barrel in the hand */
         l = sqrtf(d.x * d.x + d.y * d.y + d.z * d.z);
         if (l > 1e-4f) {
             o.x = gap->gx; o.y = gap->gy; o.z = gap->gz;   /* the muzzle, on the tracked hand */
+            if (along) { o.x = muzzle_w[side][0]; o.y = muzzle_w[side][1]; o.z = muzzle_w[side][2]; gap->gx = o.x; gap->gy = o.y; gap->gz = o.z; }
             gap->px = o.x; gap->py = o.y; gap->pz = o.z;
+            if (g_vr_precise_hits && !(WpnTab[gap->wpn_no].flg & 0x80000000)) { gap->r = 0.3f; gap->rn = 0; gap->rmax = 0; }   /* a thin bullet (not the shotgun's spread) */
             gap->vx = d.x / l * gap->l; gap->vy = d.y / l * gap->l; gap->vz = d.z / l * gap->l;
             st = 0;
         }

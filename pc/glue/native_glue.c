@@ -187,7 +187,9 @@ uint32_t pc_native_prim(unsigned int prim, const unsigned int* dp, int n, int cl
         /* VR: 2D the game projected itself (fire, glows, particles) carries the GS depth of its view
            depth, as 3D does (a + b / z here, -b / Vz - a there: the same within ~6 of 65535);
            screen overlays have depth 0 and stay 2D */
-        if (!clip_3d_on && g_vr_fx_fix && o->z > VR_FX_MIN_DEPTH) o->cull |= 0x40;
+        /* (not the game's own 2D: texts, message windows, icons are drawn at priority -1, the
+           nearest depth there is - those go on the VR panel, not into the world) */
+        if (!clip_3d_on && g_vr_fx_fix && o->z > VR_FX_MIN_DEPTH && !(z >= -1.0001f && z < 0.0f)) o->cull |= 0x40;
     }
     if (!clip_3d_on && n > 0 && vr_big(v[0].x, v[0].y, v, n, sizeof(NativeVertex)))   /* a screen layer: stays 2D */
         for (int i = 0; i < n; i++) v[i].cull &= (uint8_t)~0x40;
@@ -226,7 +228,8 @@ uint32_t pc_native_prim_raw(unsigned int prim, const unsigned int* dp, int n, in
         o->u = (uint16_t)(dp[0] & 0x3FFF); o->v = (uint16_t)(dp[1] & 0x3FFF);
         o->r = (uint8_t)dp[4]; o->g = (uint8_t)dp[5]; o->b = (uint8_t)dp[6]; o->a = (uint8_t)dp[7];
         o->adc = clip_3d_on && (clip_flag != 0 || (dp[3] & 0x8000));
-        o->vr3d = clip_3d_on || (g_vr_fx_fix && sz > VR_FX_MIN_DEPTH) ? 1 : 0;   /* as pc_native_prim */
+        o->ui = !clip_3d_on && z >= -1.0001f && z < 0.0f;   /* the game's own 2D (priority -1): the VR panel */
+        o->vr3d = clip_3d_on || (g_vr_fx_fix && sz > VR_FX_MIN_DEPTH && !o->ui) ? 1 : 0;   /* as pc_native_prim */
     }
     if (!clip_3d_on && n > 0) {   /* a screen layer (more than half the screen either way) stays 2D */
         int x0 = v[0].x, x1 = v[0].x, y0 = v[0].y, y1 = v[0].y;

@@ -1,6 +1,7 @@
 /* User settings: <save_dir>/recvx.ini, "key = value" lines. */
 #include "xr.h"
-extern int g_vr_scale, g_vr_eye_height, g_vr_fov, g_vr_turn, g_vr_hand_aim, g_vr_fx_fix, g_vr_gun_min, g_vr_hand_offset, g_vr_slash_speed, g_vr_hit_tilt, g_vr_danger_fx, g_vr_eye_shape, g_vr_screen_angle, g_vr_left_mirror, g_vr_dmg_head, g_vr_dmg_body, g_vr_dmg_arm, g_vr_dmg_leg, g_vr_recoil, g_vr_haptics, g_vr_hud_dist, g_vr_hud_angle, g_vr_sight, g_vr_sight_size, g_vr_holster, g_vr_hud_y, g_vr_roomscale, g_vr_manual_reload, g_vr_prompts;   /* pc/glue/vr_glue.c */
+extern int g_vr_scale, g_vr_eye_height, g_vr_fov, g_vr_turn, g_vr_hand_aim, g_vr_fx_fix, g_vr_gun_min, g_vr_hand_offset, g_vr_slash_speed, g_vr_hit_tilt, g_vr_danger_fx, g_vr_eye_shape, g_vr_screen_angle, g_vr_left_mirror, g_vr_dmg_head, g_vr_dmg_body, g_vr_dmg_arm, g_vr_dmg_leg, g_vr_recoil, g_vr_haptics, g_vr_hud_dist, g_vr_hud_angle, g_vr_sight, g_vr_sight_size, g_vr_holster, g_vr_hud_y, g_vr_roomscale, g_vr_manual_reload, g_vr_prompts, g_vr_dmg_body_max, g_vr_wake_shots, g_vr_precise_hits, g_vr_barrel_pitch, g_vr_hud_dist, g_vr_hud_angle;
+static int g_vr_cfg_ver;   /* ini vr_cfg_ver: the VR settings' version, to move older saved values to new defaults */   /* pc/glue/vr_glue.c */
 #include "../ps2_platform.h"
 #include "coop.h"
 #include "actors.h"
@@ -81,6 +82,11 @@ static const struct { const char* key; int* val; int lo, hi; } keys[] = {
     { "vr_left_mirror", &g_vr_left_mirror, 0, 3 },
     { "vr_dmg_head", &g_vr_dmg_head, 0, 1000 },
     { "vr_dmg_body", &g_vr_dmg_body, 0, 1000 },
+    { "vr_dmg_body_max", &g_vr_dmg_body_max, 0, 1000 },
+    { "vr_wake_shots", &g_vr_wake_shots, 0, 1 },
+    { "vr_cfg_ver", &g_vr_cfg_ver, 0, 1000 },
+    { "vr_precise_hits", &g_vr_precise_hits, 0, 1 },
+    { "vr_barrel_pitch", &g_vr_barrel_pitch, -300, 300 },
     { "vr_dmg_arm", &g_vr_dmg_arm, 0, 1000 },
     { "vr_dmg_leg", &g_vr_dmg_leg, 0, 1000 },
     { "vr_recoil", &g_vr_recoil, 0, 1 },
@@ -145,7 +151,7 @@ void config_load(void)
     int v;
     FILE* f;
     path(p, sizeof(p));
-    if (!(f = pc_fopen(p, "r"))) { default_name(); player_id(); return; }
+    if (!(f = pc_fopen(p, "r"))) { g_vr_cfg_ver = 25; default_name(); player_id(); return; }
     while (fgets(line, sizeof(line), f))
         if (sscanf(line, " coop_join = %127s", g_coop.join) == 1) continue;
         else if (sscanf(line, " coop_player_id = %127s", val) == 1) { if (!unhex(val, g_coop.pid, 16)) memset(g_coop.pid, 0, 16); continue; }
@@ -158,6 +164,11 @@ void config_load(void)
             for (size_t i = 0; i < SDL_arraysize(keys); i++)
                 if (!strcmp(k, keys[i].key) && v >= keys[i].lo && v <= keys[i].hi) *keys[i].val = v;
     fclose(f);
+    if (g_vr_cfg_ver < 25) {   /* VR defaults changed in vr25: damage by part and the text panel (an older file saved the old ones) */
+        g_vr_dmg_head = 125; g_vr_dmg_body = 75; g_vr_dmg_body_max = 100; g_vr_dmg_arm = 50; g_vr_dmg_leg = 50;
+        g_vr_hud_dist = 200; g_vr_hud_angle = 42;
+    }
+    g_vr_cfg_ver = 25;
     g_coop.chr = appear_canon(g_coop.chr);   /* an event double no longer listed: its listed twin (actors.c) */
     default_name();
     player_id();

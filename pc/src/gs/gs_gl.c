@@ -129,9 +129,9 @@ static GLuint prog, vao, vbo, present_prog, present_vao, svao, svbo;
 static GLint u_vr_on, u_vr_src, u_vr_dst, u_vr_m0, u_vr_m1, u_vr_m2, u_vr_m3, u_vr_zab, u_vr_zs, u_vr_hud;
 /* VR re-projection of the draws being replayed for an eye (gs_present_vr); off otherwise */
 static struct { int on; float src[4], dst[4], m[16], zab[2], zs, hud[3]; } vr_u;
-int g_vr_hud_dist = 150;   /* ini vr_hud_dist: the panel of the game's texts and 2D, cm in front of the head */
+int g_vr_hud_dist = 200;   /* ini vr_hud_dist: the panel of the game's texts and 2D, cm in front of the head */
 int g_vr_hud_y = 0;        /* ini vr_hud_y: the panel moved up (+) or down (-), cm */
-int g_vr_hud_angle = 50;   /* ini vr_hud_angle: its width seen from the head (degrees); 0 = drawn over the whole view as before */
+int g_vr_hud_angle = 42;   /* ini vr_hud_angle: its width seen from the head (degrees); 0 = drawn over the whole view as before */
 /* VR diagnosis: what the first eye's replay draws, by path (logged now and then while stereo is on) */
 /* path: 'N' native triangles, 'S' sprites/lines (gs_draw_raw), 'R' GS register writes (VU1 / packets) */
 static struct { int on; unsigned n3d, nraw, n2d, nbig; int ns; float s[12][3]; char path[12]; } vr_st;
@@ -1354,8 +1354,8 @@ static void push(const GsVertex* v, const GsVertex* attr, float s, float t)
     {   /* 2: a 3D point drawn through the GS registers (sprites/lines of 3D points, VU1 program output,
            and - vr_fx_fix - anything else written there with a GS depth, as effects the game projects
            itself are; overlays have depth 0): the view depth comes back from its GS depth */
-        extern int gs_raw_vr, gs_vu1_vr, gs_in_raw, g_vr_fx_fix;
-        int fx = g_vr_fx_fix && o->z > 100.0f;
+        extern int gs_raw_vr, gs_vu1_vr, gs_in_raw, gs_raw_ui, g_vr_fx_fix;
+        int fx = g_vr_fx_fix && o->z > 100.0f && !gs_raw_ui;
         if (fx && prim_big) { fx = 0; if (vr_st.on) vr_st.nbig++; }   /* a screen layer, not an effect */
         o->vr = (gs_raw_vr || gs_vu1_vr || fx) ? 2.0f : prim_tall ? 0.0f : 3.0f;   /* 3: the game's 2D, on the VR panel; 0: screen layers */
         vr_stat_vertex_p(o, gs_in_raw ? 'S' : 'R');

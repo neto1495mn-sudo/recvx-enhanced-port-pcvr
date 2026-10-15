@@ -36,6 +36,7 @@ typedef struct {
     uint8_t r, g, b, a, f;
     uint8_t adc;                /* 1: the vertex does not draw (XYZ3 / ADC) */
     uint8_t vr3d;               /* 1: a projected 3D point (z is the GS depth of its view depth): VR re-projects it */
+    uint8_t ui;                 /* 1: the game's own 2D (texts, windows, icons at priority -1): VR puts it on the panel */
 } NativeRawVertex;
 uint32_t native_defer_raw(unsigned int prim, const NativeRawVertex* v, int n);
 void     gs_draw_raw(unsigned int prim, const NativeRawVertex* v, int n);
