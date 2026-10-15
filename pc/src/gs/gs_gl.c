@@ -97,6 +97,7 @@ typedef struct {
     float r, g, b, a;
     float fog;
     float clip[2];        /* native 3D: near/far clip distances (others: always inside) */
+    float vr;             /* 1: 3D in the game's view projection, VR re-projects it per eye */
 } GlVertex;
 
 #define MAX_VERTS 65536
@@ -125,6 +126,9 @@ static DrawState batch_state;
 static int batch_valid;
 
 static GLuint prog, vao, vbo, present_prog, present_vao, svao, svbo;
+static GLint u_vr_on, u_vr_src, u_vr_dst, u_vr_m0, u_vr_m1, u_vr_m2, u_vr_m3;
+/* VR re-projection of the draws being replayed for an eye (gs_present_vr); off otherwise */
+static struct { int on; float src[4], dst[4], m[16]; } vr_u;
 static GLint u_rt_size, u_rt_margin, u_tme, u_tfx, u_tcc, u_fst, u_texsize, u_fge, u_fogcol, u_ate, u_atst, u_aref,
              u_tex, u_tex_alpha_scale, u_texofs, u_premul, u_zscale, u_clamp_mode, u_clamp_vals, u_afail_pass, u_rt16;
 static GLint up_tex, up_rect;
@@ -136,17 +140,34 @@ static const char* vs_src =
     "layout(location=2) in vec4 a_col;\n"
     "layout(location=3) in float a_fog;\n"
     "layout(location=4) in vec2 a_clip;\n"
+    "layout(location=5) in float a_vr;\n"
     "uniform vec2 u_rt_size; uniform float u_rt_margin; uniform float u_zscale;\n"
+    /* VR (gs_present_vr): 3D vertices are re-projected for an eye. The game's homogeneous screen
+       position (c * Vz + k * V.xy, depth * Vz, Vz) gives back its view position V; u_vr_m*
+       (columns) take V to the eye's view (same axes: x right, y down, z forward), which is
+       projected with the eye's frustum onto the display area (u_vr_dst: c', k'). The GS depth
+       is kept, so the game's depth tests between draws behave as before. */
+    "uniform int u_vr_on; uniform vec4 u_vr_src, u_vr_dst, u_vr_m0, u_vr_m1, u_vr_m2, u_vr_m3;\n"
     /* everything perspective-correct: for GS vertices w = 1, so that is the GS's screen-space
        interpolation; native 3D triangles stay whole where VU1 would have cut them at the guard
        band, and screen-linear colour/fog across a triangle reaching far off-screen near the
        camera is wrong (walls came out fully fogged in third-person view) */
     "out vec3 v_stq; out vec4 v_col; out float v_fog;\n"
     "void main(){\n"
-    "  float w = a_pos.w;\n"
-    "  vec2 p = (vec2(a_pos.x + u_rt_margin * w, a_pos.y) / u_rt_size) * 2.0 - w;\n"
-    "  gl_Position = vec4(p, a_pos.z * u_zscale * 2.0 - w, w);\n"
-    "  gl_ClipDistance[0] = a_clip.x; gl_ClipDistance[1] = a_clip.y;\n"
+    "  vec4 P = a_pos;\n"
+    "  vec2 clip = a_clip;\n"
+    "  if (u_vr_on != 0 && a_vr > 0.5) {\n"
+    "    float vz = P.w;\n"
+    "    vec3 V = vec3((P.x - u_vr_src.x * vz) / u_vr_src.z, (P.y - u_vr_src.y * vz) / u_vr_src.w, vz);\n"
+    "    vec4 E = u_vr_m0 * V.x + u_vr_m1 * V.y + u_vr_m2 * V.z + u_vr_m3;\n"
+    "    float zg = P.z / vz;\n"
+    "    P = vec4(u_vr_dst.x * E.z + u_vr_dst.z * E.x, u_vr_dst.y * E.z + u_vr_dst.w * E.y, zg * E.z, E.z);\n"
+    "    clip.x = E.z - 0.03;\n"   /* 3 cm in front of the eye (E is in metres) */
+    "  }\n"
+    "  float w = P.w;\n"
+    "  vec2 p = (vec2(P.x + u_rt_margin * w, P.y) / u_rt_size) * 2.0 - w;\n"
+    "  gl_Position = vec4(p, P.z * u_zscale * 2.0 - w, w);\n"
+    "  gl_ClipDistance[0] = clip.x; gl_ClipDistance[1] = clip.y;\n"
     "  v_stq = a_stq; v_col = a_col; v_fog = a_fog;\n"
     "}\n";
 
@@ -255,6 +276,7 @@ void gs_renderer_init(void)
 #define U(n) u_##n = glGetUniformLocation(prog, "u_" #n)
     U(rt_size); U(rt_margin); U(tme); U(tfx); U(tcc); U(fst); U(texsize); U(fge); U(fogcol); U(ate); U(atst); U(aref);
     U(tex); U(tex_alpha_scale); U(texofs); U(premul); U(zscale); U(clamp_mode); U(clamp_vals); U(afail_pass); U(rt16);
+    U(vr_on); U(vr_src); U(vr_dst); U(vr_m0); U(vr_m1); U(vr_m2); U(vr_m3);
 #undef U
     present_prog = compile(present_vs, present_fs);
     up_tex = glGetUniformLocation(present_prog, "u_tex");
@@ -274,6 +296,7 @@ void gs_renderer_init(void)
         glEnableVertexAttribArray(2); glVertexAttribPointer(2, 4, GL_FLOAT, GL_FALSE, sizeof(GlVertex), (void*)offsetof(GlVertex, r));
         glEnableVertexAttribArray(3); glVertexAttribPointer(3, 1, GL_FLOAT, GL_FALSE, sizeof(GlVertex), (void*)offsetof(GlVertex, fog));
         glEnableVertexAttribArray(4); glVertexAttribPointer(4, 2, GL_FLOAT, GL_FALSE, sizeof(GlVertex), (void*)offsetof(GlVertex, clip));
+        glEnableVertexAttribArray(5); glVertexAttribPointer(5, 1, GL_FLOAT, GL_FALSE, sizeof(GlVertex), (void*)offsetof(GlVertex, vr));
     }
     glBindVertexArray(vao);
 
@@ -1124,6 +1147,15 @@ void gs_flush(void)
     clip_distances(1);
     uni2f(u_rt_size, (float)cur_rt->vw, (float)cur_rt->vh);
     uni1f(u_rt_margin, (float)g_margin_x);
+    uni1i(u_vr_on, vr_u.on);
+    if (vr_u.on) {
+        uni4f(u_vr_src, vr_u.src[0], vr_u.src[1], vr_u.src[2], vr_u.src[3]);
+        uni4f(u_vr_dst, vr_u.dst[0], vr_u.dst[1], vr_u.dst[2], vr_u.dst[3]);
+        uni4f(u_vr_m0, vr_u.m[0], vr_u.m[1], vr_u.m[2], vr_u.m[3]);
+        uni4f(u_vr_m1, vr_u.m[4], vr_u.m[5], vr_u.m[6], vr_u.m[7]);
+        uni4f(u_vr_m2, vr_u.m[8], vr_u.m[9], vr_u.m[10], vr_u.m[11]);
+        uni4f(u_vr_m3, vr_u.m[12], vr_u.m[13], vr_u.m[14], vr_u.m[15]);
+    }
     {
         uint32_t zpsm = (st->ctx.zbuf >> 24) & 0xF;
         float zmax = zpsm == 0 ? 4294967296.0f : zpsm == 1 ? 16777216.0f : 65536.0f;
@@ -1272,6 +1304,7 @@ static void push(const GsVertex* v, const GsVertex* attr, float s, float t)
     GlVertex* o = &vbuf[vcount++];
     o->x = v->x; o->y = v->y; o->z = attr->z; o->w = 1.0f;
     o->clip[0] = o->clip[1] = 1.0f;
+    o->vr = 0.0f;
     o->s = s; o->t = t; o->q = attr->q;
     const float* u = u8_unit();
     o->r = u[attr->r]; o->g = u[attr->g]; o->b = u[attr->b]; o->a = u[attr->a];
@@ -1374,6 +1407,7 @@ static void native_to_gl(unsigned int prim, const NativeVertex* v, int n, GlVert
             o->r = u[p->r]; o->g = u[p->g]; o->b = u[p->b]; o->a = u[p->a];
             o->fog = (float)((int32_t)q->fog & 0xFF);   /* XYZF2 F: FTOI4, low 8 bits */
             o->clip[0] = q->near_d; o->clip[1] = q->far_d;
+            o->vr = (q->cull & 0x80) ? 1.0f : 0.0f;
         }
 }
 
@@ -1762,7 +1796,7 @@ void gs_frame_executed(int interpolate)
         final_vw = rt->vw; final_vh = rt->vh;
         if (dump_on()) { draw_display(img[fin].tex, final_vw, final_vh); dump_frame(0); }   /* RECVX_DUMP_FRAMES: the real image */
         final_dumped = 1;
-        if (interpolate) { snapshot_valid = rt_snapshot(); gs_native_cache_upload(); }
+        if (interpolate || (xr_active() && g_vr_stereo)) { snapshot_valid = rt_snapshot(); gs_native_cache_upload(); }   /* VR: eye replays */
     } else {
         final_vw = 0;
     }
@@ -1807,12 +1841,128 @@ void gs_replay_check(const struct Frame* cur)
     free(a); free(b);
 }
 
+
+/* ---------------- VR presentation (render thread) ---------------- */
+
+/* the display area of a render-target texture (the 640x480 area, hor+ margins included) into
+   the bound draw framebuffer of w x h, the right way up for OpenXR (row 0 at the bottom) */
+static void draw_area_to(GLuint tex, int rt_vw, int rt_vh, int w, int h)
+{
+    float dw = 640.0f + 2.0f * g_margin_x, x0 = 0.0f;
+    glDisable(GL_SCISSOR_TEST);
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_BLEND);
+    clip_distances(0);
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    glViewport(0, 0, w, h);
+    glUseProgram(present_prog);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, tex);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glUniform1i(up_tex, 0);
+    glUniform4f(up_rect, x0 / rt_vw, 0.0f, (x0 + dw) / rt_vw, 480.0f / rt_vh);
+    glBindVertexArray(present_vao);
+    glDrawArrays(0x0005 /* GL_TRIANGLE_STRIP */, 0, 4);
+    glBindVertexArray(vao);
+}
+
+/* Stereo: the executed frame replayed once per eye with its 3D re-projected from the frame's
+   camera to the eye (vr_view.h), each into the eye's swapchain image. 0 if this frame cannot
+   (no VR camera, no snapshot to replay from, no eye poses): the caller shows the cinema screen. */
+static int present_vr_stereo(const struct Frame* cur)
+{
+    static GLuint vr_fbo;
+    const VrView* v = cur ? stream_frame_vr(cur) : NULL;
+    float iG[16], iW[16], A[16];
+    float dw = 640.0f + 2.0f * g_margin_x;
+    int w = (int)(dw * g_scale + 0.5f), h = (int)(480.0f * g_scale + 0.5f), ok = 1;
+    const GsContext* c = &gs.ctx[0];
+    float ofx = (float)(c->xyoffset & 0xFFFF) / 16.0f, ofy = (float)((c->xyoffset >> 32) & 0xFFFF) / 16.0f;
+    if (!v || !v->valid || !snapshot_valid || !xr_frame_eye(0) || !xr_frame_eye(1)) return 0;
+    if (!vr_mat_invert(iG, v->G) || !vr_mat_invert(iW, v->W)) return 0;
+    vr_mat_mul(A, iW, iG);   /* V of the frame -> local (metres) */
+    if (!vr_fbo) glGenFramebuffers(1, &vr_fbo);
+    gs_flush();
+    for (int e = 0; e < 2 && ok; e++) {
+        const VrEye* E = xr_frame_eye(e);
+        float iE[16], M[16], l = E->l, r = E->r, u = E->u, d = E->d;
+        RenderTarget* rt;
+        GLuint tex;
+        vr_mat_rigid_inverse_pose(iE, &E->pose);
+        vr_mat_mul(M, iE, A);                                /* V -> eye (OpenGL axes) */
+        for (int k = 0; k < 4; k++) { M[k * 4 + 1] = -M[k * 4 + 1]; M[k * 4 + 2] = -M[k * 4 + 2]; }   /* S: y down, z forward */
+        vr_u.src[0] = v->cx - ofx; vr_u.src[1] = v->cy - ofy; vr_u.src[2] = v->kx; vr_u.src[3] = v->ky;
+        /* the eye's frustum onto the display area: x from -margin (tan l) to 640 + margin (tan r),
+           y from 0 (tan u, up) to 480 (tan d); V.y is down, so y = 480 (u + V.y / V.z) / (u - d) */
+        vr_u.dst[0] = -(float)g_margin_x + dw * (-l) / (r - l);
+        vr_u.dst[1] = 480.0f * u / (u - d);
+        vr_u.dst[2] = dw / (r - l);
+        vr_u.dst[3] = 480.0f / (u - d);
+        memcpy(vr_u.m, M, sizeof(M));
+        vr_u.on = 1;
+        stream_replay_exact(cur);
+        vr_u.on = 0;
+        rt = rt_find(gs.disp_fbp, gs.disp_fbw ? gs.disp_fbw : 10);
+        tex = xr_eye_target(e, w, h);
+        if (rt && tex) {
+            glBindFramebuffer(GL_FRAMEBUFFER, vr_fbo);
+            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
+            draw_area_to(rt->tex, rt->vw, rt->vh, w, h);
+            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
+            glBindFramebuffer(GL_FRAMEBUFFER, 0);
+            fb_forget();
+        } else ok = 0;
+        xr_eye_release(e);
+        rt_restore();
+    }
+    return ok;
+}
+
+/* VR present: one headset frame. Stereo when the frame has a VR camera, else the cinema
+   screen (the window image as usual). The window always mirrors. */
+static uint64_t gs_present_vr(const struct Frame* cur, float t)
+{
+    uint64_t swap;
+    int ww = 0, wh = 0, fr = xr_frame_begin();
+    SDL_GetWindowSizeInPixels(g_window, &ww, &wh);
+    if (fr == 1 && present_vr_stereo(cur)) {
+        draw_display(final_vw ? img[fin].tex : 0, final_vw ? final_vw : 640, final_vw ? final_vh : 512);   /* mirror */
+        overlay_render();
+        xr_frame_end_stereo();
+    } else {
+        int inbetween = cur && snapshot_valid && t < 1.0f;
+        if (inbetween) {
+            RenderTarget* rt;
+            stream_replay(cur, t);
+            rt = rt_find(gs.disp_fbp, gs.disp_fbw ? gs.disp_fbw : 10);
+            draw_display(rt ? rt->tex : 0, rt ? rt->vw : 640, rt ? rt->vh : 512);
+            overlay_render();
+            rt_restore();
+        } else {
+            draw_display(final_vw ? img[fin].tex : 0, final_vw ? final_vw : 640, final_vw ? final_vh : 512);
+            overlay_render();
+        }
+        if (fr == 1) xr_frame_end_quad(ww, wh);
+        else if (fr == 0) xr_frame_end_none();
+    }
+    swap = SDL_GetTicksNS();
+    SDL_GL_SwapWindow(g_window);
+    return SDL_GetTicksNS() - swap;
+}
+
 /* show the frame at position t between the previous and the executed frame (t >= 1 or no
    replay: the frame itself); returns how long the buffer swap blocked (ns) */
 uint64_t gs_present(const struct Frame* cur, float t)
 {
     uint64_t swap;
     int inbetween = cur && snapshot_valid && t < 1.0f;
+    if (xr_active()) {
+        prof_push(PROF_PRESENT);
+        swap = gs_present_vr(cur, t);
+        prof_pop();
+        return swap;
+    }
     prof_push(PROF_PRESENT);
     gt_present_begin();
     if (inbetween) {
@@ -1832,11 +1982,6 @@ uint64_t gs_present(const struct Frame* cur, float t)
         dump_window();
     }
     gt_present_end(inbetween);
-    if (xr_active()) {   /* VR: the finished image (overlay included) to the headset, paced by it */
-        int ww = 0, wh = 0;
-        SDL_GetWindowSizeInPixels(g_window, &ww, &wh);
-        xr_submit_backbuffer(ww, wh);
-    }
     swap = SDL_GetTicksNS();
     SDL_GL_SwapWindow(g_window);
     swap = SDL_GetTicksNS() - swap;

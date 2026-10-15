@@ -91,7 +91,7 @@ void pc_native_strip(const unsigned short* idx_uv, int n, const VU1_STRIP_BUF* v
         o->fog = p->fFog;   /* wrapped to the GS's 8 bits only when drawn: clipping and blending use the real value */
         o->near_d = w - _fNaViwClipNear;
         o->far_d = _fNaViwClipFar - w;
-        o->cull = single && p->fNz > 0.0f;
+        o->cull = (uint8_t)((single && p->fNz > 0.0f) | 0x80);   /* 0x80: 3D (VR re-projects it) */
     }
     native_strip(prim, v, n);
 }
@@ -125,7 +125,7 @@ uint32_t pc_native_prim3d(unsigned int prim, const VU1_PRIM_BUF* in, int n, int 
         o->fog = p->fF;
         o->near_d = w - _fNaViwClipNear;
         o->far_d = _fNaViwClipFar - w;
-        o->cull = (p->ulKick & 0x8001) == 0x8001 ? 2 : 0;
+        o->cull = (uint8_t)(((p->ulKick & 0x8001) == 0x8001 ? 2 : 0) | 0x80);
     }
     *zavg = n ? zsum / (float)n : 0.0f;
     return native_defer(prim, v, n < 64 ? n : 64, deferred ? pc_cur_mesh : 0, pc_cur_strip);
@@ -170,7 +170,7 @@ uint32_t pc_native_prim(unsigned int prim, const unsigned int* dp, int n, int cl
         else { o->s = q != 0.0f ? f0[0] / q : 0.0f; o->t = q != 0.0f ? f0[1] / q : 0.0f; }
         o->r = (uint8_t)dp[4]; o->g = (uint8_t)dp[5]; o->b = (uint8_t)dp[6]; o->a = (uint8_t)dp[7];
         o->fog = f2[3];
-        o->cull = clip_3d_on && (dp[3] & 0x8000) ? 2 : 0;
+        o->cull = (uint8_t)((clip_3d_on && (dp[3] & 0x8000) ? 2 : 0) | (clip_3d_on ? 0x80 : 0));
     }
     return native_defer(prim, v, n, deferred ? pc_cur_mesh : 0, pc_cur_strip);
 }

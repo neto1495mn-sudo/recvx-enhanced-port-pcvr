@@ -10,7 +10,8 @@ typedef struct {
     float near_d, far_d;        /* clip distances: >= 0 inside the near/far planes */
     uint8_t r, g, b, a;         /* GS colour (0x80 = 1.0) */
     uint8_t cull;               /* bit 0: normal faces away (a triangle of three such is skipped,
-                                   SingleMain); bit 1: the triangle ending here is skipped */
+                                   SingleMain); bit 1: the triangle ending here is skipped;
+                                   bit 7: a 3D vertex (homogeneous view position), VR re-projects it */
 } NativeVertex;
 
 /* game thread: triangles with GS PRIM bits (type 3 list, 4 strip, 5 fan; TME/FGE/ABE/IIP/

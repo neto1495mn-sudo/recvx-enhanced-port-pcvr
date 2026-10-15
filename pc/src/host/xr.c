@@ -1,11 +1,14 @@
 /*
- * VR output through OpenXR, stage 1: cinema mode (see xr.h).
+ * VR output through OpenXR (see xr.h).
  *
- * Render thread only. One session, one quad layer in LOCAL space. Each present:
- *   xrPollEvent (session state) -> xrWaitFrame (paces to the headset) -> xrBeginFrame
- *   -> copy the window's back buffer into the swapchain image -> xrEndFrame(quad).
- * The copy is a framebuffer blit with GL_FRAMEBUFFER_SRGB off, so the bytes the game drew
- * reach the compositor unchanged (an sRGB swapchain then shows them as the window does).
+ * Render thread: one session; each present is one headset frame:
+ *   xrPollEvent -> xrWaitFrame (paces to the headset) -> xrBeginFrame -> xrLocateViews
+ *   -> stereo: the renderer draws each eye into its swapchain image (xr_eye_target), submitted
+ *      as a projection layer; otherwise the window's back buffer goes onto a quad layer.
+ * Copies are framebuffer blits with GL_FRAMEBUFFER_SRGB off, so the bytes the game drew reach
+ * the compositor unchanged (an sRGB swapchain then shows them as the window does).
+ *
+ * The head pose of every frame is published (spin lock) for the game thread's VR camera.
  */
 /* no ps2_platform.h here: the PS2 SDK names (CreateThread, GetThreadId, ...) clash with windows.h */
 #include "xr.h"
@@ -19,15 +22,56 @@ int  render_vsync_setting(void);   /* g_config.vsync (render.c) */
 int g_vr_request;
 int g_vr_screen_dist = 250;
 int g_vr_screen_width = 400;
+int g_vr_stereo = 1;
+
+/* recentring (shared): recentred = Ry(-yaw0) * (local - origin) */
+static SDL_SpinLock pose_lock;
+static VrPose head_rec;           /* latest head pose, recentred */
+static int head_valid;
+static float rec_yaw, rec_ox, rec_oy, rec_oz;
+static SDL_AtomicInt stereo_ready;
+
+int xr_stereo_ready(void) { return SDL_GetAtomicInt(&stereo_ready); }
+
+int xr_head_pose(VrPose* out)
+{
+    int ok;
+    SDL_LockSpinlock(&pose_lock);
+    ok = head_valid;
+    if (ok) *out = head_rec;
+    SDL_UnlockSpinlock(&pose_lock);
+    return ok;
+}
+
+void xr_recenter_matrix(float m[16])
+{
+    float c, s, ox, oy, oz;
+    SDL_LockSpinlock(&pose_lock);
+    c = cosf(-rec_yaw); s = sinf(-rec_yaw); ox = rec_ox; oy = rec_oy; oz = rec_oz;
+    SDL_UnlockSpinlock(&pose_lock);
+    /* Ry(-yaw0) * T(-origin), column-major */
+    vr_mat_identity(m);
+    m[0] = c;  m[8] = s;
+    m[2] = -s; m[10] = c;
+    m[12] = -(c * ox + s * oz);
+    m[13] = -oy;
+    m[14] = -(-s * ox + c * oz);
+}
 
 #if !defined(_WIN32) || !defined(RECVX_HAVE_OPENXR)
 
 int    xr_init(void) { if (g_vr_request) host_log("vr: not available on this platform yet\n"); return 0; }
 int    xr_active(void) { return 0; }
 double xr_display_hz(void) { return 0.0; }
-void   xr_submit_backbuffer(int w, int h) { (void)w; (void)h; }
 void   xr_recenter(void) {}
 void   xr_shutdown(void) {}
+int    xr_frame_begin(void) { return -1; }
+const VrEye* xr_frame_eye(int e) { (void)e; return NULL; }
+unsigned int xr_eye_target(int e, int w, int h) { (void)e; (void)w; (void)h; return 0; }
+void   xr_eye_release(int e) { (void)e; }
+void   xr_frame_end_stereo(void) {}
+void   xr_frame_end_quad(int w, int h) { (void)w; (void)h; }
+void   xr_frame_end_none(void) {}
 
 #else
 
@@ -49,6 +93,14 @@ void   xr_shutdown(void) {}
 #define GL_RGBA8 0x8058
 #endif
 
+typedef struct {
+    XrSwapchain h;
+    int w, ht;
+    uint32_t n;
+    XrSwapchainImageOpenGLKHR img[8];
+    int acquired;
+} Chain;
+
 static XrInstance  inst = XR_NULL_HANDLE;
 static XrSystemId  sys = XR_NULL_SYSTEM_ID;
 static XrSession   sess = XR_NULL_HANDLE;
@@ -57,16 +109,18 @@ static XrSessionState state = XR_SESSION_STATE_UNKNOWN;
 static int running;             /* between xrBeginSession and xrEndSession */
 static int lost;                /* the session ended for good: back to the desktop */
 static double hz;               /* from the predicted display period */
-
-static XrSwapchain chain = XR_NULL_HANDLE;
 static int64_t chain_fmt;
-static int chain_w, chain_h;
-static uint32_t nimages;
-static XrSwapchainImageOpenGLKHR images[8];
 static GLuint blit_fbo;
 
-static XrPosef screen_pose;     /* the quad's pose in LOCAL space */
-static int need_center = 1;     /* place the screen in front of the head on the next frame */
+static Chain quad_chain, eye_chain[2];
+static XrFrameState fs;
+static int in_frame;            /* between xrBeginFrame and xrEndFrame */
+static XrView views[2];
+static VrEye eyes[2];
+static int eyes_valid;
+
+static XrPosef screen_pose;     /* the cinema quad's pose in LOCAL space */
+static int need_center = 1;     /* recentre on the next frame */
 
 static int xr_ok(XrResult r, const char* what)
 {
@@ -79,18 +133,16 @@ static int xr_ok(XrResult r, const char* what)
     return 0;
 }
 
-static void destroy_chain(void)
+static void chain_destroy(Chain* c)
 {
-    if (chain) xrDestroySwapchain(chain);
-    chain = XR_NULL_HANDLE;
-    chain_w = chain_h = 0;
-    nimages = 0;
+    if (c->h) xrDestroySwapchain(c->h);
+    memset(c, 0, sizeof(*c));
 }
 
-static int make_chain(int w, int h)
+static int chain_make(Chain* c, int w, int h)
 {
     XrSwapchainCreateInfo ci = { XR_TYPE_SWAPCHAIN_CREATE_INFO };
-    destroy_chain();
+    chain_destroy(c);
     ci.usageFlags = XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT | XR_SWAPCHAIN_USAGE_TRANSFER_DST_BIT;
     ci.format = chain_fmt;
     ci.sampleCount = 1;
@@ -99,15 +151,41 @@ static int make_chain(int w, int h)
     ci.faceCount = 1;
     ci.arraySize = 1;
     ci.mipCount = 1;
-    if (!xr_ok(xrCreateSwapchain(sess, &ci, &chain), "xrCreateSwapchain")) return 0;
-    for (uint32_t i = 0; i < 8; i++) images[i] = (XrSwapchainImageOpenGLKHR){ XR_TYPE_SWAPCHAIN_IMAGE_OPENGL_KHR };
-    if (!xr_ok(xrEnumerateSwapchainImages(chain, 8, &nimages, (XrSwapchainImageBaseHeader*)images), "xrEnumerateSwapchainImages")) {
-        destroy_chain();
+    if (!xr_ok(xrCreateSwapchain(sess, &ci, &c->h), "xrCreateSwapchain")) return 0;
+    for (uint32_t i = 0; i < 8; i++) c->img[i] = (XrSwapchainImageOpenGLKHR){ XR_TYPE_SWAPCHAIN_IMAGE_OPENGL_KHR };
+    if (!xr_ok(xrEnumerateSwapchainImages(c->h, 8, &c->n, (XrSwapchainImageBaseHeader*)c->img), "xrEnumerateSwapchainImages")) {
+        chain_destroy(c);
         return 0;
     }
-    chain_w = w; chain_h = h;
-    host_log("vr: swapchain %dx%d, %u images, format 0x%llx\n", w, h, nimages, (unsigned long long)chain_fmt);
+    c->w = w; c->ht = h;
+    host_log("vr: swapchain %dx%d, %u images, format 0x%llx\n", w, h, c->n, (unsigned long long)chain_fmt);
     return 1;
+}
+
+/* acquire the next image of c (made w x h first if needed): its GL texture, 0 on failure */
+static GLuint chain_acquire(Chain* c, int w, int h)
+{
+    uint32_t idx = 0;
+    XrSwapchainImageAcquireInfo ai = { XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO };
+    XrSwapchainImageWaitInfo wi = { XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO };
+    if ((w != c->w || h != c->ht || !c->h) && !chain_make(c, w, h)) return 0;
+    if (!xr_ok(xrAcquireSwapchainImage(c->h, &ai, &idx), "xrAcquireSwapchainImage")) return 0;
+    wi.timeout = XR_INFINITE_DURATION;
+    if (!xr_ok(xrWaitSwapchainImage(c->h, &wi), "xrWaitSwapchainImage")) {
+        XrSwapchainImageReleaseInfo ri = { XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO };
+        xrReleaseSwapchainImage(c->h, &ri);
+        return 0;
+    }
+    c->acquired = 1;
+    return c->img[idx].image;
+}
+
+static void chain_release(Chain* c)
+{
+    XrSwapchainImageReleaseInfo ri = { XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO };
+    if (!c->acquired) return;
+    xrReleaseSwapchainImage(c->h, &ri);
+    c->acquired = 0;
 }
 
 static int pick_format(void)
@@ -139,7 +217,7 @@ int xr_init(void)
     host_log("vr: starting OpenXR\n");
 
     strcpy(ici.applicationInfo.applicationName, "recvx VR");
-    ici.applicationInfo.applicationVersion = 1;
+    ici.applicationInfo.applicationVersion = 2;
     strcpy(ici.applicationInfo.engineName, "recvx");
     ici.applicationInfo.apiVersion = XR_MAKE_VERSION(1, 0, 0);   /* 1.0: accepted by every runtime */
     ici.enabledExtensionCount = 1;
@@ -153,6 +231,12 @@ int xr_init(void)
     sgi.formFactor = XR_FORM_FACTOR_HEAD_MOUNTED_DISPLAY;
     if (!xr_ok(xrGetSystem(inst, &sgi, &sys), "xrGetSystem (is the headset connected?)")) goto fail;
     if (XR_SUCCEEDED(xrGetSystemProperties(inst, sys, &props))) host_log("vr: headset %s\n", props.systemName);
+    {
+        XrViewConfigurationView vcv[2] = { { XR_TYPE_VIEW_CONFIGURATION_VIEW }, { XR_TYPE_VIEW_CONFIGURATION_VIEW } };
+        uint32_t nv = 0;
+        if (XR_SUCCEEDED(xrEnumerateViewConfigurationViews(inst, sys, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO, 2, &nv, vcv)) && nv == 2)
+            host_log("vr: recommended eye size %ux%u\n", vcv[0].recommendedImageRectWidth, vcv[0].recommendedImageRectHeight);
+    }
 
     /* required before xrCreateSession */
     if (!xr_ok(xrGetInstanceProcAddr(inst, "xrGetOpenGLGraphicsRequirementsKHR", (PFN_xrVoidFunction*)&get_req), "xrGetInstanceProcAddr"))
@@ -183,7 +267,7 @@ int xr_init(void)
     screen_pose.orientation.w = 1.0f;
     screen_pose.position.z = -(float)g_vr_screen_dist / 100.0f;
     SDL_GL_SetSwapInterval(0);   /* the headset paces; the window only mirrors */
-    host_log("vr: session created, waiting for the headset\n");
+    host_log("vr: session created, waiting for the headset (stereo %s)\n", g_vr_stereo ? "on" : "off");
     return 1;
 
 fail:
@@ -220,7 +304,7 @@ static void poll_events(void)
         } else if (ev.type == XR_TYPE_EVENT_DATA_INSTANCE_LOSS_PENDING) {
             lost = 1;
         } else if (ev.type == XR_TYPE_EVENT_DATA_REFERENCE_SPACE_CHANGE_PENDING) {
-            need_center = 1;   /* the user recentered (long press of the Oculus/Meta button) */
+            need_center = 1;   /* the user recentred (long press of the headset's system button) */
         }
     }
     if (lost) {
@@ -230,97 +314,185 @@ static void poll_events(void)
     }
 }
 
-/* the screen faces the head: in front of it at the configured distance, upright, yaw only */
-static void center_screen(XrTime t)
+static float yaw_of(const XrQuaternionf* q)   /* heading of -Z rotated by q, about +Y */
+{
+    float fx = -2.0f * (q->x * q->z + q->w * q->y);
+    float fz = -(1.0f - 2.0f * (q->x * q->x + q->y * q->y));
+    if (fx * fx + fz * fz < 1e-8f) return 0.0f;
+    return atan2f(-fx, -fz);
+}
+
+/* the head now: recentre if asked (cinema screen in front, game forward where the head looks),
+   then publish the recentred head pose */
+static void update_head(XrTime t)
 {
     XrSpaceLocation loc = { XR_TYPE_SPACE_LOCATION };
     if (!XR_SUCCEEDED(xrLocateSpace(view_space, local_space, t, &loc))) return;
     if (!(loc.locationFlags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT) || !(loc.locationFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT)) return;
-    {
-        const XrQuaternionf q = loc.pose.orientation;
-        /* forward is -Z rotated by q; keep its horizontal part */
-        float fx = -2.0f * (q.x * q.z + q.w * q.y);
-        float fz = -(1.0f - 2.0f * (q.x * q.x + q.y * q.y));
-        float len = sqrtf(fx * fx + fz * fz), yaw, d = (float)g_vr_screen_dist / 100.0f;
-        if (len < 1e-4f) { fx = 0.0f; fz = -1.0f; len = 1.0f; }
-        fx /= len; fz /= len;
-        yaw = atan2f(-fx, -fz);   /* rotation about +Y that turns -Z into (fx, 0, fz) */
+    if (need_center) {
+        float yaw = yaw_of(&loc.pose.orientation), d = (float)g_vr_screen_dist / 100.0f;
         screen_pose.orientation.x = 0.0f;
         screen_pose.orientation.y = sinf(yaw * 0.5f);
         screen_pose.orientation.z = 0.0f;
         screen_pose.orientation.w = cosf(yaw * 0.5f);
-        screen_pose.position.x = loc.pose.position.x + fx * d;
+        screen_pose.position.x = loc.pose.position.x - sinf(yaw) * d;
         screen_pose.position.y = loc.pose.position.y;
-        screen_pose.position.z = loc.pose.position.z + fz * d;
+        screen_pose.position.z = loc.pose.position.z - cosf(yaw) * d;
+        SDL_LockSpinlock(&pose_lock);
+        rec_yaw = yaw;
+        rec_ox = loc.pose.position.x; rec_oy = loc.pose.position.y; rec_oz = loc.pose.position.z;
+        SDL_UnlockSpinlock(&pose_lock);
+        need_center = 0;
+        host_log("vr: recentred (yaw %.1f deg)\n", yaw * 57.29578f);
     }
-    need_center = 0;
+    {
+        float m[16], c, s, px, py, pz;
+        VrPose p;
+        const XrQuaternionf* q = &loc.pose.orientation;
+        xr_recenter_matrix(m);
+        px = loc.pose.position.x; py = loc.pose.position.y; pz = loc.pose.position.z;
+        p.px = m[0] * px + m[4] * py + m[8] * pz + m[12];
+        p.py = m[1] * px + m[5] * py + m[9] * pz + m[13];
+        p.pz = m[2] * px + m[6] * py + m[10] * pz + m[14];
+        /* orientation: Ry(-yaw0) * q */
+        c = cosf(-rec_yaw * 0.5f); s = sinf(-rec_yaw * 0.5f);
+        p.qw = c * q->w - s * q->y;
+        p.qx = c * q->x + s * q->z;
+        p.qy = c * q->y + s * q->w;
+        p.qz = c * q->z - s * q->x;
+        SDL_LockSpinlock(&pose_lock);
+        head_rec = p;
+        head_valid = 1;
+        SDL_UnlockSpinlock(&pose_lock);
+    }
 }
 
-void xr_submit_backbuffer(int w, int h)
+int xr_frame_begin(void)
 {
     XrFrameWaitInfo wi = { XR_TYPE_FRAME_WAIT_INFO };
-    XrFrameState fs = { XR_TYPE_FRAME_STATE };
     XrFrameBeginInfo bi = { XR_TYPE_FRAME_BEGIN_INFO };
-    XrFrameEndInfo ei = { XR_TYPE_FRAME_END_INFO };
-    XrCompositionLayerQuad quad = { XR_TYPE_COMPOSITION_LAYER_QUAD };
-    const XrCompositionLayerBaseHeader* layers[1];
-    int drawn = 0;
-
-    if (!xr_active()) return;
+    eyes_valid = 0;
+    if (!xr_active()) return -1;
     poll_events();
-    if (!xr_active() || !running) { SDL_Delay(5); return; }   /* not visible yet: do not spin */
-
-    if (!xr_ok(xrWaitFrame(sess, &wi, &fs), "xrWaitFrame")) return;
+    if (!xr_active() || !running) { SDL_SetAtomicInt(&stereo_ready, 0); SDL_Delay(5); return -1; }   /* not visible yet: do not spin */
+    fs = (XrFrameState){ XR_TYPE_FRAME_STATE };
+    if (!xr_ok(xrWaitFrame(sess, &wi, &fs), "xrWaitFrame")) return -1;
     if (fs.predictedDisplayPeriod > 0) hz = 1e9 / (double)fs.predictedDisplayPeriod;
-    if (!xr_ok(xrBeginFrame(sess, &bi), "xrBeginFrame")) return;
-
-    if (fs.shouldRender && w > 0 && h > 0) {
-        if (need_center) center_screen(fs.predictedDisplayTime);
-        if ((w != chain_w || h != chain_h) && !make_chain(w, h)) goto end;
-        {
-            uint32_t idx = 0;
-            XrSwapchainImageAcquireInfo ai = { XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO };
-            XrSwapchainImageWaitInfo swi = { XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO };
-            XrSwapchainImageReleaseInfo ri = { XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO };
-            if (!xr_ok(xrAcquireSwapchainImage(chain, &ai, &idx), "xrAcquireSwapchainImage")) goto end;
-            swi.timeout = XR_INFINITE_DURATION;
-            if (!xr_ok(xrWaitSwapchainImage(chain, &swi), "xrWaitSwapchainImage")) goto end;
-            glDisable(GL_FRAMEBUFFER_SRGB);
-            glDisable(GL_SCISSOR_TEST);
-            glBindFramebuffer(GL_DRAW_FRAMEBUFFER, blit_fbo);
-            glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, images[idx].image, 0);
-            glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);   /* the window's back buffer, as just drawn */
-            glBlitFramebuffer(0, 0, w, h, 0, 0, w, h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
-            glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
-            glBindFramebuffer(GL_FRAMEBUFFER, 0);
-            xrReleaseSwapchainImage(chain, &ri);
+    if (!xr_ok(xrBeginFrame(sess, &bi), "xrBeginFrame")) return -1;
+    in_frame = 1;
+    SDL_SetAtomicInt(&stereo_ready, g_vr_stereo && (state == XR_SESSION_STATE_VISIBLE || state == XR_SESSION_STATE_FOCUSED));
+    if (!fs.shouldRender) return 0;
+    update_head(fs.predictedDisplayTime);
+    {
+        XrViewLocateInfo li = { XR_TYPE_VIEW_LOCATE_INFO };
+        XrViewState vs = { XR_TYPE_VIEW_STATE };
+        uint32_t n = 0;
+        li.viewConfigurationType = XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
+        li.displayTime = fs.predictedDisplayTime;
+        li.space = local_space;
+        views[0] = (XrView){ XR_TYPE_VIEW }; views[1] = (XrView){ XR_TYPE_VIEW };
+        if (XR_SUCCEEDED(xrLocateViews(sess, &li, &vs, 2, &n, views)) && n == 2 &&
+            (vs.viewStateFlags & XR_VIEW_STATE_ORIENTATION_VALID_BIT) && (vs.viewStateFlags & XR_VIEW_STATE_POSITION_VALID_BIT)) {
+            for (int e = 0; e < 2; e++) {
+                const XrView* v = &views[e];
+                eyes[e].pose = (VrPose){ v->pose.position.x, v->pose.position.y, v->pose.position.z,
+                                         v->pose.orientation.x, v->pose.orientation.y, v->pose.orientation.z, v->pose.orientation.w };
+                eyes[e].l = tanf(v->fov.angleLeft); eyes[e].r = tanf(v->fov.angleRight);
+                eyes[e].u = tanf(v->fov.angleUp);   eyes[e].d = tanf(v->fov.angleDown);
+            }
+            eyes_valid = 1;
         }
-        quad.layerFlags = 0;   /* opaque: the game's alpha channel is GS alpha, not coverage */
-        quad.space = local_space;
-        quad.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
-        quad.subImage.swapchain = chain;
-        quad.subImage.imageRect.offset.x = 0;
-        quad.subImage.imageRect.offset.y = 0;
-        quad.subImage.imageRect.extent.width = chain_w;
-        quad.subImage.imageRect.extent.height = chain_h;
-        quad.subImage.imageArrayIndex = 0;
-        quad.pose = screen_pose;
-        quad.size.width = (float)g_vr_screen_width / 100.0f;
-        quad.size.height = quad.size.width * (float)chain_h / (float)chain_w;
-        layers[0] = (const XrCompositionLayerBaseHeader*)&quad;
-        drawn = 1;
     }
-end:
+    return 1;
+}
+
+const VrEye* xr_frame_eye(int e) { return eyes_valid && e >= 0 && e < 2 ? &eyes[e] : NULL; }
+
+unsigned int xr_eye_target(int e, int w, int h)
+{
+    if (!in_frame || e < 0 || e > 1 || w <= 0 || h <= 0) return 0;
+    return chain_acquire(&eye_chain[e], w, h);
+}
+
+void xr_eye_release(int e) { if (e >= 0 && e < 2) chain_release(&eye_chain[e]); }
+
+static void end_frame(const XrCompositionLayerBaseHeader* const* layers, uint32_t n)
+{
+    XrFrameEndInfo ei = { XR_TYPE_FRAME_END_INFO };
+    if (!in_frame) return;
     ei.displayTime = fs.predictedDisplayTime;
     ei.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
-    ei.layerCount = drawn ? 1 : 0;
-    ei.layers = drawn ? layers : NULL;
+    ei.layerCount = n;
+    ei.layers = n ? layers : NULL;
     xr_ok(xrEndFrame(sess, &ei), "xrEndFrame");
+    in_frame = 0;
+}
+
+void xr_frame_end_none(void)
+{
+    chain_release(&eye_chain[0]); chain_release(&eye_chain[1]);
+    end_frame(NULL, 0);
+}
+
+void xr_frame_end_stereo(void)
+{
+    XrCompositionLayerProjection proj = { XR_TYPE_COMPOSITION_LAYER_PROJECTION };
+    XrCompositionLayerProjectionView pv[2] = { { XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW }, { XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW } };
+    const XrCompositionLayerBaseHeader* layers[1];
+    if (!eyes_valid || !eye_chain[0].h || !eye_chain[1].h) { xr_frame_end_none(); return; }
+    for (int e = 0; e < 2; e++) {
+        pv[e].pose = views[e].pose;
+        pv[e].fov = views[e].fov;
+        pv[e].subImage.swapchain = eye_chain[e].h;
+        pv[e].subImage.imageRect.offset.x = 0;
+        pv[e].subImage.imageRect.offset.y = 0;
+        pv[e].subImage.imageRect.extent.width = eye_chain[e].w;
+        pv[e].subImage.imageRect.extent.height = eye_chain[e].ht;
+        pv[e].subImage.imageArrayIndex = 0;
+    }
+    proj.space = local_space;
+    proj.viewCount = 2;
+    proj.views = pv;
+    layers[0] = (const XrCompositionLayerBaseHeader*)&proj;
+    end_frame(layers, 1);
+}
+
+void xr_frame_end_quad(int w, int h)
+{
+    XrCompositionLayerQuad quad = { XR_TYPE_COMPOSITION_LAYER_QUAD };
+    const XrCompositionLayerBaseHeader* layers[1];
+    GLuint tex;
+    if (!in_frame) return;
+    if (!fs.shouldRender || w <= 0 || h <= 0 || !(tex = chain_acquire(&quad_chain, w, h))) { xr_frame_end_none(); return; }
+    glDisable(GL_FRAMEBUFFER_SRGB);
+    glDisable(GL_SCISSOR_TEST);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, blit_fbo);
+    glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);   /* the window's back buffer, as just drawn */
+    glBlitFramebuffer(0, 0, w, h, 0, 0, w, h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+    glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    chain_release(&quad_chain);
+    quad.layerFlags = 0;   /* opaque: the game's alpha channel is GS alpha, not coverage */
+    quad.space = local_space;
+    quad.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+    quad.subImage.swapchain = quad_chain.h;
+    quad.subImage.imageRect.extent.width = quad_chain.w;
+    quad.subImage.imageRect.extent.height = quad_chain.ht;
+    quad.pose = screen_pose;
+    quad.size.width = (float)g_vr_screen_width / 100.0f;
+    quad.size.height = quad.size.width * (float)quad_chain.ht / (float)quad_chain.w;
+    layers[0] = (const XrCompositionLayerBaseHeader*)&quad;
+    chain_release(&eye_chain[0]); chain_release(&eye_chain[1]);
+    end_frame(layers, 1);
 }
 
 void xr_shutdown(void)
 {
-    destroy_chain();
+    SDL_SetAtomicInt(&stereo_ready, 0);
+    chain_destroy(&quad_chain);
+    chain_destroy(&eye_chain[0]);
+    chain_destroy(&eye_chain[1]);
     if (blit_fbo) { glDeleteFramebuffers(1, &blit_fbo); blit_fbo = 0; }
     if (view_space) xrDestroySpace(view_space);
     if (local_space) xrDestroySpace(local_space);
@@ -328,6 +500,7 @@ void xr_shutdown(void)
     if (sess) { if (running) xrEndSession(sess); xrDestroySession(sess); }
     sess = XR_NULL_HANDLE;
     running = 0;
+    in_frame = 0;
     if (inst) xrDestroyInstance(inst);
     inst = XR_NULL_HANDLE;
     sys = XR_NULL_SYSTEM_ID;

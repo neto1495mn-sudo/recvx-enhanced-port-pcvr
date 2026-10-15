@@ -41,6 +41,7 @@ struct Frame {
     int partial, continuation;
     uint32_t scene;
     float pt[3]; int pt_flags;               /* stream_point */
+    VrView vr;                               /* stream_vr_view */
     /* filled by the render thread when executed */
     Group* g; size_t ng, cg;
     Inst* in; size_t nin, cin;
@@ -318,6 +319,9 @@ static void submit(int partial)
 
 static float point[3];
 static int point_flags;
+static VrView vr_pending;
+void stream_vr_view(const VrView* v) { vr_pending = *v; }
+const VrView* stream_frame_vr(const Frame* f) { return &f->vr; }
 void stream_point(float x, float y, float w, int flags)
 {
     point[0] = x; point[1] = y; point[2] = w;
@@ -333,6 +337,8 @@ void stream_submit(void)
     memcpy(rec->pt, point, sizeof(point));
     rec->pt_flags = point_flags;
     point_flags = 0;
+    rec->vr = vr_pending;
+    vr_pending.valid = 0;
     ndef = ndefv = ndefr = 0;   /* deferred native strips are drawn within their frame */
     submit(0);
     SDL_AddAtomicInt(&game_frames, 1);
@@ -777,6 +783,14 @@ static Blend blend_vertex(const Frame* r, size_t vi, float t)
     return o;
 }
 
+static int replay_exact;
+void stream_replay_exact(const Frame* r)
+{
+    replay_exact = 1;
+    stream_replay(r, 1.0f);
+    replay_exact = 0;
+}
+
 void stream_replay(const Frame* r, float t)
 {
     GsState end = gs;
@@ -784,7 +798,7 @@ void stream_replay(const Frame* r, float t)
     uint8_t ntex_end[NTEX_STATE_SIZE];
     size_t vi = 0, bvi = (size_t)-1;
     Blend bl = { 0 };
-    if (r != matched_for) return;
+    if (r != matched_for && !replay_exact) return;
     prof_push(PROF_INTERP);
     gs_clut_state_save(clut_end);
     gs = r->start;
@@ -813,7 +827,7 @@ void stream_replay(const Frame* r, float t)
                this is the in-between camera and object transform) and attributes, then cull,
                clip and draw */
             const NativeVertex* cur = native_verts(r, (uint32_t)i);
-            if (nat_prev[i] >= 0) {
+            if (!replay_exact && nat_prev[i] >= 0) {
                 const NativeVertex* prv = native_verts(nat_prev_frame, (uint32_t)nat_prev[i]);
                 NativeVertex bl[64];
                 int n = e->len > 64 ? 64 : (int)e->len;
@@ -825,7 +839,7 @@ void stream_replay(const Frame* r, float t)
         }
         if (e->kind != EV_REG) continue;
         v = e->v;
-        if (vi < r->nvx && has_prev[vi] && (i == r->vx[vi] || i == r->stq[vi * 2] || i == r->stq[vi * 2 + 1])) {
+        if (!replay_exact && vi < r->nvx && has_prev[vi] && (i == r->vx[vi] || i == r->stq[vi * 2] || i == r->stq[vi * 2 + 1])) {
             if (bvi != vi) { bl = blend_vertex(r, vi, t); bvi = vi; }
             if (i == r->vx[vi]) v = bl.xyz;
             else if (i == r->stq[vi * 2]) { if (bl.has_st) v = bl.st; }

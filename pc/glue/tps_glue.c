@@ -173,6 +173,7 @@ void tps_camera(void)
     /* the room's near plane can be far out (up to 22 units); the camera is close */
     clip_near = fNaViwClipNear; clip_far = fNaViwClipFar;
     if (clip_near != -1.0f || clip_far != -20000.0f) njClipZ(-1.0f, -20000.0f);
+    { extern void vr_camera(void); vr_camera(); }   /* VR: the head takes the view (vr_glue.c) */
 }
 
 /* our view as bhControlCamera derived it: position, angles, view vector, eye */
@@ -188,6 +189,7 @@ void tps_after_draw(void)
     view_now.wpx = cam.wpx; view_now.wpy = cam.wpy; view_now.wpz = cam.wpz;
     view_now.ax = cam.ax; view_now.ay = cam.ay; view_now.az = cam.az;
     view_now.ln = cam.ln; view_now.pers = cam.pers;
+    { extern void vr_after_draw(void); vr_after_draw(); }
 }
 
 /* game.c bhMainSequence, after bhCheckCut: the cut system (still running underneath) leaves

@@ -1,0 +1,43 @@
+/*
+ * VR stereo (stage 2): what a game frame tells the renderer about its camera, and the pose
+ * types shared by the game thread (pc/glue/vr_glue.c), the stream (gs/stream.c), the renderer
+ * (gs/gs_gl.c) and OpenXR (host/xr.c). Plain C, no PS2 or Windows headers.
+ *
+ * Coordinate frames (column vectors, 4x4 column-major like NJS_MATRIX and GLSL):
+ *   world   game units, y up (the game's world; ~10 units per metre)
+ *   V       the game's view space as CALCPOINT outputs it: x right, y down, z forward
+ *           (the Ninja base view matrix diag(1, -1, -1) times an OpenGL-style view)
+ *   local   OpenXR LOCAL reference space, metres, y up, -z forward
+ * G: world -> V of the frame (cam.mtx after bhControlCamera)
+ * W: local -> world of the frame (where the tracked play space sits in the game world)
+ * A vertex the game projected for V is re-projected for an eye with pose E (eye -> local) by
+ *   V_eye = S * inverse(E) * inverse(W) * inverse(G) * V,   S = diag(1, -1, -1)
+ */
+#ifndef RECVX_VR_VIEW_H
+#define RECVX_VR_VIEW_H
+
+typedef struct {
+    float px, py, pz;           /* position, metres (local) */
+    float qx, qy, qz, qw;       /* orientation */
+} VrPose;
+
+typedef struct {
+    VrPose pose;                /* eye -> local, at the predicted display time */
+    float l, r, u, d;           /* tangents of the eye's field of view (l, d < 0 < r, u) */
+} VrEye;
+
+typedef struct {
+    int   valid;                /* the frame was drawn by the VR camera */
+    float G[16];                /* world -> V */
+    float W[16];                /* local -> world */
+    float cx, cy, kx, ky;       /* the game's projection: screen = c * Vz + k * V.xy (GS pixels, before XYOFFSET) */
+} VrView;
+
+/* small 4x4 helpers (column-major), vr_math.c */
+void vr_mat_identity(float m[16]);
+void vr_mat_mul(float out[16], const float a[16], const float b[16]);   /* out = a * b */
+int  vr_mat_invert(float out[16], const float m[16]);
+void vr_mat_from_pose(float m[16], const VrPose* p);                   /* pose -> local transform */
+void vr_mat_rigid_inverse_pose(float m[16], const VrPose* p);         /* inverse of the above */
+
+#endif

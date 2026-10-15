@@ -1,6 +1,7 @@
 /* GS command stream: game thread -> render thread, and frame interpolation (stream.c). */
 #pragma once
 #include <stdint.h>
+#include "../host/vr_view.h"
 
 typedef struct Frame Frame;
 
@@ -20,6 +21,7 @@ void     stream_rtex_capture(uint32_t id, uint32_t fbp, uint32_t fbw, uint32_t w
    (640x480) and view depth w, STREAM_PT_* (only the frame's last call counts; none: 0) */
 enum { STREAM_PT_FRONT = 1, STREAM_PT_BEHIND = 2 };
 void     stream_point(float x, float y, float w, int flags);
+void     stream_vr_view(const VrView* v);           /* VR: the camera of the frame being recorded (vr_glue.c) */
 void     stream_submit(void);                       /* end of frame (buffer swap) */
 void     stream_download(void* dst, uint32_t len);  /* StoreImage: waits for the pixels */
 uint64_t stream_game_frames(void);
@@ -32,6 +34,9 @@ void     stream_exec(Frame* f);
 void     stream_note_upload(const uint64_t* pages);
 int      stream_match(const Frame* prev, const Frame* cur);
 void     stream_replay(const Frame* f, float t);
+/* VR: replay the executed frame exactly as executed (no interpolation, no match needed) */
+void     stream_replay_exact(const Frame* f);
+const VrView* stream_frame_vr(const Frame* f);   /* the frame's VR camera (valid = 0: none) */
 /* cur's stream_point at t (in-between frames): blended from prev's as the 3D is, while both are
    in front of the camera; prev NULL or t >= 1: cur's. Returns cur's flags (0: no point). */
 int      stream_point_at(const Frame* prev, const Frame* cur, float t, float* x, float* y);

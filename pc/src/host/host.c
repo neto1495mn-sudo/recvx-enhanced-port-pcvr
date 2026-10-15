@@ -158,7 +158,8 @@ static void usage(void)
         "  --skip-doors       room transitions (doors, stairs, ladders) without their animation (default on)\n"
         "  --skip-intro       boot straight into the title menu (default on)\n"
         "  --third-person     over-the-shoulder camera, mouse/keyboard controls (toggle: F5)\n"
-        "  --vr               show the game in a VR headset through OpenXR (cinema screen; F8 recenters)\n"
+        "  --vr               play in a VR headset through OpenXR: stereo first person in normal play,\n"
+        "                     a cinema screen for cutscenes and menus (F8 recenters)\n"
         "  --coop-host PORT   online co-op: wait for a partner on this UDP port (F3: co-op window)\n"
         "  --coop-join HOST:PORT#CODE | ROOM  online co-op: join a host, or a room through the co-op server\n"
         "  --coop-server ADDR   co-op server (host or host:port, UDP 7141)  --coop-conn auto|direct|server  --coop-pw PASSWORD\n"
@@ -310,7 +311,11 @@ int main(int argc, char** argv)
     if (!g_gl) host_fatal("SDL_GL_CreateContext: %s", SDL_GetError());
     SDL_GL_SetSwapInterval(g_config.vsync ? 1 : 0);
     gs_renderer_init();
-    xr_init();   /* --vr: after the GL entry points are loaded */
+    if (xr_init() && g_vr_stereo) {   /* --vr: after the GL entry points are loaded */
+        g_tps.on = 1;              /* stereo needs the free camera: the third-person hook hands it to the head */
+        g_config.interpolate = 1;  /* replays of the executed frame (eyes, cinema in-betweens) */
+        if (g_config.scale == 0) g_config.scale = 3;   /* auto follows the window: the eyes need their own (1920x1440 per eye at 4:3) */
+    }
     overlay_init(g_window, g_gl);
     audio_init();
 
