@@ -628,20 +628,14 @@ int vr_shot_wakes(BH_PWORK* pp, GA_WORK* gap)
 {
     float dx, dz;
     if (!vr_on() || !g_vr_wake_shots || !player_shot(gap) || !pp || (pp->id != 1 && pp->id != 26)) return 0;
-    /* only one still lying asleep (its Move mode, idle): not one falling, dying or getting up,
-       which the game keeps unhittable on purpose (shot then, it came back broken and undying) */
-    if (pp->mode0 != 1 || pp->mode1 != 0 || pp->hp <= 0) {
-        static int nlog;   /* (diagnosis: which unhittable zombies are shot at, and in what state) */
-        if (nlog++ < 60) vr_log("vr: shot at an unhittable zombie, left as is (enemy %d, type %d, mode %d/%d/%d, hp %d, flg %x)\n", (int)(pp - ene), pp->type, pp->mode0, pp->mode1, pp->mode2, pp->hp, pp->flg);
-        return 0;
-    }
+    if (pp->mode0 != 1 || pp->hp < 0) return 0;   /* (not one falling or dying: the game keeps those unhittable on purpose) */
     dx = pp->px - plp->px; dz = pp->pz - plp->pz;
     if (dx * dx + dz * dz < 30.0f * 30.0f * (g_vr_scale / 100.0f) * (g_vr_scale / 100.0f)) return 0;
     if (pp->mlwP && pp->mlwP->owP && pp->mlwP->obj_num > 1) {
-        /* its body capsule as it lies now: the game does not move it while asleep, and the shot
-           test starts from that capsule's middle (a stale one is "behind the gun": every shot missed) */
+        /* its body capsule where it stands now: the game does not move it while frozen, and the shot
+           test starts from that capsule's middle (a stale one is "behind the gun": shots missed) */
         O_WORK* o = pp->mlwP->owP;
-        float best = -1, ox = pp->watr.c1.x, oy = pp->watr.c1.y, oz = pp->watr.c1.z;
+        float best = -1;
         int far = 0;
         for (int j = 1; j < (int)pp->mlwP->obj_num && j < 64; j++) {
             float ex = o[j].mtx[12] - o[0].mtx[12], ey = o[j].mtx[13] - o[0].mtx[13], ez = o[j].mtx[14] - o[0].mtx[14], l2 = ex * ex + ey * ey + ez * ez;
@@ -650,11 +644,6 @@ int vr_shot_wakes(BH_PWORK* pp, GA_WORK* gap)
         pp->watr.c1.x = o[far].mtx[12]; pp->watr.c1.y = o[far].mtx[13]; pp->watr.c1.z = o[far].mtx[14];
         pp->watr.c2.x = o[0].mtx[12]; pp->watr.c2.y = o[0].mtx[13]; pp->watr.c2.z = o[0].mtx[14];
         if (pp->watr.r < 2.0f) pp->watr.r = 2.5f;
-        {
-            static int nlog;
-            if (nlog++ < 60) vr_log("vr: shot at a sleeping zombie (enemy %d, type %d, mode %d/%d/%d, hp %d): body capsule moved %.1f units to it\n", (int)(pp - ene), pp->type, pp->mode0, pp->mode1, pp->mode2, pp->hp,
-                                    sqrtf((ox - pp->watr.c1.x) * (ox - pp->watr.c1.x) + (oy - pp->watr.c1.y) * (oy - pp->watr.c1.y) + (oz - pp->watr.c1.z) * (oz - pp->watr.c1.z)));
-        }
     }
     return 1;
 }
@@ -669,6 +658,14 @@ int vr_part_damage(BH_PWORK* pp, int kno, int d0, int d1)
     int part = 0, add = d1 - d0, out;
     (void)kno;
     if (!vr_on() || !pp || add <= 0 || (pp->id != 1 && pp->id != 26) || !pp->mlwP) return d1;   /* zombies */
+    if (!(pp->flg & 0x20) && pp->mode0 == 1) {
+        /* one still frozen, waiting for its scene (vr_shot_wakes): hit, it starts now as the scene
+           would start it - hittable, its brain on - so the game takes the damage, the reaction and
+           the death as for any other (frozen, the damage piled up and it came back broken) */
+        pp->flg |= 0x20;
+        pp->mode1 = 1;
+        vr_log("vr: frozen zombie %d woken by a shot\n", (int)(pp - ene));
+    }
     for (int j = 1; j < (int)pp->mlwP->obj_num; j++) if (pp->mlwP->owP[j].mtx[13] - pp->py > top) top = pp->mlwP->owP[j].mtx[13] - pp->py;
     h = top > 1.0f ? top : 17.0f;
     rel = (pp->dpy - pp->py) / h;
