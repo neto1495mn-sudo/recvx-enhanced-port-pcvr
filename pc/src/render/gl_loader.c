@@ -5,6 +5,9 @@ PFN_glDeleteTextures gl_DeleteTextures;
 PFN_glBindTexture gl_BindTexture;
 PFN_glTexImage2D gl_TexImage2D;
 PFN_glTexSubImage2D gl_TexSubImage2D;
+PFN_glCompressedTexImage2D gl_CompressedTexImage2D;
+PFN_glGenerateMipmap gl_GenerateMipmap;
+PFN_glTexParameterf gl_TexParameterf;
 PFN_glTexParameteri gl_TexParameteri;
 PFN_glActiveTexture gl_ActiveTexture;
 PFN_glGenFramebuffers gl_GenFramebuffers;
@@ -122,5 +125,8 @@ int gl_load(void* (*getproc)(const char*))
     if (!(gl_GetError = (PFN_glGetError)getproc("glGetError"))) ok = 0;
     if (!(gl_GetString = (PFN_glGetString)getproc("glGetString"))) ok = 0;
     if (!(gl_Finish = (PFN_glFinish)getproc("glFinish"))) ok = 0;
+    gl_CompressedTexImage2D = (PFN_glCompressedTexImage2D)getproc("glCompressedTexImage2D");
+    gl_GenerateMipmap = (PFN_glGenerateMipmap)getproc("glGenerateMipmap");
+    gl_TexParameterf = (PFN_glTexParameterf)getproc("glTexParameterf");
     return ok;
 }

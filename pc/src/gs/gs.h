@@ -73,6 +73,7 @@ void gs_gif_transfer(int path, const uint32_t* data, uint32_t qwc);
 /* gs_mem.c: addressing in 32-bit words / bytes */
 uint32_t gs_pixel_addr(int psm, uint32_t bp, uint32_t bw, uint32_t x, uint32_t y); /* returns byte address (x2 for 4-bit: nibble address) */
 uint32_t gs_read_pixel(int psm, uint32_t bp, uint32_t bw, uint32_t x, uint32_t y);
+uint32_t gs_texel_rgba(int psm, uint32_t v, uint64_t texa);   /* a 16/24/32-bit texel as RGBA (TEXA) */
 void     gs_write_pixel(int psm, uint32_t bp, uint32_t bw, uint32_t x, uint32_t y, uint32_t value);
 void     gs_local_to_local(void);
 void     gs_rt_to_mem(uint32_t bp, uint32_t bw, uint32_t psm, uint32_t x, uint32_t y, uint32_t w, uint32_t h);

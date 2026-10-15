@@ -102,6 +102,18 @@ extern PFN_glTexImage2D gl_TexImage2D;
 typedef void (GLAPIENTRY *PFN_glTexSubImage2D)(GLenum target, GLint level, GLint xoffset, GLint yoffset, GLsizei width, GLsizei height, GLenum format, GLenum type, const void* pixels);
 extern PFN_glTexSubImage2D gl_TexSubImage2D;
 #define glTexSubImage2D gl_TexSubImage2D
+
+/* optional (texture replacements, texreplace.c): NULL when missing */
+typedef void (GLAPIENTRY *PFN_glCompressedTexImage2D)(GLenum target, GLint level, GLenum internalformat, GLsizei width, GLsizei height, GLint border, GLsizei imageSize, const void* data);
+extern PFN_glCompressedTexImage2D gl_CompressedTexImage2D;
+#define glCompressedTexImage2D gl_CompressedTexImage2D
+typedef void (GLAPIENTRY *PFN_glGenerateMipmap)(GLenum target);
+extern PFN_glGenerateMipmap gl_GenerateMipmap;
+#define glGenerateMipmap gl_GenerateMipmap
+typedef void (GLAPIENTRY *PFN_glTexParameterf)(GLenum target, GLenum pname, GLfloat param);
+extern PFN_glTexParameterf gl_TexParameterf;
+#define glTexParameterf gl_TexParameterf
+
 typedef void (GLAPIENTRY *PFN_glTexParameteri)(GLenum target, GLenum pname, GLint param);
 extern PFN_glTexParameteri gl_TexParameteri;
 #define glTexParameteri gl_TexParameteri

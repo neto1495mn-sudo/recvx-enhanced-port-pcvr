@@ -358,6 +358,8 @@ static uint32_t to_rgba(int psm, uint32_t v, uint64_t texa, int tcc)
     (void)tcc;
 }
 
+uint32_t gs_texel_rgba(int psm, uint32_t v, uint64_t texa) { return to_rgba(psm, v, texa, 0); }
+
 /* ---------------- CLUT buffer (GS internal, 512 x 16 bit) ---------------- */
 static uint16_t clut_buf[512];
 static uint32_t cbp0, cbp1;

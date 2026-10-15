@@ -14,6 +14,7 @@
 #include "gs.h"
 #include "native.h"
 #include "textures.h"
+#include "texreplace.h"
 #include "../host/prof.h"
 #include "stream.h"
 #include "../ps2_platform.h"
@@ -713,8 +714,9 @@ static GLuint tex_get(uint64_t tex0, uint64_t texa, int* out_w, int* out_h, floa
             e = &texcache[0];
             for (int i = 1; i < MAX_TEX; i++) if (texcache[i].last_use < e->last_use) e = &texcache[i];
         }
-        if (e->tex) gs_tex_delete(e->tex);
+        if (e->tex && !trep_kind(e->tex)) gs_tex_delete(e->tex);   /* (a replacement belongs to texreplace.c) */
         memset(e, 0, sizeof(*e));
+        if (trep_active() && (e->tex = trep_lookup(tex0, texa)) != 0) goto filled;   /* an HD pack's image (texreplace.c) */
         glGenTextures(1, &e->tex);
     }
     {
@@ -737,10 +739,17 @@ static GLuint tex_get(uint64_t tex0, uint64_t texa, int* out_w, int* out_h, floa
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, (GLsizei)w, (GLsizei)h, 0, GL_RGBA, GL_UNSIGNED_BYTE, px);
         free(px);
     }
+filled:
     e->used = 1; e->tex0_key = key; e->texa = texa; e->clut_hash = ch; e->page0 = page0; e->page1 = page1;
     e->content = content; e->w = (int)w; e->h = (int)h; e->last_use = frame_no;
     *out_w = e->w; *out_h = e->h;
     return e->tex;
+}
+
+/* texreplace.c deletes a replacement: entries that use it decode again */
+void gs_texcache_drop_gl(unsigned int gl_tex)
+{
+    for (int i = 0; i < MAX_TEX; i++) if (texcache[i].used && texcache[i].tex == gl_tex) { texcache[i].used = 0; texcache[i].tex = 0; }
 }
 
 /* ---------------- state application ---------------- */
@@ -1252,7 +1261,7 @@ void gs_flush(void)
         }
         rt_touch(srt);
         GLint filt = ((st->ctx.tex1 >> 5) & 1) ? GL_LINEAR : GL_NEAREST;
-        int wms = st->ctx.clamp & 3, wmt = (st->ctx.clamp >> 2) & 3;
+        int wms = st->ctx.clamp & 3, wmt = (st->ctx.clamp >> 2) & 3, hdk = 0;
         glActiveTexture(GL_TEXTURE0);
         if (srt && srt != cur_rt) {
             glBindTexture(GL_TEXTURE_2D, srt->tex);
@@ -1271,12 +1280,14 @@ void gs_flush(void)
                 if (record_memo && record_memo->rt < 0) { record_memo->tex = t; record_memo->w = w; record_memo->h = h; record_memo->ascale = ascale; }
             }
             glBindTexture(GL_TEXTURE_2D, t);
+            hdk = trep_kind(t);
             uni4f(u_texofs, 1.0f / (float)w, 1.0f / (float)h, 0.0f, 0.0f);
             uni1f(u_tex_alpha_scale, ascale);
             uni4f(u_rt16, 0, 0, 0, 0);
         }
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filt);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filt);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, hdk == 2 ? 0x2703 /* GL_LINEAR_MIPMAP_LINEAR */ : hdk ? GL_LINEAR : filt);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, hdk ? GL_LINEAR : filt);
+        if (hdk == 2 && glTexParameterf) glTexParameterf(GL_TEXTURE_2D, 0x84FE /* GL_TEXTURE_MAX_ANISOTROPY */, 8.0f);   /* HD pack: smooth at a distance */
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, (wms == 0 && !srt) ? GL_REPEAT : GL_CLAMP_TO_EDGE);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, (wmt == 0 && !srt) ? GL_REPEAT : GL_CLAMP_TO_EDGE);
         uni1i(u_tex, 0);

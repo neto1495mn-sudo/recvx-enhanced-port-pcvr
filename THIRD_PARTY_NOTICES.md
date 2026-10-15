@@ -27,3 +27,10 @@ or CRI Middleware.
 
 The built binaries link these libraries statically; ship their license texts
 with any binary release.
+
+## Vendored single-file libraries (`pc/third_party/`)
+
+| Component | Version | Source | License |
+|---|---|---|---|
+| xxHash (`xxhash.h`, XXH3 for PCSX2-compatible texture names) | v0.8.3 | https://github.com/Cyan4973/xxHash | BSD-2-Clause |
+| stb_image (`stb_image.h`, PNG texture replacements) | v2.30 | https://github.com/nothings/stb | MIT or public domain (dual) |

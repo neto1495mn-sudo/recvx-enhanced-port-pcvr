@@ -28,5 +28,6 @@ void ntex_define_capture(uint32_t id, unsigned int gl_tex, int w, int h);
 #define NTEX_STATE_SIZE 12288
 void ntex_state_save(void* out);
 void ntex_state_restore(const void* in);
-/* a texture for TEX0 if its TBP is a bound slot (1; 2: a capture, alpha stored as A/128), else 0 */
+/* a texture for TEX0 if its TBP is a bound slot (1; 2: a capture, alpha stored as A/128; 3: an HD
+   replacement, texreplace.c), else 0 */
 int  ntex_lookup(uint64_t tex0, uint64_t texa, unsigned int* tex, int* w, int* h);

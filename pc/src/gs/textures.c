@@ -30,6 +30,7 @@
  */
 #include "gs.h"
 #include "textures.h"
+#include "texreplace.h"
 #include "../render/gl_loader.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -74,7 +75,7 @@ _Static_assert(sizeof(alias) + sizeof(pending) + sizeof(int) <= NTEX_STATE_SIZE,
 
 #define NTEX_BYTES_MAX (256u << 20)
 #define MAX_NTEX 4096
-typedef struct { uint32_t id; uint64_t key, texa; uint32_t pal; GLuint tex; int w, h; uint64_t last; int used; } NTex;
+typedef struct { uint32_t id; uint64_t key, texa; uint32_t pal; GLuint tex; int w, h; uint64_t last; int used, hd; } NTex;   /* hd: tex is a replacement (texreplace.c owns it) */
 static NTex ntex[MAX_NTEX];
 static uint64_t use_clock, ntex_bytes;
 
@@ -296,7 +297,7 @@ static void def_drop(Def* d)
     for (int i = 0; i < MAX_ALIAS; i++) if (alias[i].used && alias[i].id == id) alias[i].used = 0;
     if (d->capture) gs_tex_delete(d->capture);
     for (int i = 0; i < MAX_NTEX; i++)
-        if (ntex[i].used && ntex[i].id == id) { gs_tex_delete(ntex[i].tex); ntex_bytes -= (uint64_t)ntex[i].w * ntex[i].h * 4; ntex[i].used = 0; }
+        if (ntex[i].used && ntex[i].id == id) { if (!ntex[i].hd) { gs_tex_delete(ntex[i].tex); ntex_bytes -= (uint64_t)ntex[i].w * ntex[i].h * 4; } ntex[i].used = 0; }
     free(d->op); free(d->data);
     memset(d, 0, sizeof(*d));
 }
@@ -330,7 +331,7 @@ static uint32_t palette_hash(uint64_t tex0, uint64_t texa)
 
 /* the image from the definition (replayed into scratch GS memory at its own address), the
    palette from the current CLUT buffer */
-static GLuint decode(const Def* d, uint64_t tex0, uint64_t texa, int* w, int* h)
+static GLuint decode(const Def* d, uint64_t tex0, uint64_t texa, int* w, int* h, int* hd)
 {
     uint32_t tw = (tex0 >> 26) & 0xF, th = (tex0 >> 30) & 0xF;
     uint32_t W = 1u << (tw > 10 ? 10 : tw), H = 1u << (th > 10 ? 10 : th);
@@ -339,6 +340,10 @@ static GLuint decode(const Def* d, uint64_t tex0, uint64_t texa, int* w, int* h)
     if (!px) return 0;
     gs_mem_scratch_begin();
     run_ops(d, d->clut_end, d->nop, d->tbp, d->cbp);
+    if (trep_active()) {   /* an HD pack's image for it (texreplace.c); sampled with the original size's coordinates */
+        GLuint r = trep_lookup((tex0 & ~0x3FFFull) | d->tbp, texa);
+        if (r) { gs_mem_scratch_end(); free(px); *w = (int)W; *h = (int)H; *hd = 1; return r; }
+    }
     gs_decode_texture((tex0 & ~0x3FFFull) | d->tbp, texa, W, H, px);
     gs_mem_scratch_end();
     glGenTextures(1, &t);
@@ -379,7 +384,7 @@ int ntex_lookup(uint64_t tex0, uint64_t texa, unsigned int* out_tex, int* out_w,
     for (int i = 0; i < MAX_NTEX; i++) {
         NTex* t = &ntex[i];
         if (t->used && t->id == a->id && t->key == key && t->pal == pal && (psm != PSMCT16 && psm != PSMCT24 ? 1 : t->texa == texa)) {
-            t->last = use_clock; *out_tex = t->tex; *out_w = t->w; *out_h = t->h; return 1;
+            t->last = use_clock; *out_tex = t->tex; *out_w = t->w; *out_h = t->h; return t->hd ? 3 : 1;
         }
     }
     for (int i = 0; i < MAX_NTEX; i++) if (!ntex[i].used) { e = &ntex[i]; break; }
@@ -387,15 +392,20 @@ int ntex_lookup(uint64_t tex0, uint64_t texa, unsigned int* out_tex, int* out_w,
         NTex* o = NULL;
         for (int i = 0; i < MAX_NTEX; i++) if (ntex[i].used && (!o || ntex[i].last < o->last)) o = &ntex[i];
         if (!o) break;
-        gs_tex_delete(o->tex);
-        ntex_bytes -= (uint64_t)o->w * o->h * 4;
+        if (!o->hd) { gs_tex_delete(o->tex); ntex_bytes -= (uint64_t)o->w * o->h * 4; }
         o->used = 0;
         if (!e) e = o;
     }
-    e->tex = decode(d, tex0, texa, &e->w, &e->h);
+    e->hd = 0;
+    e->tex = decode(d, tex0, texa, &e->w, &e->h, &e->hd);
     if (!e->tex) return 0;
     e->used = 1; e->id = a->id; e->key = key; e->texa = texa; e->pal = pal; e->last = use_clock;
-    ntex_bytes += (uint64_t)e->w * e->h * 4;
+    if (!e->hd) ntex_bytes += (uint64_t)e->w * e->h * 4;
     *out_tex = e->tex; *out_w = e->w; *out_h = e->h;
-    return 1;
+    return e->hd ? 3 : 1;
+}
+
+void ntex_drop_gl(unsigned int gl_tex)
+{
+    for (int i = 0; i < MAX_NTEX; i++) if (ntex[i].used && ntex[i].hd && ntex[i].tex == gl_tex) ntex[i].used = 0;
 }
