@@ -158,8 +158,7 @@ static const char* vs_src =
     "  vec2 clip = a_clip;\n"
     "  if (u_vr_on != 0 && a_vr > 0.5) {\n"
     /* a_vr 2: sprite/line corners of 3D points (w = 1): the view depth from the GS depth, z = -b / Vz - a */
-    "    if (a_vr > 2.5) P = vec4(P.xy, P.z, 1.0) * a_clip.y;\n"   /* a_vr 3: 2D the game projected itself, view depth given */
-    "    else if (a_vr > 1.5) P = vec4(P.xy, P.z, 1.0) * (-u_vr_zab.y / (P.z + u_vr_zab.x));\n"
+    "    if (a_vr > 1.5) P = vec4(P.xy, P.z, 1.0) * (-u_vr_zab.y / (P.z + u_vr_zab.x));\n"
     "    float vz = P.w;\n"
     "    vec3 V = vec3((P.x - u_vr_src.x * vz) / u_vr_src.z, (P.y - u_vr_src.y * vz) / u_vr_src.w, vz);\n"
     "    vec4 E = u_vr_m0 * V.x + u_vr_m1 * V.y + u_vr_m2 * V.z + u_vr_m3;\n"
@@ -1308,9 +1307,7 @@ static void push(const GsVertex* v, const GsVertex* attr, float s, float t)
     GlVertex* o = &vbuf[vcount++];
     o->x = v->x; o->y = v->y; o->z = attr->z; o->w = 1.0f;
     o->clip[0] = o->clip[1] = 1.0f;
-    { extern int gs_raw_vr; extern float gs_raw_vz;   /* 2: a 3D point's sprite/line corner (GS depth -> view depth); 3: a 2D sprite with its view depth in clip[1] */
-      o->vr = gs_raw_vr == 1 ? 2.0f : gs_raw_vr == 2 ? 3.0f : 0.0f;
-      if (gs_raw_vr == 2) o->clip[1] = gs_raw_vz; }
+    { extern int gs_raw_vr; o->vr = gs_raw_vr ? 2.0f : 0.0f; }   /* 2: a 3D point's sprite/line corner (GS depth -> view depth) */
     o->s = s; o->t = t; o->q = attr->q;
     const float* u = u8_unit();
     o->r = u[attr->r]; o->g = u[attr->g]; o->b = u[attr->b]; o->a = u[attr->a];
@@ -1413,7 +1410,7 @@ static void native_to_gl(unsigned int prim, const NativeVertex* v, int n, GlVert
             o->r = u[p->r]; o->g = u[p->g]; o->b = u[p->b]; o->a = u[p->a];
             o->fog = (float)((int32_t)q->fog & 0xFF);   /* XYZF2 F: FTOI4, low 8 bits */
             o->clip[0] = q->near_d; o->clip[1] = q->far_d;
-            o->vr = (q->cull & 0x80) ? 1.0f : (q->cull & 0x40) ? 3.0f : 0.0f;   /* 3: 2D with its view depth in far_d (clip[1]) */
+            o->vr = (q->cull & 0x80) ? 1.0f : 0.0f;
         }
 }
 
