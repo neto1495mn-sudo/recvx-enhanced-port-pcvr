@@ -36,6 +36,7 @@ int g_vr_eye_height = 155;   /* ini vr_eye_height: the camera's height above the
 int g_vr_fov = 120;          /* ini vr_fov: the game camera's horizontal field of view (degrees): what it culls against */
 int g_vr_turn = 30;          /* ini vr_turn: right-stick turn in degrees per flick; 0 = smooth turning */
 int g_vr_gun_min = 15;       /* ini vr_gun_min: the hand/weapon never comes closer than this to the eyes (cm) */
+int g_vr_hand_offset = -6;   /* ini vr_hand_offset: the hands moved forward (+) or back (-) from the palm, cm */
 int g_vr_fx_fix = 1;         /* ini vr_fx_fix: 1 = 2D effects with a depth (fire, glows) are placed in the world */
 int g_vr_hand_aim = 1;       /* ini vr_hand_aim: 1 = shots go where the right controller points, 0 = where the head looks */
 
@@ -196,7 +197,7 @@ static void xform(const float m[16], float x, float y, float z, float o[3])
    follow with them. How a hand holds each weapon relative to the controller is taken from the
    game's own pose: when it aims, the hand's rotation relative to the aim direction Ry(ay) Rx(wax)
    (the gun pointing where the controller points); until the weapon was first aimed, relative to
-   the body Ry(ay). The hand is put where the controller is, never closer than vr_gun_min to the
+   the body Ry(ay). The hand is put at the palm (the grip pose, plus vr_hand_offset), never closer than vr_gun_min to the
    eyes. The body is not turned by the hands (its facing is the head's, tps_glue.c).
    tps_calc_model(), after the player's model is computed, before the linked objects. */
 static void vr_log(const char* fmt, ...);
@@ -287,7 +288,13 @@ void vr_hand(BH_PWORK* p)
         for (int i = 0; i < 3; i++)
             for (int j = 0; j < 3; j++)   /* Hrot = C * R, written back as columns */
                 H[j * 4 + i] = C[i * 3 + 0] * R[0 * 3 + j] + C[i * 3 + 1] * R[1 * 3 + j] + C[i * 3 + 2] * R[2 * 3 + j];
-        xform(Wg, hp->px, hp->py, hp->pz, P);
+        {   /* at the palm (the grip pose), moved along the pointing direction by vr_hand_offset */
+            const VrPose* gp = side ? &in.gripl : &in.grip;
+            int gv = side ? in.gripl_valid : in.grip_valid;
+            float o = g_vr_hand_offset / 100.0f;
+            float bx = gv ? gp->px : hp->px, by = gv ? gp->py : hp->py, bz = gv ? gp->pz : hp->pz;
+            xform(Wg, bx - ra[2] * o, by - ra[5] * o, bz - ra[8] * o, P);
+        }
         {   /* not into the face */
             float d[3] = { P[0] - E[0], P[1] - E[1], P[2] - E[2] }, l = sqrtf(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
             float mn = g_vr_gun_min / 100.0f * (g_vr_scale / 10.0f);

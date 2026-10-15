@@ -143,8 +143,8 @@ static int need_center = 1;     /* recentre on the next frame */
 
 /* controller actions (Touch profile) */
 static XrActionSet aset = XR_NULL_HANDLE;
-static XrAction a_aiml, a_aim, a_lstick, a_rstick, a_ltrig, a_rtrig, a_lgrip, a_rgrip, a_a, a_b, a_x, a_y, a_menu, a_lclick, a_rclick;
-static XrSpace aim_space = XR_NULL_HANDLE, aiml_space = XR_NULL_HANDLE;
+static XrAction a_gripr, a_gripl, a_aiml, a_aim, a_lstick, a_rstick, a_ltrig, a_rtrig, a_lgrip, a_rgrip, a_a, a_b, a_x, a_y, a_menu, a_lclick, a_rclick;
+static XrSpace aim_space = XR_NULL_HANDLE, aiml_space = XR_NULL_HANDLE, grip_space = XR_NULL_HANDLE, gripl_space = XR_NULL_HANDLE;
 static XrPath p_left, p_right;
 
 static int xr_ok(XrResult r, const char* what)
@@ -249,7 +249,7 @@ static void make_actions(void)
 {
     XrActionSetCreateInfo si = { XR_TYPE_ACTION_SET_CREATE_INFO };
     XrInteractionProfileSuggestedBinding sb = { XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING };
-    XrActionSuggestedBinding b[16];
+    XrActionSuggestedBinding b[24];
     XrSessionActionSetsAttachInfo ai = { XR_TYPE_SESSION_ACTION_SETS_ATTACH_INFO };
     XrActionSpaceCreateInfo sci = { XR_TYPE_ACTION_SPACE_CREATE_INFO };
     int n = 0;
@@ -259,6 +259,8 @@ static void make_actions(void)
     if (!xr_ok(xrCreateActionSet(inst, &si, &aset), "xrCreateActionSet")) return;
     a_aim = mk_action("aim", "Aim", XR_ACTION_TYPE_POSE_INPUT);
     a_aiml = mk_action("aim_left", "Left hand", XR_ACTION_TYPE_POSE_INPUT);
+    a_gripr = mk_action("grip_right", "Right hand grip", XR_ACTION_TYPE_POSE_INPUT);
+    a_gripl = mk_action("grip_left", "Left hand grip", XR_ACTION_TYPE_POSE_INPUT);
     a_lstick = mk_action("move", "Move", XR_ACTION_TYPE_VECTOR2F_INPUT);
     a_rstick = mk_action("turn", "Turn", XR_ACTION_TYPE_VECTOR2F_INPUT);
     a_ltrig = mk_action("run", "Run", XR_ACTION_TYPE_FLOAT_INPUT);
@@ -275,6 +277,8 @@ static void make_actions(void)
 #define BIND(act, str) do { b[n].action = act; b[n].binding = path_of(str); n++; } while (0)
     BIND(a_aim, "/user/hand/right/input/aim/pose");
     BIND(a_aiml, "/user/hand/left/input/aim/pose");
+    BIND(a_gripr, "/user/hand/right/input/grip/pose");
+    BIND(a_gripl, "/user/hand/left/input/grip/pose");
     BIND(a_lstick, "/user/hand/left/input/thumbstick");
     BIND(a_rstick, "/user/hand/right/input/thumbstick");
     BIND(a_ltrig, "/user/hand/left/input/trigger/value");
@@ -301,6 +305,10 @@ static void make_actions(void)
     xr_ok(xrCreateActionSpace(sess, &sci, &aim_space), "xrCreateActionSpace(aim)");
     sci.action = a_aiml;
     xr_ok(xrCreateActionSpace(sess, &sci, &aiml_space), "xrCreateActionSpace(aim_left)");
+    sci.action = a_gripr;
+    xr_ok(xrCreateActionSpace(sess, &sci, &grip_space), "xrCreateActionSpace(grip_right)");
+    sci.action = a_gripl;
+    xr_ok(xrCreateActionSpace(sess, &sci, &gripl_space), "xrCreateActionSpace(grip_left)");
     host_log("vr: controllers: Touch bindings suggested\n");
 }
 
@@ -352,10 +360,18 @@ static void read_actions(XrTime t)
             if (hnd) in.aiml_valid = 1; else in.aim_valid = 1;
         }
     }
+    for (int hnd = 0; hnd < 2; hnd++) {   /* the grip poses (the palm): where the hands are */
+        XrSpace sp = hnd ? gripl_space : grip_space;
+        XrSpaceLocation loc = { XR_TYPE_SPACE_LOCATION };
+        if (sp && XR_SUCCEEDED(xrLocateSpace(sp, local_space, t, &loc)) && (loc.locationFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT)) {
+            to_recentred(&loc.pose, hnd ? &in.gripl : &in.grip);
+            if (hnd) in.gripl_valid = 1; else in.grip_valid = 1;
+        }
+    }
     {   /* diagnosis: log when a controller's pose comes and goes */
         static int last = -1;
-        int now = in.aim_valid | (in.aiml_valid << 1);
-        if (now != last) { host_log("vr: controller poses: right %s, left %s\n", in.aim_valid ? "tracked" : "lost", in.aiml_valid ? "tracked" : "lost"); last = now; }
+        int now = in.aim_valid | (in.aiml_valid << 1) | (in.grip_valid << 2) | (in.gripl_valid << 3);
+        if (now != last) { host_log("vr: controller poses: right %s, left %s; grips: right %s, left %s\n", in.aim_valid ? "tracked" : "lost", in.aiml_valid ? "tracked" : "lost", in.grip_valid ? "tracked" : "lost", in.gripl_valid ? "tracked" : "lost"); last = now; }
     }
     SDL_LockSpinlock(&pose_lock);
     input_now = in;
@@ -662,7 +678,9 @@ void xr_shutdown(void)
     SDL_LockSpinlock(&pose_lock); input_valid = 0; SDL_UnlockSpinlock(&pose_lock);
     if (aim_space) xrDestroySpace(aim_space);
     if (aiml_space) xrDestroySpace(aiml_space);
-    aim_space = aiml_space = XR_NULL_HANDLE;
+    if (grip_space) xrDestroySpace(grip_space);
+    if (gripl_space) xrDestroySpace(gripl_space);
+    aim_space = aiml_space = grip_space = gripl_space = XR_NULL_HANDLE;
     if (aset) xrDestroyActionSet(aset);
     aset = XR_NULL_HANDLE;
     chain_destroy(&quad_chain);

@@ -46,6 +46,8 @@ typedef struct {
     VrPose aim;                    /* right hand aim pose (forward = -z), recentred like xr_head_pose */
     int   aiml_valid;              /* the left hand's aim pose is tracked */
     VrPose aiml;                   /* left hand aim pose */
+    int   grip_valid, gripl_valid;  /* the grip poses (the palm) are tracked */
+    VrPose grip, gripl;            /* right / left grip pose: where the hand holds the controller */
 } VrInput;
 int    xr_input(VrInput* out);     /* 0 if there is no controller input (no session / not focused) */
 unsigned xr_recenter_gen(void);    /* changes at every recentring */
