@@ -45,6 +45,12 @@ int g_vr_gun_min = 15;       /* ini vr_gun_min: the hand/weapon never comes clos
 int g_vr_slash_speed = 180;  /* ini vr_slash_speed: the knife cuts when the right hand moves faster than this (cm/s) */
 extern int g_vr_danger_fx;    /* gs_gl.c, ini vr_danger_fx */
 int g_vr_hit_tilt = 5;       /* ini vr_hit_tilt: the view tilts this many degrees away from a hit; 0 = off */
+int g_vr_left_mirror = 1;    /* ini vr_left_mirror: the left hand without a weapon holds its controller as the right does, mirrored (1/2/3: the bone axis mirrored x/y/z; 0 = the game's own pose) */
+int g_vr_dmg_head = 170, g_vr_dmg_body = 100, g_vr_dmg_arm = 75, g_vr_dmg_leg = 75;   /* ini vr_dmg_*: damage by the body part hit (zombies), percent */
+int g_vr_recoil = 1;         /* ini vr_recoil: the weapon kicks in the hand at each shot */
+int g_vr_haptics = 1;        /* ini vr_haptics: the controllers vibrate (shots, cuts) */
+extern const short EneDamNear[31][22];   /* weapon.c */
+static void vr_log(const char* fmt, ...);
 int g_vr_hand_offset = -6;   /* ini vr_hand_offset: the hands moved forward (+) or back (-) from the palm, cm */
 int g_vr_fx_fix = 1;         /* ini vr_fx_fix: 1 = 2D effects with a depth (fire, glows) are placed in the world */
 int g_vr_hand_aim = 1;       /* ini vr_hand_aim: 1 = shots go where the right controller points, 0 = where the head looks */
@@ -263,6 +269,73 @@ static int knife_equipped(void)
     return plp && plp->wpnr_no >= 0 && plp->wpnr_no < 23 && (WpnTab[plp->wpnr_no].flg & 0x40000000);
 }
 
+/* a weapon in each hand (the game's twin guns, playpch.c) */
+static int dual_equipped(void)
+{
+    return plp && plp->wpnr_no >= 0 && plp->wpnr_no < 23 && (WpnTab[plp->wpnr_no].flg & 0x800);
+}
+
+/* the trigger of a hand (0 right, 1 left) is pulled, or was within the last 150 ms (the game
+   fires the left gun two frames after the right) */
+static int trigger_recent(int side)
+{
+    static uint64_t last_ms[2];
+    VrInput in;
+    uint64_t now = SDL_GetTicks();
+    if (xr_input(&in) && (side ? in.ltrig : in.rtrig) > 0.5f) last_ms[side] = now ? now : 1;
+    return last_ms[side] && now - last_ms[side] < 150;
+}
+
+/* pwksub.c bhSetGunFire / bhSetYakkyou: with twin guns in VR each hand fires with its own
+   trigger - no muzzle flash or shell from the hand whose trigger is not pulled */
+int vr_dual_block(void* pp, int jno)
+{
+    if (pp != (void*)plp || !vr_on() || !dual_equipped() || (jno != 9 && jno != 13)) return 0;
+    return !trigger_recent(jno == 13);
+}
+
+/* recoil and vibration of a shot from a hand */
+static uint64_t recoil_ms[2];
+static float recoil_k[2];
+static void shot_feedback(int side, int wno)
+{
+    float k = (wno >= 0 && wno < 22) ? EneDamNear[1][wno] / 60.0f : 0.5f;   /* by the weapon's power (zombie damage) */
+    k = k < 0.35f ? 0.35f : k > 1.5f ? 1.5f : k;
+    recoil_ms[side] = SDL_GetTicks() | 1;
+    recoil_k[side] = k;
+    if (g_vr_haptics) xr_haptic(side, k > 1.0f ? 1.0f : 0.3f + 0.6f * k, k > 1.0f ? 90 : 50);
+}
+
+/* weapon.c bhCheckGunAtari, after the damage of a player's hit is added (and the knife's):
+   in VR, scaled by the part of a zombie's body hit - the hit point (dpx..) against the enemy:
+   the top of it the head, the lower part the legs, away from the body capsule's axis the arms */
+int vr_part_damage(BH_PWORK* pp, int kno, int d0, int d1)
+{
+    static const char* names[] = { "body", "head", "arm", "leg" };
+    float top = 0, h, rel, mult;
+    int part = 0, add = d1 - d0, out;
+    (void)kno;
+    if (!vr_on() || !pp || add <= 0 || (pp->id != 1 && pp->id != 26) || !pp->mlwP) return d1;   /* zombies */
+    for (int j = 1; j < (int)pp->mlwP->obj_num; j++) if (pp->mlwP->owP[j].mtx[13] - pp->py > top) top = pp->mlwP->owP[j].mtx[13] - pp->py;
+    h = top > 1.0f ? top : 17.0f;
+    rel = (pp->dpy - pp->py) / h;
+    if (rel >= 0.84f) part = 1;
+    else if (rel <= 0.45f) part = 3;
+    else {   /* away from the body capsule's axis: an arm */
+        const NJS_CAPSULE* c = &pp->watr;
+        float ax = c->c2.x - c->c1.x, ay = c->c2.y - c->c1.y, az = c->c2.z - c->c1.z, l2 = ax * ax + ay * ay + az * az, t = 0;
+        float px = pp->dpx - c->c1.x, py = pp->dpy - c->c1.y, pz = pp->dpz - c->c1.z, dx, dy, dz;
+        if (l2 > 1e-6f) { t = (px * ax + py * ay + pz * az) / l2; t = t < 0 ? 0 : t > 1 ? 1 : t; }
+        dx = px - ax * t; dy = py - ay * t; dz = pz - az * t;
+        if (dx * dx + dy * dy + dz * dz > (c->r * 0.85f) * (c->r * 0.85f)) part = 2;
+    }
+    mult = (part == 1 ? g_vr_dmg_head : part == 2 ? g_vr_dmg_arm : part == 3 ? g_vr_dmg_leg : g_vr_dmg_body) / 100.0f;
+    out = (int)(add * mult + 0.5f);
+    if (out < 1) out = 1;
+    { static int nlog; if (nlog++ < 300) vr_log("vr: hit zombie %s x%.2f (%d -> %d)\n", names[part], mult, add, out); }
+    return d0 + out;
+}
+
 /* free aim: the right controller's ray in the world (origin, unit direction); 0 if not aiming by hand */
 int vr_hand_ray(NJS_POINT3* o, NJS_POINT3* d)
 {
@@ -293,7 +366,11 @@ unsigned vr_tps_keys(void)
     if (in.ly < -0.4f) k |= 2;           /* TPS_K_BACK */
     if (in.lx < -0.4f) k |= 4;           /* TPS_K_LEFT */
     if (in.lx > 0.4f) k |= 8;            /* TPS_K_RIGHT */
-    if (in.ltrig > 0.5f || (in.buttons & VRB_LSTICK)) k |= 16;   /* TPS_K_RUN */
+    {
+        int dual_aim = vr_playing() && dual_equipped() && in.rgrip > 0.5f;   /* twin guns raised: the left trigger fires the left gun */
+        if ((in.ltrig > 0.5f && !dual_aim) || (in.buttons & VRB_LSTICK)) k |= 16;   /* TPS_K_RUN */
+        if (dual_aim && (in.ltrig > 0.5f || in.rtrig > 0.5f)) k |= 512;           /* TPS_K_FIRE: either gun */
+    }
     if (in.buttons & VRB_A) k |= 32;     /* TPS_K_ACTION */
     if ((in.buttons & VRB_Y) && in.ltrig <= 0.5f) k |= 64;   /* TPS_K_STATUS (LT + Y is Select, vr_pad_select) */
     if (in.buttons & VRB_X) k |= 128;    /* TPS_K_MAP */
@@ -412,7 +489,7 @@ static void log_hand_objects(void)
         O_WRK* o = &sys->obwp[i];
         if (!(o->flg & 0x1) || !(o->flg & 0x80) || o->lkwkp != (unsigned char*)plp) continue;
         sig = sig * 31 + o->id * 64 + o->lkono + 1;
-        if (n < 200) n += snprintf(buf + n, sizeof(buf) - n, " %d(id %d, node %d)", i, o->id, o->lkono);
+        if (n < 200) n += snprintf(buf + n, sizeof(buf) - n, " %d(id %d, node %d, %d parts)", i, o->id, o->lkono, o->mlwP ? (int)o->mlwP->obj_num : 0);
     }
     if (sig != last) { last = sig; vr_log("vr: objects on the player:%s\n", buf[0] ? buf : " none"); }
 }
@@ -440,6 +517,7 @@ static void vr_slash(BH_PWORK* p, const VrPose* hp, const float* H)
         swing = 4;
         next_ms = now / 1000000 + 500;
         vr_log("vr: knife cut (hand %.1f m/s)\n", sp);
+        if (g_vr_haptics) xr_haptic(0, 0.5f, 40);
     }
     if (swing > 0) {
         GA_WORK gap;
@@ -470,6 +548,8 @@ void vr_hand(BH_PWORK* p)
     static unsigned char rok[2][2][64];
     static float prev[2][9];
     static int still[2];
+    float Rright[9];
+    int right_ok = 0;
     static int hooked;
     VrInput in;
     VrPose h;
@@ -492,6 +572,7 @@ void vr_hand(BH_PWORK* p)
         const float* R;
         float ra[9], C[9], P[3];
         const VrPose* hp;
+        float kick = 0;
         if (p->mlwP->obj_num <= node) { hand_log(side, 2, wn); continue; }
         H = p->mlwP->owP[node].mtx;
         /* the grip is learned once per weapon, when the pose has held still for a few frames
@@ -513,6 +594,15 @@ void vr_hand(BH_PWORK* p)
         hp = side ? &in.aiml : &in.aim;
         if (!ctl || !(side ? in.aiml_valid : in.aim_valid)) { hand_log(side, 1, wn); continue; }
         R = rok[side][0][wn] ? rrel[side][0][wn] : rrel[side][1][wn];
+        if (side == 1 && g_vr_left_mirror > 0 && !dual_equipped() && right_ok) {
+            /* the left hand without a weapon: the right hand's grip, mirrored - F (left/right in
+               the controller's frame) * Rright * B (the bone axis the skeleton mirrors) */
+            static float Rm[9];
+            int ax = g_vr_left_mirror - 1;
+            for (int i = 0; i < 3; i++)
+                for (int j = 0; j < 3; j++) Rm[i * 3 + j] = (i == 0 ? -1.0f : 1.0f) * Rright[i * 3 + j] * (j == ax ? -1.0f : 1.0f);
+            R = Rm;
+        }
         if (side == 0 && knife_equipped()) {   /* the knife: its blade along the controller (cut by swinging) */
             static float Rk[9];
             const NJS_POINT3* tp = &WpnTab[p->wpnr_no].wp_fps1;
@@ -538,7 +628,22 @@ void vr_hand(BH_PWORK* p)
                 }
             }
         }
+        if (side == 0) { memcpy(Rright, R, sizeof(Rright)); right_ok = 1; }
         quat_to_rows(ra, hp);
+        if (g_vr_recoil && recoil_ms[side]) {   /* the kick of a shot: up about the controller's x axis, back along it */
+            float t = (SDL_GetTicks() - recoil_ms[side]) / 1000.0f, e = t < 0.02f ? t / 0.02f : expf(-(t - 0.02f) / 0.07f);
+            if (t > 0.4f) recoil_ms[side] = 0;
+            else {
+                float a = 9.0f * (3.14159265f / 180.0f) * recoil_k[side] * e, c = cosf(a), sn = sinf(a), tmp[9];
+                for (int i = 0; i < 3; i++) {   /* ra = ra * Rx(a) */
+                    tmp[i * 3 + 0] = ra[i * 3 + 0];
+                    tmp[i * 3 + 1] = ra[i * 3 + 1] * c + ra[i * 3 + 2] * sn;
+                    tmp[i * 3 + 2] = -ra[i * 3 + 1] * sn + ra[i * 3 + 2] * c;
+                }
+                memcpy(ra, tmp, sizeof(tmp));
+                kick = 0.03f * recoil_k[side] * e;   /* metres back */
+            }
+        }
         for (int j = 0; j < 3; j++) {   /* C = Ry(vr_yaw) * Rhand */
             C[0 * 3 + j] = cy * ra[0 * 3 + j] + sy * ra[2 * 3 + j];
             C[1 * 3 + j] = ra[1 * 3 + j];
@@ -550,7 +655,7 @@ void vr_hand(BH_PWORK* p)
         {   /* at the palm (the grip pose), moved along the pointing direction by vr_hand_offset */
             const VrPose* gp = side ? &in.gripl : &in.grip;
             int gv = side ? in.gripl_valid : in.grip_valid;
-            float o = g_vr_hand_offset / 100.0f;
+            float o = g_vr_hand_offset / 100.0f - kick;
             float bx = gv ? gp->px : hp->px, by = gv ? gp->py : hp->py, bz = gv ? gp->pz : hp->pz;
             xform(Wg, bx - ra[2] * o, by - ra[5] * o, bz - ra[8] * o, P);
         }
@@ -575,15 +680,15 @@ void vr_hand(BH_PWORK* p)
    hand that fired it (the game's own muzzle point gx, on the hand node, which follows the
    controller) and goes where that controller points. Everything else about the shot (damage,
    walls, enemies, effects) is the game's. */
-void vr_gun_ray(GA_WORK* gap)
+int vr_gun_ray(GA_WORK* gap)
 {
     static int last = -1;
     NJS_POINT3 o, d;
     VrInput in;
     float r[9], f[3], c = cosf(vr_yaw), s = sinf(vr_yaw), l;
     int side, st;
-    if (!gap || !plp || !vr_on() || !g_vr_hand_aim) return;
-    if (gap->wpn_no != plp->wpnr_no || gap->ax != plp->wax || gap->ay != plp->way) return;   /* not the player's shot */
+    if (!gap || !plp || !vr_on()) return 0;
+    if (gap->wpn_no != plp->wpnr_no || gap->ax != plp->wax || gap->ay != plp->way) return 0;   /* not the player's shot */
     {   /* which hand: the one whose node is nearer the game's muzzle point */
         const float* h9 = plp->mlwP->owP[9].mtx;
         float d9 = (gap->gx - h9[12]) * (gap->gx - h9[12]) + (gap->gy - h9[13]) * (gap->gy - h9[13]) + (gap->gz - h9[14]) * (gap->gz - h9[14]);
@@ -594,6 +699,9 @@ void vr_gun_ray(GA_WORK* gap)
             if (d13 < d9) side = 1;
         }
     }
+    if (dual_equipped() && !trigger_recent(side)) return 1;   /* twin guns: this hand's trigger is not pulled */
+    shot_feedback(side, gap->wpn_no);
+    if (!g_vr_hand_aim) return 0;
     st = 1;
     if (xr_input(&in) && (side ? in.aiml_valid : in.aim_valid) && hand_ok[side]) {
         const VrPose* hp = side ? &in.aiml : &in.aim;
@@ -612,6 +720,7 @@ void vr_gun_ray(GA_WORK* gap)
         last = st * 2 + side;
         vr_log(st ? "vr: shot from the game's aim (%s hand not tracked)\n" : "vr: shot from the %s hand's weapon\n", side ? "left" : "right");
     }
+    return 0;
 }
 
 /* game.c, in place of the player's model while the camera is in the head: the body stays

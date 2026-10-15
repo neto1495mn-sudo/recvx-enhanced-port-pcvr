@@ -126,9 +126,11 @@ static DrawState batch_state;
 static int batch_valid;
 
 static GLuint prog, vao, vbo, present_prog, present_vao, svao, svbo;
-static GLint u_vr_on, u_vr_src, u_vr_dst, u_vr_m0, u_vr_m1, u_vr_m2, u_vr_m3, u_vr_zab, u_vr_zs;
+static GLint u_vr_on, u_vr_src, u_vr_dst, u_vr_m0, u_vr_m1, u_vr_m2, u_vr_m3, u_vr_zab, u_vr_zs, u_vr_hud;
 /* VR re-projection of the draws being replayed for an eye (gs_present_vr); off otherwise */
-static struct { int on; float src[4], dst[4], m[16], zab[2], zs; } vr_u;
+static struct { int on; float src[4], dst[4], m[16], zab[2], zs, hud[2]; } vr_u;
+int g_vr_hud_dist = 150;   /* ini vr_hud_dist: the panel of the game's texts and 2D, cm in front of the head */
+int g_vr_hud_angle = 50;   /* ini vr_hud_angle: its width seen from the head (degrees); 0 = drawn over the whole view as before */
 /* VR diagnosis: what the first eye's replay draws, by path (logged now and then while stereo is on) */
 /* path: 'N' native triangles, 'S' sprites/lines (gs_draw_raw), 'R' GS register writes (VU1 / packets) */
 static struct { int on; unsigned n3d, nraw, n2d, nbig; int ns; float s[12][3]; char path[12]; } vr_st;
@@ -163,7 +165,7 @@ static const char* vs_src =
        (columns) take V to the eye's view (same axes: x right, y down, z forward), which is
        projected with the eye's frustum onto the display area (u_vr_dst: c', k'). The GS depth
        is kept, so the game's depth tests between draws behave as before. */
-    "uniform int u_vr_on; uniform vec4 u_vr_src, u_vr_dst, u_vr_m0, u_vr_m1, u_vr_m2, u_vr_m3; uniform vec2 u_vr_zab; uniform float u_vr_zs;\n"
+    "uniform int u_vr_on; uniform vec4 u_vr_src, u_vr_dst, u_vr_m0, u_vr_m1, u_vr_m2, u_vr_m3; uniform vec2 u_vr_zab; uniform float u_vr_zs; uniform vec2 u_vr_hud;\n"
     /* everything perspective-correct: for GS vertices w = 1, so that is the GS's screen-space
        interpolation; native 3D triangles stay whole where VU1 would have cut them at the guard
        band, and screen-linear colour/fog across a triangle reaching far off-screen near the
@@ -172,18 +174,26 @@ static const char* vs_src =
     "void main(){\n"
     "  vec4 P = a_pos;\n"
     "  vec2 clip = a_clip;\n"
-    "  if (u_vr_on != 0 && a_vr > 0.5) {\n"
+    "  float vrm = (a_vr > 2.5 && u_vr_hud.y <= 0.0) ? 0.0 : a_vr;\n"
+    "  if (u_vr_on != 0 && vrm > 0.5) {\n"
+    "    vec3 V; float zo = P.z / P.w;\n"
+    /* a_vr 3: the game's own 2D (texts, message window, icons; not the screen layers): on a
+       panel u_vr_hud.y units in front of the frame's head, u_vr_hud.x units per pixel from the
+       screen centre - re-projected like the 3D, so it sits still in front of the eyes */
+    "    if (vrm > 2.5) V = vec3((P.x / P.w - u_vr_src.x) * u_vr_hud.x, (P.y / P.w - u_vr_src.y) * u_vr_hud.x, u_vr_hud.y);\n"
+    "    else {\n"
     /* a_vr 2: sprite/line corners of 3D points (w = 1): the view depth from the GS depth, z = -b / Vz - a */
-    "    if (a_vr > 1.5) P = vec4(P.xy, P.z, 1.0) * (-u_vr_zab.y / (P.z + u_vr_zab.x));\n"
-    "    float vz = P.w;\n"
-    "    vec3 V = vec3((P.x - u_vr_src.x * vz) / u_vr_src.z, (P.y - u_vr_src.y * vz) / u_vr_src.w, vz);\n"
+    "      if (vrm > 1.5) P = vec4(P.xy, P.z, 1.0) * (-u_vr_zab.y / (P.z + u_vr_zab.x));\n"
+    "      float vz = P.w;\n"
+    "      V = vec3((P.x - u_vr_src.x * vz) / u_vr_src.z, (P.y - u_vr_src.y * vz) / u_vr_src.w, vz);\n"
+    "    }\n"
     "    vec4 E = u_vr_m0 * V.x + u_vr_m1 * V.y + u_vr_m2 * V.z + u_vr_m3;\n"
     /* depth: the GS depth formula applied to the EYE's distance (E.z metres * u_vr_zs units per
        metre), times E.z - affine in the vertex, so it interpolates exactly across the eye's
        screen. (The game camera's depth, kept before, bends across large triangles seen from the
        eye: surfaces close to others - frames on walls, pipes, table parts - fought and flickered.) */
-    "    P = vec4(u_vr_dst.x * E.z + u_vr_dst.z * E.x, u_vr_dst.y * E.z + u_vr_dst.w * E.y, -u_vr_zab.y / u_vr_zs - u_vr_zab.x * E.z, E.z);\n"
-    "    clip = vec2(E.z - 0.03, a_vr > 1.5 ? 1.0 : clip.y);\n"   /* 3 cm in front of the eye (E is in metres) */
+    "    P = vec4(u_vr_dst.x * E.z + u_vr_dst.z * E.x, u_vr_dst.y * E.z + u_vr_dst.w * E.y, vrm > 2.5 ? zo * E.z : -u_vr_zab.y / u_vr_zs - u_vr_zab.x * E.z, E.z);\n"
+    "    clip = vec2(E.z - 0.03, vrm > 1.5 ? 1.0 : clip.y);\n"   /* 3 cm in front of the eye (E is in metres) */
     "  }\n"
     "  float w = P.w;\n"
     "  vec2 p = (vec2(P.x + u_rt_margin * w, P.y) / u_rt_size) * 2.0 - w;\n"
@@ -297,7 +307,7 @@ void gs_renderer_init(void)
 #define U(n) u_##n = glGetUniformLocation(prog, "u_" #n)
     U(rt_size); U(rt_margin); U(tme); U(tfx); U(tcc); U(fst); U(texsize); U(fge); U(fogcol); U(ate); U(atst); U(aref);
     U(tex); U(tex_alpha_scale); U(texofs); U(premul); U(zscale); U(clamp_mode); U(clamp_vals); U(afail_pass); U(rt16);
-    U(vr_on); U(vr_src); U(vr_dst); U(vr_m0); U(vr_m1); U(vr_m2); U(vr_m3); U(vr_zab); U(vr_zs);
+    U(vr_on); U(vr_src); U(vr_dst); U(vr_m0); U(vr_m1); U(vr_m2); U(vr_m3); U(vr_zab); U(vr_zs); U(vr_hud);
 #undef U
     present_prog = compile(present_vs, present_fs);
     up_tex = glGetUniformLocation(present_prog, "u_tex");
@@ -1185,6 +1195,7 @@ void gs_flush(void)
         uni4f(u_vr_m3, vr_u.m[12], vr_u.m[13], vr_u.m[14], vr_u.m[15]);
         uni2f(u_vr_zab, vr_u.zab[0], vr_u.zab[1]);
         uni1f(u_vr_zs, vr_u.zs);
+        uni2f(u_vr_hud, vr_u.hud[0], vr_u.hud[1]);
     }
     {
         uint32_t zpsm = (st->ctx.zbuf >> 24) & 0xF;
@@ -1344,7 +1355,7 @@ static void push(const GsVertex* v, const GsVertex* attr, float s, float t)
         extern int gs_raw_vr, gs_vu1_vr, gs_in_raw, g_vr_fx_fix;
         int fx = g_vr_fx_fix && o->z > 100.0f;
         if (fx && prim_big) { fx = 0; if (vr_st.on) vr_st.nbig++; }   /* a screen layer, not an effect */
-        o->vr = (gs_raw_vr || gs_vu1_vr || fx) ? 2.0f : 0.0f;
+        o->vr = (gs_raw_vr || gs_vu1_vr || fx) ? 2.0f : prim_big ? 0.0f : 3.0f;   /* 3: the game's 2D, on the VR panel; 0: screen layers */
         vr_stat_vertex_p(o, gs_in_raw ? 'S' : 'R');
     }
     o->s = s; o->t = t; o->q = attr->q;
@@ -1454,7 +1465,7 @@ static void native_to_gl(unsigned int prim, const NativeVertex* v, int n, GlVert
             o->r = u[p->r]; o->g = u[p->g]; o->b = u[p->b]; o->a = u[p->a];
             o->fog = (float)((int32_t)q->fog & 0xFF);   /* XYZF2 F: FTOI4, low 8 bits */
             o->clip[0] = q->near_d; o->clip[1] = q->far_d;
-            o->vr = (q->cull & 0x80) ? 1.0f : (q->cull & 0x40) ? 2.0f : 0.0f;   /* 2: 2D with a GS depth (vr_fx_fix) */
+            o->vr = (q->cull & 0x80) ? 1.0f : (q->cull & 0x40) ? 2.0f : (q->cull & 0x20) ? 0.0f : 3.0f;   /* 2: 2D with a GS depth (vr_fx_fix); 3: 2D on the VR panel; 0: screen layers */
             vr_stat_vertex(o);
         }
 }
@@ -2018,6 +2029,11 @@ static int present_vr_stereo(const struct Frame* cur)
         vr_u.zab[0] = v->za; vr_u.zab[1] = v->zb;
         vr_u.zs = sqrtf(v->W[0] * v->W[0] + v->W[1] * v->W[1] + v->W[2] * v->W[2]);   /* game units per metre */
         if (vr_u.zs < 1e-3f) vr_u.zs = 10.0f;
+        if (g_vr_hud_angle > 0) {   /* the 2D panel: distance (units) and size (units per pixel) */
+            float d = g_vr_hud_dist / 100.0f * vr_u.zs;
+            vr_u.hud[1] = d;
+            vr_u.hud[0] = d * tanf(g_vr_hud_angle * (3.14159265f / 360.0f)) / 320.0f;
+        } else vr_u.hud[0] = vr_u.hud[1] = 0.0f;
         vr_u.on = 1;
         {
             static unsigned nlog;

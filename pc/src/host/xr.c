@@ -145,7 +145,7 @@ static int need_center = 1;     /* recentre on the next frame */
 
 /* controller actions (Touch profile) */
 static XrActionSet aset = XR_NULL_HANDLE;
-static XrAction a_gripr, a_gripl, a_aiml, a_aim, a_lstick, a_rstick, a_ltrig, a_rtrig, a_lgrip, a_rgrip, a_a, a_b, a_x, a_y, a_menu, a_lclick, a_rclick;
+static XrAction a_hapr, a_hapl, a_gripr, a_gripl, a_aiml, a_aim, a_lstick, a_rstick, a_ltrig, a_rtrig, a_lgrip, a_rgrip, a_a, a_b, a_x, a_y, a_menu, a_lclick, a_rclick;
 static XrSpace aim_space = XR_NULL_HANDLE, aiml_space = XR_NULL_HANDLE, grip_space = XR_NULL_HANDLE, gripl_space = XR_NULL_HANDLE;
 static XrPath p_left, p_right;
 
@@ -263,6 +263,8 @@ static void make_actions(void)
     a_aiml = mk_action("aim_left", "Left hand", XR_ACTION_TYPE_POSE_INPUT);
     a_gripr = mk_action("grip_right", "Right hand grip", XR_ACTION_TYPE_POSE_INPUT);
     a_gripl = mk_action("grip_left", "Left hand grip", XR_ACTION_TYPE_POSE_INPUT);
+    a_hapr = mk_action("haptic_right", "Right vibration", XR_ACTION_TYPE_VIBRATION_OUTPUT);
+    a_hapl = mk_action("haptic_left", "Left vibration", XR_ACTION_TYPE_VIBRATION_OUTPUT);
     a_lstick = mk_action("move", "Move", XR_ACTION_TYPE_VECTOR2F_INPUT);
     a_rstick = mk_action("turn", "Turn", XR_ACTION_TYPE_VECTOR2F_INPUT);
     a_ltrig = mk_action("run", "Run", XR_ACTION_TYPE_FLOAT_INPUT);
@@ -281,6 +283,8 @@ static void make_actions(void)
     BIND(a_aiml, "/user/hand/left/input/aim/pose");
     BIND(a_gripr, "/user/hand/right/input/grip/pose");
     BIND(a_gripl, "/user/hand/left/input/grip/pose");
+    BIND(a_hapr, "/user/hand/right/output/haptic");
+    BIND(a_hapl, "/user/hand/left/output/haptic");
     BIND(a_lstick, "/user/hand/left/input/thumbstick");
     BIND(a_rstick, "/user/hand/right/input/thumbstick");
     BIND(a_ltrig, "/user/hand/left/input/trigger/value");
@@ -334,6 +338,38 @@ static void to_recentred(const XrPosef* in, VrPose* p)
 }
 
 /* the controllers now (session focused) */
+/* vibration requests (any thread), sent with the next action sync */
+static SDL_SpinLock hap_lock;
+static float hap_amp[2];
+static int hap_ms[2];
+void xr_haptic(int hand, float amplitude, int ms)
+{
+    if (hand < 0 || hand > 1) return;
+    SDL_LockSpinlock(&hap_lock);
+    if (amplitude > hap_amp[hand]) hap_amp[hand] = amplitude;
+    if (ms > hap_ms[hand]) hap_ms[hand] = ms;
+    SDL_UnlockSpinlock(&hap_lock);
+}
+static void send_haptics(void)
+{
+    float amp[2];
+    int ms[2];
+    SDL_LockSpinlock(&hap_lock);
+    amp[0] = hap_amp[0]; amp[1] = hap_amp[1]; ms[0] = hap_ms[0]; ms[1] = hap_ms[1];
+    hap_amp[0] = hap_amp[1] = 0; hap_ms[0] = hap_ms[1] = 0;
+    SDL_UnlockSpinlock(&hap_lock);
+    for (int h = 0; h < 2; h++) {
+        XrHapticActionInfo hi = { XR_TYPE_HAPTIC_ACTION_INFO };
+        XrHapticVibration v = { XR_TYPE_HAPTIC_VIBRATION };
+        if (amp[h] <= 0 || !(h ? a_hapl : a_hapr)) continue;
+        hi.action = h ? a_hapl : a_hapr;
+        v.amplitude = amp[h] > 1.0f ? 1.0f : amp[h];
+        v.duration = (XrDuration)ms[h] * 1000000;
+        v.frequency = XR_FREQUENCY_UNSPECIFIED;
+        xrApplyHapticFeedback(sess, &hi, (const XrHapticBaseHeader*)&v);
+    }
+}
+
 static void read_actions(XrTime t)
 {
     XrActiveActionSet as = { aset, XR_NULL_PATH };
@@ -347,6 +383,7 @@ static void read_actions(XrTime t)
         return;
     }
     memset(&in, 0, sizeof(in));
+    send_haptics();
     get_v(a_lstick, &in.lx, &in.ly);
     get_v(a_rstick, &in.rx, &in.ry);
     in.ltrig = get_f(a_ltrig); in.rtrig = get_f(a_rtrig);

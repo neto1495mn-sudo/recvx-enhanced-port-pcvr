@@ -53,6 +53,7 @@ typedef struct {
 } VrInput;
 int    xr_input(VrInput* out);     /* 0 if there is no controller input (no session / not focused) */
 unsigned xr_recenter_gen(void);    /* changes at every recentring */
+void   xr_haptic(int hand, float amplitude, int ms);   /* any thread: vibrate a controller (0 right, 1 left; amplitude 0..1) */
 
 /* render thread, one headset frame per present:
    xr_frame_begin: -1 no frame (not running), 0 frame begun but nothing to draw, 1 draw */
