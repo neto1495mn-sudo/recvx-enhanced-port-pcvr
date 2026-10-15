@@ -746,6 +746,55 @@ filled:
     return e->tex;
 }
 
+/* texreplace.c: a replacement redrawn as RGBA8 at dw x dh with mipmaps (block-compressed packs
+   come without them; far away they would shimmer in VR). Called at the frame start. */
+static const char* copy_fs =
+    "#version 330 core\n"
+    "in vec2 v_uv; uniform sampler2D u_tex; out vec4 o;\n"
+    "void main(){ o = texture(u_tex, v_uv); }\n";
+unsigned int gs_tex_to_rgba_mips(unsigned int src, int dw, int dh)
+{
+    static GLuint cprog, cfbo;
+    static GLint cu_tex, cu_rect;
+    GLuint t;
+    if (!glGenerateMipmap) return 0;
+    if (!cprog) {
+        cprog = compile(present_vs, copy_fs);
+        cu_tex = glGetUniformLocation(cprog, "u_tex"); cu_rect = glGetUniformLocation(cprog, "u_rect");
+        glGenFramebuffers(1, &cfbo);
+    }
+    glGenTextures(1, &t);
+    glBindTexture(GL_TEXTURE_2D, t);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, dw, dh, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glBindFramebuffer(GL_FRAMEBUFFER, cfbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, t, 0);
+    if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != 0x8CD5 /* GL_FRAMEBUFFER_COMPLETE */) {
+        glBindFramebuffer(GL_FRAMEBUFFER, 0); glDeleteTextures(1, &t); return 0;
+    }
+    glDisable(GL_SCISSOR_TEST); glDisable(GL_DEPTH_TEST); glDisable(GL_BLEND);
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    glViewport(0, 0, dw, dh);
+    glUseProgram(cprog);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, src);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glUniform1i(cu_tex, 0);
+    glUniform4f(cu_rect, 0.0f, 1.0f, 1.0f, 0.0f);   /* (present_vs puts v0 at the top: unflipped into the target) */
+    glBindVertexArray(present_vao);
+    glDrawArrays(0x0005 /* GL_TRIANGLE_STRIP */, 0, 4);
+    glBindVertexArray(vao);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glBindTexture(GL_TEXTURE_2D, t);
+    glGenerateMipmap(GL_TEXTURE_2D);
+    glUseProgram(prog);
+    return t;
+}
+
 /* texreplace.c deletes a replacement: entries that use it decode again */
 void gs_texcache_drop_gl(unsigned int gl_tex)
 {
@@ -1820,6 +1869,7 @@ void gs_frame_begin(void)
     gt_exec_begin();
     if (++memo_gen == 0) memo_gen = 1;   /* resources of the frame about to execute */
     if (ndoomed) { glDeleteTextures((GLsizei)ndoomed, doomed); ndoomed = 0; }
+    trep_frame_begin();   /* HD replacements get their mipmaps (texreplace.c) */
     nreloads = 0;
     snapshot_valid = 0;   /* no replays of the previous frame while this one is half executed (download) */
     memset(first, 0, sizeof(first));

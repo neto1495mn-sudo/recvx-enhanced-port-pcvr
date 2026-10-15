@@ -42,6 +42,7 @@
 int g_tex_hd = 1;        /* ini tex_hd: use the packs */
 int g_tex_hd_log = 0;    /* ini tex_hd_log: log the names of textures without a replacement */
 int g_tex_hd_mb = 600;   /* ini tex_hd_mb: video memory for replacements (MB) */
+int g_tex_hd_max = 1024; /* ini tex_hd_max: largest size kept (bigger images are reduced) */
 
 #define GL_COMPRESSED_RGBA_S3TC_DXT1_EXT 0x83F1
 #define GL_COMPRESSED_RGBA_S3TC_DXT3_EXT 0x83F2
@@ -60,7 +61,7 @@ typedef struct {
     char* path;
     GLuint tex;          /* uploaded (0: not yet, or failed) */
     uint32_t bytes, last;
-    int failed;
+    int failed, w, ht, mips, queued;
 } Entry;
 
 static Entry* tab;
@@ -142,8 +143,12 @@ static void add_file(const char* dir, const char* name)
     }
     if (*s != '.' || n < 2 || (SDL_strcasecmp(s, ".dds") && SDL_strcasecmp(s, ".png"))) { skipped++; return; }
     snprintf(path, sizeof(path), "%s/%s", dir, name);
-    if (n == 3) insert(v[0], v[1], (uint32_t)v[2], path);
-    else insert(v[0], 0, (uint32_t)v[1], path);
+    {   /* as PCSX2 reads the bits: bit 14 (once TCC) is unused, TEXA only counts for 16/24-bit formats */
+        uint32_t bits = (uint32_t)v[n - 1] & ~0x4000u, psm = bits & 0x3F;
+        if (psm == PSMT8 || psm == PSMT4 || psm == PSMT8H || psm == PSMT4HL || psm == PSMT4HH || psm == PSMCT32 || psm == PSMZ32) bits &= 0x3FFF;
+        if (n == 3) insert(v[0], v[1], bits, path);
+        else insert(v[0], 0, bits, path);
+    }
 }
 
 static void scan(const char* dir, int depth)
@@ -257,7 +262,7 @@ static uint8_t* read_file(const char* path, size_t* len)
 static uint32_t rd32(const uint8_t* p) { return p[0] | p[1] << 8 | p[2] << 16 | (uint32_t)p[3] << 24; }
 
 /* a DDS: BC1/2/3/7 or 32-bit RGBA/BGRA, its mipmap levels; the GL texture or 0 */
-static GLuint load_dds(const uint8_t* d, size_t len, uint32_t* bytes, int* mips)
+static GLuint load_dds(const uint8_t* d, size_t len, uint32_t* bytes, int* mips, int* ow, int* oh)
 {
     uint32_t h, w, nmip, pf_flags, fourcc, bpp, rmask, off = 128, fmt = 0, block = 0;
     int bgra = 0;
@@ -287,6 +292,7 @@ static GLuint load_dds(const uint8_t* d, size_t len, uint32_t* bytes, int* mips)
     }
     if (fmt && !glCompressedTexImage2D) return 0;
     if (!w || !h || w > 16384 || h > 16384) return 0;
+    *ow = (int)w; *oh = (int)h;
     glGenTextures(1, &t);
     glBindTexture(GL_TEXTURE_2D, t);
     glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
@@ -310,12 +316,13 @@ static GLuint load_dds(const uint8_t* d, size_t len, uint32_t* bytes, int* mips)
     return t;
 }
 
-static GLuint load_png(const uint8_t* d, size_t len, uint32_t* bytes, int* mips)
+static GLuint load_png(const uint8_t* d, size_t len, uint32_t* bytes, int* mips, int* ow, int* oh)
 {
     int w, h, n;
     uint8_t* px = stbi_load_from_memory(d, (int)len, &w, &h, &n, 4);
     GLuint t;
     if (!px) return 0;
+    *ow = w; *oh = h;
     glGenTextures(1, &t);
     glBindTexture(GL_TEXTURE_2D, t);
     glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
@@ -347,6 +354,44 @@ static void make_room(uint32_t need)
     }
 }
 
+/* replacements without mipmaps or too big: redrawn at the next frame start (gs_gl.c) */
+#define MAX_QUEUE 256
+static Entry* queue[MAX_QUEUE];
+static int nqueue;
+static void queue_convert(Entry* e)
+{
+    if (e->queued || nqueue >= MAX_QUEUE) return;
+    e->queued = 1;
+    queue[nqueue++] = e;
+}
+
+void trep_frame_begin(void)
+{
+    int done = 0;
+    while (nqueue && done < 4) {   /* a few per frame: no long hitch on entering a room */
+        Entry* e = queue[0];
+        int dw = e->w, dh = e->ht;
+        memmove(queue, queue + 1, (size_t)(--nqueue) * sizeof(queue[0]));
+        e->queued = 0;
+        if (!e->tex) continue;   /* (dropped meanwhile) */
+        while (dw > g_tex_hd_max || dh > g_tex_hd_max) { dw = dw > 1 ? dw / 2 : 1; dh = dh > 1 ? dh / 2 : 1; }
+        {
+            GLuint t = gs_tex_to_rgba_mips(e->tex, dw, dh);
+            uint32_t nb = (uint32_t)dw * (uint32_t)dh * 4 / 3 * 4;
+            if (!t) continue;
+            ntex_drop_gl(e->tex);
+            gs_texcache_drop_gl(e->tex);
+            if (e->tex < 65536) hd_kind[e->tex] = 0;
+            glDeleteTextures(1, &e->tex);
+            used_bytes -= e->bytes;
+            e->tex = t; e->bytes = nb; e->w = dw; e->ht = dh; e->mips = 1;
+            used_bytes += nb;
+            if (t < 65536) hd_kind[t] = 2;
+        }
+        done++;
+    }
+}
+
 unsigned int trep_lookup(uint64_t tex0, uint64_t texa)
 {
     uint64_t h, clut;
@@ -373,13 +418,14 @@ unsigned int trep_lookup(uint64_t tex0, uint64_t texa)
         uint32_t bytes = 0;
         GLuint t = 0;
         if (d) {
-            t = (len > 4 && !memcmp(d, "DDS ", 4)) ? load_dds(d, len, &bytes, &mips) : load_png(d, len, &bytes, &mips);
+            t = (len > 4 && !memcmp(d, "DDS ", 4)) ? load_dds(d, len, &bytes, &mips, &e->w, &e->ht) : load_png(d, len, &bytes, &mips, &e->w, &e->ht);
             free(d);
         }
         if (!t) { e->failed = 1; host_log("tex: could not load %s\n", e->path); return 0; }
         make_room(bytes);
-        e->tex = t; e->bytes = bytes; used_bytes += bytes;
+        e->tex = t; e->bytes = bytes; used_bytes += bytes; e->mips = mips;
         if (t < 65536) hd_kind[t] = (uint8_t)(mips ? 2 : 1);
+        if (!mips || e->w > g_tex_hd_max || e->ht > g_tex_hd_max) queue_convert(e);
         {
             static int nlog;
             if (nlog++ < 100) host_log("tex: HD %s (%u KB, %u MB in use)\n", e->path, bytes >> 10, (unsigned)(used_bytes >> 20));
