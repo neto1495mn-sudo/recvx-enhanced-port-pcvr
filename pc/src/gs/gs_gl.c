@@ -1844,6 +1844,8 @@ void gs_replay_check(const struct Frame* cur)
 
 /* ---------------- VR presentation (render thread) ---------------- */
 
+const char* g_vr_status;   /* shown by the overlay: why this frame is on the cinema screen */
+
 /* the display area of a render-target texture (the 640x480 area, hor+ margins included) into
    the bound draw framebuffer of w x h, the right way up for OpenXR (row 0 at the bottom) */
 static void draw_area_to(GLuint tex, int rt_vw, int rt_vh, int w, int h)
@@ -1879,8 +1881,21 @@ static int present_vr_stereo(const struct Frame* cur)
     int w = (int)(dw * g_scale + 0.5f), h = (int)(480.0f * g_scale + 0.5f), ok = 1;
     const GsContext* c = &gs.ctx[0];
     float ofx = (float)(c->xyoffset & 0xFFFF) / 16.0f, ofy = (float)((c->xyoffset >> 32) & 0xFFFF) / 16.0f;
-    if (!v || !v->valid || !snapshot_valid || !xr_frame_eye(0) || !xr_frame_eye(1)) return 0;
-    if (!vr_mat_invert(iG, v->G) || !vr_mat_invert(iW, v->W)) return 0;
+    {   /* why a frame stays on the cinema screen: logged when the reason changes */
+        static int last = -1, nlog;
+        int why = !v ? 1 : !v->valid ? 2 : !snapshot_valid ? 3 : !xr_frame_eye(0) || !xr_frame_eye(1) ? 4 :
+                  !vr_mat_invert(iG, v->G) ? 5 : !vr_mat_invert(iW, v->W) ? 6 : 0;
+        static const char* names[] = { "ok", "no frame", "frame without VR camera (cutscene/menu/door)", "no snapshot to replay",
+                                       "no eye poses", "camera matrix not invertible", "play-space matrix not invertible" };
+        if (why != last && nlog < 200) {
+            nlog++;
+            host_log("vr: stereo %s (frame %llu, scale %d, area %dx%d)\n", names[why], (unsigned long long)frame_no, (int)g_scale, w, h);
+            if (why == 0 && v) host_log("vr: proj c %.1f %.1f k %.1f %.1f xyoffset %.1f %.1f\n", v->cx, v->cy, v->kx, v->ky, ofx, ofy);
+            last = why;
+        }
+        g_vr_status = why ? names[why] : NULL;
+        if (why) return 0;
+    }
     vr_mat_mul(A, iW, iG);   /* V of the frame -> local (metres) */
     if (!vr_fbo) glGenFramebuffers(1, &vr_fbo);
     gs_flush();
@@ -1905,6 +1920,11 @@ static int present_vr_stereo(const struct Frame* cur)
         vr_u.on = 0;
         rt = rt_find(gs.disp_fbp, gs.disp_fbw ? gs.disp_fbw : 10);
         tex = xr_eye_target(e, w, h);
+        if (!rt || !tex) {
+            static int nfail;
+            if (nfail++ < 20) host_log("vr: eye %d failed: %s\n", e, !rt ? "no display target after the replay" : "no swapchain image");
+            g_vr_status = !rt ? "eye: no display target after the replay" : "eye: no swapchain image";
+        }
         if (rt && tex) {
             glBindFramebuffer(GL_FRAMEBUFFER, vr_fbo);
             glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
@@ -1926,6 +1946,7 @@ static uint64_t gs_present_vr(const struct Frame* cur, float t)
     uint64_t swap;
     int ww = 0, wh = 0, fr = xr_frame_begin();
     SDL_GetWindowSizeInPixels(g_window, &ww, &wh);
+    if (fr != 1) g_vr_status = fr == 0 ? "headset asked not to render" : "headset not running";
     if (fr == 1 && present_vr_stereo(cur)) {
         draw_display(final_vw ? img[fin].tex : 0, final_vw ? final_vw : 640, final_vw ? final_vh : 512);   /* mirror */
         overlay_render();

@@ -48,7 +48,17 @@ void vr_camera(void)
     float s = g_vr_scale / 10.0f, yb, cb, sb, hr[9], R[9], ax[3];
     float Wg[16], rec[16];
     vr_frame = 0;
-    if (!plp || !xr_stereo_ready() || !xr_head_pose(&h)) return;
+    {
+        static int last = -1;
+        int why = !plp ? 1 : !xr_stereo_ready() ? 2 : !xr_head_pose(&h) ? 3 : 0;
+        if (why != last) {
+            extern void host_log(const char* fmt, ...);
+            static const char* names[] = { "on", "off (no player)", "off (headset not showing us yet)", "off (no head pose yet)" };
+            host_log("vr: camera %s\n", names[why]);
+            last = why;
+        }
+        if (why) return;
+    }
 
     /* body: the character's facing, the same angle the third-person camera follows (forward
        is (-sin, 0, -cos)); Ry(yb) turns the recentred play space to it */
