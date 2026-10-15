@@ -2150,6 +2150,98 @@ static void draw_area_to(GLuint tex, int rt_vw, int rt_vh, int w, int h)
 /* Stereo: the executed frame replayed once per eye with its 3D re-projected from the frame's
    camera to the eye (vr_view.h), each into the eye's swapchain image. 0 if this frame cannot
    (no VR camera, no snapshot to replay from, no eye poses): the caller shows the cinema screen. */
+/* room changes in VR (gs_present_vr): the last stereo frame's eye images, kept to be shown at
+   their own poses (fixed in the room) while it fades to black and the next room loads; the next
+   room then fades in. vr_fade: brightness 1 .. 0. */
+int g_vr_door_fade = 1;   /* ini vr_door_fade */
+static GLuint hold_tex[2], hold_fbo, fade_prog;
+static GLint uf_tex, uf_rect, uf_k, uf_mode;
+static int hold_w, hold_h, hold_valid;
+static float vr_fade = 1.0f;
+static const char* fade_fs =
+    "#version 330 core\n"
+    "in vec2 v_uv; uniform sampler2D u_tex; uniform float u_k; uniform int u_mode; out vec4 o;\n"
+    "void main(){ if (u_mode == 0) o = vec4(texture(u_tex, v_uv).rgb * u_k, 1.0); else o = vec4(0.0, 0.0, 0.0, 1.0 - u_k); }\n";
+static void fade_prog_init(void)
+{
+    if (fade_prog) return;
+    fade_prog = compile(present_vs, fade_fs);
+    uf_tex = glGetUniformLocation(fade_prog, "u_tex"); uf_rect = glGetUniformLocation(fade_prog, "u_rect");
+    uf_k = glGetUniformLocation(fade_prog, "u_k"); uf_mode = glGetUniformLocation(fade_prog, "u_mode");
+    glGenFramebuffers(1, &hold_fbo);
+}
+/* (the eye image attached to cur, bound) keep a copy, then darken it to vr_fade */
+static void hold_keep_and_dim(int e, int w, int h, GLuint cur)
+{
+    if (!g_vr_door_fade) return;
+    fade_prog_init();
+    if (!hold_tex[e] || hold_w != w || hold_h != h) {
+        for (int k = 0; k < 2; k++) {
+            if (!hold_tex[k]) glGenTextures(1, &hold_tex[k]);
+            glBindTexture(GL_TEXTURE_2D, hold_tex[k]);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        }
+        hold_w = w; hold_h = h; hold_valid = 0;
+    }
+    {   /* copy: the eye framebuffer (bound) -> hold_tex[e] */
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, cur);
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, hold_fbo);
+        glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, hold_tex[e], 0);
+        glDisable(GL_SCISSOR_TEST);
+        glBlitFramebuffer(0, 0, w, h, 0, 0, w, h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+        glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
+        glBindFramebuffer(GL_FRAMEBUFFER, cur);
+        if (e == 1) hold_valid = 1;
+    }
+    if (vr_fade < 0.999f) {   /* fading in after a room change */
+        glViewport(0, 0, w, h);
+        glDisable(GL_DEPTH_TEST);
+        glEnable(GL_BLEND);
+        glBlendEquationSeparate(GL_FUNC_ADD, GL_FUNC_ADD);
+        glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ZERO, GL_ONE);
+        glUseProgram(fade_prog);
+        glUniform1i(uf_mode, 1); glUniform1f(uf_k, vr_fade);
+        glUniform4f(uf_rect, 0.0f, 0.0f, 1.0f, 1.0f);
+        glBindVertexArray(present_vao);
+        glDrawArrays(0x0005 /* GL_TRIANGLE_STRIP */, 0, 4);
+        glBindVertexArray(vao);
+        glDisable(GL_BLEND);
+    }
+}
+/* a held frame: the kept eye images at brightness vr_fade into the swapchain, shown at the kept poses */
+static int present_vr_held(void)
+{
+    static GLuint fbo;
+    if (!hold_valid || !xr_have_held()) return 0;
+    if (!fbo) glGenFramebuffers(1, &fbo);
+    fade_prog_init();
+    for (int e = 0; e < 2; e++) {
+        GLuint tex = xr_eye_target(e, hold_w, hold_h);
+        if (!tex) { xr_eye_release(e); return 0; }
+        glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
+        glViewport(0, 0, hold_w, hold_h);
+        glDisable(GL_SCISSOR_TEST); glDisable(GL_DEPTH_TEST); glDisable(GL_BLEND);
+        glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+        glUseProgram(fade_prog);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, hold_tex[e]);
+        glUniform1i(uf_tex, 0); glUniform1i(uf_mode, 0); glUniform1f(uf_k, vr_fade);
+        glUniform4f(uf_rect, 0.0f, 1.0f, 1.0f, 0.0f);   /* (present_vs puts v0 at the top: unflipped) */
+        glBindVertexArray(present_vao);
+        glDrawArrays(0x0005 /* GL_TRIANGLE_STRIP */, 0, 4);
+        glBindVertexArray(vao);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        xr_eye_release(e);
+    }
+    glUseProgram(prog);
+    xr_frame_end_held();
+    return 1;
+}
+
 static int present_vr_stereo(const struct Frame* cur)
 {
     static GLuint vr_fbo;
@@ -2236,6 +2328,7 @@ static int present_vr_stereo(const struct Frame* cur)
             draw_area_to(rt->tex, rt->vw, rt->vh, w, h);
             draw_markers(v, M, E, w, h);
             draw_vignette(E, w, h);
+            hold_keep_and_dim(e, w, h, vr_fbo);
             glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
             glBindFramebuffer(GL_FRAMEBUFFER, 0);
             fb_forget();
@@ -2251,15 +2344,29 @@ static int present_vr_stereo(const struct Frame* cur)
 static uint64_t gs_present_vr(const struct Frame* cur, float t)
 {
     uint64_t swap;
-    int ww = 0, wh = 0, fr = xr_frame_begin();
+    int ww = 0, wh = 0, fr = xr_frame_begin(), door;
+    static uint64_t last_ms;
+    uint64_t now_ms = SDL_GetTicks();
+    float dt = last_ms ? (float)(now_ms - last_ms) / 1000.0f : 0.0f;
+    extern int vr_door_transition(void);   /* (vr_glue.c) */
+    last_ms = now_ms;
+    if (dt > 0.1f) dt = 0.1f;
+    door = g_vr_door_fade && vr_door_transition();
     SDL_GetWindowSizeInPixels(g_window, &ww, &wh);
     if (fr != 1) g_vr_status = fr == 0 ? "headset asked not to render" : "headset not running";
-    if (fr == 1 && present_vr_stereo(cur)) {
+    if (fr == 1 && door && hold_valid && xr_have_held()) {   /* room change: the last 3D picture fades out, fixed in the room */
+        vr_fade -= dt / 0.5f;
+        if (vr_fade < 0.0f) vr_fade = 0.0f;
+        draw_display(final_vw ? img[fin].tex : 0, final_vw ? final_vw : 640, final_vw ? final_vh : 512);   /* mirror */
+        overlay_render();
+        if (!present_vr_held()) xr_frame_end_none();
+    } else if (fr == 1 && (vr_fade = vr_fade + dt / 0.5f > 1.0f ? 1.0f : vr_fade + dt / 0.5f, present_vr_stereo(cur))) {   /* (fading back in after one) */
         draw_display(final_vw ? img[fin].tex : 0, final_vw ? final_vw : 640, final_vw ? final_vh : 512);   /* mirror */
         overlay_render();
         xr_frame_end_stereo();
     } else {
         int inbetween = cur && snapshot_valid && t < 1.0f;
+        if (!door) vr_fade = 1.0f;   /* (the cinema screen: menus, films - no fade) */
         if (inbetween) {
             RenderTarget* rt;
             stream_replay(cur, t);

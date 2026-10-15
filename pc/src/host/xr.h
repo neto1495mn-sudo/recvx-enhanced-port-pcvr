@@ -62,6 +62,8 @@ const VrEye* xr_frame_eye(int e);                 /* after a begin returning 1; 
 unsigned int xr_eye_target(int e, int w, int h);  /* acquire eye e's image (w x h); GL texture, 0 on failure */
 void         xr_eye_release(int e);
 void         xr_frame_end_stereo(void);           /* both eye images as a projection layer */
+int          xr_have_held(void);                  /* a stereo frame was shown (its poses kept) */
+void         xr_frame_end_held(void);             /* the eye images at the last stereo frame's poses */
 void         xr_frame_end_quad(int w, int h);     /* the window's back buffer (w x h) on the cinema screen */
 void         xr_frame_end_quad_rect(int x, int y, int w, int h);   /* a part of it (the game's picture) */
 void         xr_frame_end_none(void);

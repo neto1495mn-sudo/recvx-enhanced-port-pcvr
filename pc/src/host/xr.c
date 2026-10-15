@@ -93,6 +93,8 @@ void   xr_eye_release(int e) { (void)e; }
 void   xr_frame_end_stereo(void) {}
 void   xr_frame_end_quad(int w, int h) { (void)w; (void)h; }
 void   xr_frame_end_none(void) {}
+int    xr_have_held(void) { return 0; }
+void   xr_frame_end_held(void) {}
 
 #else
 
@@ -137,6 +139,8 @@ static Chain quad_chain, eye_chain[2];
 static XrFrameState fs;
 static int in_frame;            /* between xrBeginFrame and xrEndFrame */
 static XrView views[2];
+static XrView held_views[2];   /* the poses of the last stereo frame (xr_frame_end_held) */
+static int held_ok;
 static VrEye eyes[2];
 static int eyes_valid;
 
@@ -674,6 +678,30 @@ void xr_frame_end_stereo(void)
         pv[e].subImage.imageRect.extent.width = eye_chain[e].w;
         pv[e].subImage.imageRect.extent.height = eye_chain[e].ht;
         pv[e].subImage.imageArrayIndex = 0;
+    }
+    proj.space = local_space;
+    proj.viewCount = 2;
+    proj.views = pv;
+    layers[0] = (const XrCompositionLayerBaseHeader*)&proj;
+    held_views[0] = views[0]; held_views[1] = views[1]; held_ok = 1;
+    end_frame(layers, 1);
+}
+
+/* the eye images (redrawn from the last stereo frame by the caller) at the poses that frame was
+   drawn for: the headset keeps them fixed in the room while the head moves (room changes) */
+int xr_have_held(void) { return held_ok; }
+void xr_frame_end_held(void)
+{
+    XrCompositionLayerProjection proj = { XR_TYPE_COMPOSITION_LAYER_PROJECTION };
+    XrCompositionLayerProjectionView pv[2] = { { XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW }, { XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW } };
+    const XrCompositionLayerBaseHeader* layers[1];
+    if (!held_ok || !eye_chain[0].h || !eye_chain[1].h) { xr_frame_end_none(); return; }
+    for (int e = 0; e < 2; e++) {
+        pv[e].pose = held_views[e].pose;
+        pv[e].fov = held_views[e].fov;
+        pv[e].subImage.swapchain = eye_chain[e].h;
+        pv[e].subImage.imageRect.extent.width = eye_chain[e].w;
+        pv[e].subImage.imageRect.extent.height = eye_chain[e].ht;
     }
     proj.space = local_space;
     proj.viewCount = 2;

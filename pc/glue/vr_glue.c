@@ -325,6 +325,14 @@ static void body_follow(const VrPose* h)
     body_move(dx, dz);   /* (sliding along a wall) */
 }
 
+/* a room change is under way (the game's door/stairs transition, or its loading): the renderer
+   holds the last 3D picture and fades it out and back in instead of the cinema screen */
+int vr_door_transition(void)
+{
+    extern unsigned char NowLoadDisp;   /* (system.c) */
+    return sys && ((sys->ts_flg & 0x100000) || NowLoadDisp);
+}
+
 /* ini vr_debug_log: the enemies' diary - every change of an enemy's state, life, hittability,
    scene control and position jumps (or walks through a wall), with the time and room, so a
    misbehaving zombie can be followed in recvx.log. Only changes are written. */
