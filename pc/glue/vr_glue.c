@@ -658,14 +658,6 @@ int vr_part_damage(BH_PWORK* pp, int kno, int d0, int d1)
     int part = 0, add = d1 - d0, out;
     (void)kno;
     if (!vr_on() || !pp || add <= 0 || (pp->id != 1 && pp->id != 26) || !pp->mlwP) return d1;   /* zombies */
-    if (!(pp->flg & 0x20) && pp->mode0 == 1) {
-        /* one still frozen, waiting for its scene (vr_shot_wakes): hit, it starts now as the scene
-           would start it - hittable, its brain on - so the game takes the damage, the reaction and
-           the death as for any other (frozen, the damage piled up and it came back broken) */
-        pp->flg |= 0x20;
-        pp->mode1 = 1;
-        vr_log("vr: frozen zombie %d woken by a shot\n", (int)(pp - ene));
-    }
     for (int j = 1; j < (int)pp->mlwP->obj_num; j++) if (pp->mlwP->owP[j].mtx[13] - pp->py > top) top = pp->mlwP->owP[j].mtx[13] - pp->py;
     h = top > 1.0f ? top : 17.0f;
     rel = (pp->dpy - pp->py) / h;
