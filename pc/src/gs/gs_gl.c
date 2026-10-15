@@ -131,7 +131,7 @@ static GLint u_vr_on, u_vr_src, u_vr_dst, u_vr_m0, u_vr_m1, u_vr_m2, u_vr_m3, u_
 static struct { int on; float src[4], dst[4], m[16], zab[2]; } vr_u;
 /* VR diagnosis: what the first eye's replay draws, by path (logged now and then while stereo is on) */
 /* path: 'N' native triangles, 'S' sprites/lines (gs_draw_raw), 'R' GS register writes (VU1 / packets) */
-static struct { int on; unsigned n3d, nraw, n2d; int ns; float s[12][3]; char path[12]; } vr_st;
+static struct { int on; unsigned n3d, nraw, n2d, nbig; int ns; float s[12][3]; char path[12]; } vr_st;
 static void vr_stat_vertex_p(const GlVertex* o, char path)
 {
     if (!vr_st.on) return;
@@ -1324,6 +1324,10 @@ static const float* u8_unit(void)
 }
 
 
+/* VR: the primitive being pushed covers more than half the screen either way (full-screen
+   layers, copies, fades): never taken for a projected effect (vr_fx_fix) */
+static int prim_big;
+
 static void push(const GsVertex* v, const GsVertex* attr, float s, float t)
 {
     GlVertex* o = &vbuf[vcount++];
@@ -1333,7 +1337,9 @@ static void push(const GsVertex* v, const GsVertex* attr, float s, float t)
            and - vr_fx_fix - anything else written there with a GS depth, as effects the game projects
            itself are; overlays have depth 0): the view depth comes back from its GS depth */
         extern int gs_raw_vr, gs_vu1_vr, gs_in_raw, g_vr_fx_fix;
-        o->vr = (gs_raw_vr || gs_vu1_vr || (g_vr_fx_fix && o->z > 100.0f)) ? 2.0f : 0.0f;
+        int fx = g_vr_fx_fix && o->z > 100.0f;
+        if (fx && prim_big) { fx = 0; if (vr_st.on) vr_st.nbig++; }   /* a screen layer, not an effect */
+        o->vr = (gs_raw_vr || gs_vu1_vr || fx) ? 2.0f : 0.0f;
         vr_stat_vertex_p(o, gs_in_raw ? 'S' : 'R');
     }
     o->s = s; o->t = t; o->q = attr->q;
@@ -1377,6 +1383,11 @@ static void batch_for(int type, const GsVertex* v, int count, const GsContext* c
 
 void gs_draw_primitive(int type, const GsVertex* v, int count, const GsContext* c, uint64_t prim)
 {
+    {
+        float x0 = v[0].x, x1 = v[0].x, y0 = v[0].y, y1 = v[0].y;
+        for (int i = 1; i < count; i++) { x0 = fminf(x0, v[i].x); x1 = fmaxf(x1, v[i].x); y0 = fminf(y0, v[i].y); y1 = fmaxf(y1, v[i].y); }
+        prim_big = (x1 - x0) > 320.0f || (y1 - y0) > 240.0f;
+    }
     int fst = (prim >> 8) & 1;
     batch_for(type, v, count, c, prim);
     if (type == 6) { /* sprite: two corners, attributes from the 2nd vertex */
@@ -1957,8 +1968,8 @@ static int present_vr_stereo(const struct Frame* cur)
             stream_replay_exact(cur);
             if (logit) {
                 vr_st.on = 0; nlog++;
-                host_log("vr: frame %llu vertices: 3D %u, GS-depth (sprites/VU1) %u, flat 2D %u\n",
-                         (unsigned long long)frame_no, vr_st.n3d, vr_st.nraw, vr_st.n2d);
+                host_log("vr: frame %llu vertices: 3D %u, GS-depth (sprites/VU1) %u, flat 2D %u (screen layers kept flat %u)\n",
+                         (unsigned long long)frame_no, vr_st.n3d, vr_st.nraw, vr_st.n2d, vr_st.nbig);
                 for (int k = 0; k < vr_st.ns; k++)
                     host_log("vr:   flat 2D sample path %c x %.1f y %.1f z %.0f\n", vr_st.path[k], vr_st.s[k][0], vr_st.s[k][1], vr_st.s[k][2]);
             }

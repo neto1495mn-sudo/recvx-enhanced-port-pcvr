@@ -29,6 +29,17 @@ extern float fVu1AspectH, fVu1Projection, fVu1OffsetX, fVu1OffsetY;
 extern float Ps2_zbuff_b;
 extern int g_vr_fx_fix;   /* vr_glue.c, ini vr_fx_fix */
 #define VR_FX_MIN_DEPTH 100.0f   /* GS depth 100: ~65 m away; overlays use 0 */
+/* VR: a 2D primitive covering more than half the screen either way is a screen layer (copies,
+   fades, full-screen effects), never a projected effect. xy: the first vertex's (w = 1). */
+static int vr_big(float x, float y, const void* verts, int n, size_t stride)
+{
+    float x0 = x, x1 = x, y0 = y, y1 = y;
+    for (int i = 1; i < n; i++) {
+        const float* p = (const float*)((const char*)verts + (size_t)i * stride);
+        x0 = fminf(x0, p[0]); x1 = fmaxf(x1, p[0]); y0 = fminf(y0, p[1]); y1 = fmaxf(y1, p[1]);
+    }
+    return (x1 - x0) > 320.0f || (y1 - y0) > 240.0f;
+}
 
 static float clamp01(float v) { return v < 0.0f ? 0.0f : v > 1.0f ? 1.0f : v; }
 
@@ -178,6 +189,8 @@ uint32_t pc_native_prim(unsigned int prim, const unsigned int* dp, int n, int cl
            screen overlays have depth 0 and stay 2D */
         if (!clip_3d_on && g_vr_fx_fix && o->z > VR_FX_MIN_DEPTH) o->cull |= 0x40;
     }
+    if (!clip_3d_on && n > 0 && vr_big(v[0].x, v[0].y, v, n, sizeof(NativeVertex)))   /* a screen layer: stays 2D */
+        for (int i = 0; i < n; i++) v[i].cull &= (uint8_t)~0x40;
     return native_defer(prim, v, n, deferred ? pc_cur_mesh : 0, pc_cur_strip);
 }
 
@@ -209,6 +222,11 @@ uint32_t pc_native_prim_raw(unsigned int prim, const unsigned int* dp, int n, in
         o->r = (uint8_t)dp[4]; o->g = (uint8_t)dp[5]; o->b = (uint8_t)dp[6]; o->a = (uint8_t)dp[7];
         o->adc = clip_3d_on && (clip_flag != 0 || (dp[3] & 0x8000));
         o->vr3d = clip_3d_on || (g_vr_fx_fix && sz > VR_FX_MIN_DEPTH) ? 1 : 0;   /* as pc_native_prim */
+    }
+    if (!clip_3d_on && n > 0) {   /* a screen layer (more than half the screen either way) stays 2D */
+        int x0 = v[0].x, x1 = v[0].x, y0 = v[0].y, y1 = v[0].y;
+        for (int i = 1; i < n; i++) { x0 = v[i].x < x0 ? v[i].x : x0; x1 = v[i].x > x1 ? v[i].x : x1; y0 = v[i].y < y0 ? v[i].y : y0; y1 = v[i].y > y1 ? v[i].y : y1; }
+        if (x1 - x0 > 320 * 16 || y1 - y0 > 240 * 16) for (int i = 0; i < n; i++) v[i].vr3d = 0;
     }
     return native_defer_raw(prim, v, n);
 }
