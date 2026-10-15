@@ -1,6 +1,6 @@
 /* User settings: <save_dir>/recvx.ini, "key = value" lines. */
 #include "xr.h"
-extern int g_vr_scale, g_vr_eye_height, g_vr_fov, g_vr_turn, g_vr_hand_aim;   /* pc/glue/vr_glue.c */
+extern int g_vr_scale, g_vr_eye_height, g_vr_fov, g_vr_turn, g_vr_hand_aim, g_vr_fx_fix;   /* pc/glue/vr_glue.c */
 #include "../ps2_platform.h"
 #include "coop.h"
 #include "actors.h"
@@ -69,6 +69,7 @@ static const struct { const char* key; int* val; int lo, hi; } keys[] = {
     { "vr_fov", &g_vr_fov, 60, 170 },
     { "vr_turn", &g_vr_turn, 0, 90 },
     { "vr_hand_aim", &g_vr_hand_aim, 0, 1 },
+    { "vr_fx_fix", &g_vr_fx_fix, 0, 1 },
     { "tps", (int*)&g_tps.on, 0, 1 },
     { "tps_fov", &g_tps.fov, 30, 130 },
     { "tps_aim_fov", &g_tps.aim_fov, 20, 130 },

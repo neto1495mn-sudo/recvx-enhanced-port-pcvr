@@ -27,6 +27,8 @@
 
 extern float fVu1AspectH, fVu1Projection, fVu1OffsetX, fVu1OffsetY;
 extern float Ps2_zbuff_b;
+extern int g_vr_fx_fix;   /* vr_glue.c, ini vr_fx_fix */
+#define VR_FX_MIN_DEPTH 100.0f   /* GS depth 100: ~65 m away; overlays use 0 */
 
 static float clamp01(float v) { return v < 0.0f ? 0.0f : v > 1.0f ? 1.0f : v; }
 
@@ -171,6 +173,10 @@ uint32_t pc_native_prim(unsigned int prim, const unsigned int* dp, int n, int cl
         o->r = (uint8_t)dp[4]; o->g = (uint8_t)dp[5]; o->b = (uint8_t)dp[6]; o->a = (uint8_t)dp[7];
         o->fog = f2[3];
         o->cull = (uint8_t)((clip_3d_on && (dp[3] & 0x8000) ? 2 : 0) | (clip_3d_on ? 0x80 : 0));
+        /* VR: 2D the game projected itself (fire, glows, particles) carries the GS depth of its view
+           depth, as 3D does (a + b / z here, -b / Vz - a there: the same within ~6 of 65535);
+           screen overlays have depth 0 and stay 2D */
+        if (!clip_3d_on && g_vr_fx_fix && o->z > VR_FX_MIN_DEPTH) o->cull |= 0x40;
     }
     return native_defer(prim, v, n, deferred ? pc_cur_mesh : 0, pc_cur_strip);
 }
@@ -202,7 +208,7 @@ uint32_t pc_native_prim_raw(unsigned int prim, const unsigned int* dp, int n, in
         o->u = (uint16_t)(dp[0] & 0x3FFF); o->v = (uint16_t)(dp[1] & 0x3FFF);
         o->r = (uint8_t)dp[4]; o->g = (uint8_t)dp[5]; o->b = (uint8_t)dp[6]; o->a = (uint8_t)dp[7];
         o->adc = clip_3d_on && (clip_flag != 0 || (dp[3] & 0x8000));
-        o->vr3d = clip_3d_on ? 1 : 0;
+        o->vr3d = clip_3d_on || (g_vr_fx_fix && sz > VR_FX_MIN_DEPTH) ? 1 : 0;   /* as pc_native_prim */
     }
     return native_defer_raw(prim, v, n);
 }

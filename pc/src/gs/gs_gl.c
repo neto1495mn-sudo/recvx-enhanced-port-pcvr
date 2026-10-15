@@ -1427,7 +1427,7 @@ static void native_to_gl(unsigned int prim, const NativeVertex* v, int n, GlVert
             o->r = u[p->r]; o->g = u[p->g]; o->b = u[p->b]; o->a = u[p->a];
             o->fog = (float)((int32_t)q->fog & 0xFF);   /* XYZF2 F: FTOI4, low 8 bits */
             o->clip[0] = q->near_d; o->clip[1] = q->far_d;
-            o->vr = (q->cull & 0x80) ? 1.0f : 0.0f;
+            o->vr = (q->cull & 0x80) ? 1.0f : (q->cull & 0x40) ? 2.0f : 0.0f;   /* 2: 2D with a GS depth (vr_fx_fix) */
             vr_stat_vertex(o);
         }
 }
@@ -1494,6 +1494,7 @@ int gs_draw_native_cached(unsigned int prim, size_t ev)
 {
     if (ev >= cncache_at || ncache_at[ev][0] == UINT32_MAX) return 0;
     if (ncache_at[ev][1]) gl_triangles(prim, ncache + ncache_at[ev][0], (int)ncache_at[ev][1], ncache_on_gpu ? (int)ncache_at[ev][0] : -1);
+    if (vr_st.on) for (uint32_t k = 0; k < ncache_at[ev][1]; k++) vr_stat_vertex(&ncache[ncache_at[ev][0] + k]);
     return 1;
 }
 
