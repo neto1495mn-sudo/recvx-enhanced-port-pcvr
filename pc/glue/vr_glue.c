@@ -289,6 +289,13 @@ static void body_shift(float dx, float dz)
     plp->px += dx; plp->pz += dz;
     plp->pxb += dx; plp->pzb += dz;
     if (ex) { ex->bpx += dx; ex->bpz += dz; ex->bpxb += dx; ex->bpzb += dz; ex->spx += dx; ex->spz += dz; }
+    /* the skeleton along: the aim stance pins the feet where they were drawn (bhFixPosition,
+       player.c) and would pull her back by the step */
+    if (plp->mlwP && plp->mlwP->owP) {
+        unsigned i, n = plp->mlwP->obj_num;
+        if (n > 64) n = 64;
+        for (i = 0; i < n; i++) { plp->mlwP->owP[i].mtx[12] += dx; plp->mlwP->owP[i].mtx[14] += dz; }
+    }
 }
 
 /* move with the game's walls: whole, else sliding along x or z; which way it went (0 none) */
