@@ -105,6 +105,9 @@ void vr_after_draw(void)
     memset(&v, 0, sizeof(v));
     v.valid = 1;
     memcpy(v.G, cam.mtx, sizeof(v.G));
+    /* Ninja matrices are 3x4 in practice: the bottom row (m[3], m[7], m[11], m[15]) is never
+       maintained (CALCPOINT does not read it) and is usually zero. Complete it, or G cannot be inverted. */
+    v.G[3] = v.G[7] = v.G[11] = 0.0f; v.G[15] = 1.0f;
     memcpy(v.W, frame_W, sizeof(v.W));
     v.cx = fVu1OffsetX; v.cy = fVu1OffsetY;
     v.kx = fVu1AspectW * fVu1Projection; v.ky = fVu1AspectH * fVu1Projection;
