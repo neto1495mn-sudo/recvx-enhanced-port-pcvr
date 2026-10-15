@@ -281,6 +281,25 @@ static int body_free(float dx, float dz)
     return !hit;
 }
 
+/* move Claire by (dx, dz): her position and the copies the game keeps of it (the frame's start,
+   used by its wall test, and its body/stand points), so nothing pulls her back */
+static void body_shift(float dx, float dz)
+{
+    EXP_WORK* ex = (EXP_WORK*)plp->exp0;
+    plp->px += dx; plp->pz += dz;
+    plp->pxb += dx; plp->pzb += dz;
+    if (ex) { ex->bpx += dx; ex->bpz += dz; ex->bpxb += dx; ex->bpzb += dz; ex->spx += dx; ex->spz += dz; }
+}
+
+/* move with the game's walls: whole, else sliding along x or z; which way it went (0 none) */
+static int body_move(float dx, float dz)
+{
+    if (body_free(dx, dz)) { body_shift(dx, dz); return 3; }
+    if (body_free(dx, 0)) { body_shift(dx, 0); return 1; }
+    if (body_free(0, dz)) { body_shift(0, dz); return 2; }
+    return 0;
+}
+
 static void body_follow(const VrPose* h)
 {
     static float lx, lz;
@@ -296,9 +315,7 @@ static void body_follow(const VrPose* h)
     ok = plp->mode0 == 1 && plp->mode1 <= 1 && plp->mode2 != 14 && plp->mode2 != 15 && plp->mode2 != 20 && plp->mode2 != 21;
     l = sqrtf(dx * dx + dz * dz);
     if (!ok || l < 1e-4f || l > 3.0f) return;   /* (a jump of the tracking is not a step) */
-    if (body_free(dx, dz)) { plp->px += dx; plp->pz += dz; }
-    else if (body_free(dx, 0)) plp->px += dx;   /* slide along the wall */
-    else if (body_free(0, dz)) plp->pz += dz;
+    body_move(dx, dz);   /* (sliding along a wall) */
 }
 
 /* Walking while aiming: the game holds Claire still with a weapon raised; in VR the left stick
@@ -320,6 +337,14 @@ static void aim_walk_update(void)
         if (run) run_spd += (d - run_spd) * 0.05f;   /* the game's own steps, averaged */
         else walk_spd += (d - walk_spd) * 0.05f;
     }
+    {   /* diagnosis (vr: aim walk), twice a second while aiming with the stick out */
+        static int n, nlog;
+        if (stick && plp->mode1 == 1 && (n++ % 15) == 0 && nlog < 200) {
+            nlog++;
+            vr_log("vr: aim walk: mode %d/%d/%d msg %d stick %.2f %.2f speed %.2f/%.2f at %.1f %.1f, %.2f since last frame\n",
+                   plp->mode0, plp->mode1, plp->mode2, (sys->st_flg & 0x200) != 0, in.lx, in.ly, walk_spd, run_spd, plp->px, plp->pz, last_ok ? d : -1.0f);
+        }
+    }
     if (g_vr_aim_walk && stick && plp->mode0 == 1 && plp->mode1 == 1 && !(sys->st_flg & 0x200)) {
         float a = (float)cam.ay * (3.14159265f / 32768.0f), fx = sinf(a), fz = -cosf(a), rx = cosf(a), rz = sinf(a);
         float m = sqrtf(in.lx * in.lx + in.ly * in.ly), mx, mz, sp = (run && !dual_equipped()) ? run_spd : walk_spd;
@@ -328,9 +353,11 @@ static void aim_walk_update(void)
         d = sqrtf(mx * mx + mz * mz);
         if (d > 1e-4f) {
             mx = mx / d * sp * m; mz = mz / d * sp * m;
-            if (body_free(mx, mz)) { plp->px += mx; plp->pz += mz; }
-            else if (body_free(mx, 0)) plp->px += mx;
-            else if (body_free(0, mz)) plp->pz += mz;
+            {
+                static int n2, nlog2;
+                int how = body_move(mx, mz);
+                if ((n2++ % 15) == 0 && nlog2 < 200) { nlog2++; vr_log("vr: aim walk: step %.2f %.2f %s\n", mx, mz, how == 3 ? "moved" : how ? "slid along a wall" : "blocked by a wall"); }
+            }
         }
     }
 }
