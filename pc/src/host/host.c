@@ -2,6 +2,7 @@
  * Host entry point: configuration, SDL window/GL context, event pump, and the
  * hand-off into the original game's main() (renamed recvx_game_main).
  */
+#include "xr.h"
 #include "ps2_platform.h"
 #include "../gs/stream.h"
 #include "prof.h"
@@ -121,6 +122,7 @@ void host_pump_events(void)
                 g_tps.on = !g_tps.on;
                 settings_save_later();
             }
+            if (bind_hotkey(&ev, B_VR_RECENTER) && !g_lobby_io.text_on) xr_recenter();
             break;
         }
     }
@@ -156,6 +158,7 @@ static void usage(void)
         "  --skip-doors       room transitions (doors, stairs, ladders) without their animation (default on)\n"
         "  --skip-intro       boot straight into the title menu (default on)\n"
         "  --third-person     over-the-shoulder camera, mouse/keyboard controls (toggle: F5)\n"
+        "  --vr               show the game in a VR headset through OpenXR (cinema screen; F8 recenters)\n"
         "  --coop-host PORT   online co-op: wait for a partner on this UDP port (F3: co-op window)\n"
         "  --coop-join HOST:PORT#CODE | ROOM  online co-op: join a host, or a room through the co-op server\n"
         "  --coop-server ADDR   co-op server (host or host:port, UDP 7141)  --coop-conn auto|direct|server  --coop-pw PASSWORD\n"
@@ -210,6 +213,8 @@ static void parse_args(int argc, char** argv)
         else if (!strcmp(argv[i], "--skip-doors")) g_config.skip_doors = 1;
         else if (!strcmp(argv[i], "--skip-intro")) g_config.skip_intro = 1;
         else if (!strcmp(argv[i], "--third-person")) g_tps.on = 1;
+        else if (!strcmp(argv[i], "--vr")) g_vr_request = 1;
+        else if (!strcmp(argv[i], "--no-vr")) g_vr_request = 0;
         else if (!strcmp(argv[i], "--quiet")) g_config.log_level = 0;
         else if (!strcmp(argv[i], "--coop-host") && i + 1 < argc) { g_coop.port = atoi(argv[++i]); g_coop.request = COOP_REQ_HOST; }
         else if (!strcmp(argv[i], "--coop-join") && i + 1 < argc) { SDL_strlcpy(g_coop.join, argv[++i], sizeof(g_coop.join)); g_coop.request = COOP_REQ_JOIN; }
@@ -305,6 +310,7 @@ int main(int argc, char** argv)
     if (!g_gl) host_fatal("SDL_GL_CreateContext: %s", SDL_GetError());
     SDL_GL_SetSwapInterval(g_config.vsync ? 1 : 0);
     gs_renderer_init();
+    xr_init();   /* --vr: after the GL entry points are loaded */
     overlay_init(g_window, g_gl);
     audio_init();
 

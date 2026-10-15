@@ -11,6 +11,7 @@
 #include "../gs/gs.h"
 #include "../gs/stream.h"
 #include "prof.h"
+#include "xr.h"
 #include <SDL3/SDL.h>
 #include <math.h>
 #include <stdio.h>
@@ -19,11 +20,14 @@ uint64_t gs_frame_count(void);
 
 extern SDL_Window* g_window;
 
+int render_vsync_setting(void) { return g_config.vsync; }
+
 static double display_hz(void)
 {
     static double test_hz = -1;   /* RECVX_DISPLAY_HZ (test aid): the refresh rate to assume, e.g. 1000 with vsync off */
     if (test_hz < 0) test_hz = SDL_getenv("RECVX_DISPLAY_HZ") ? SDL_atof(SDL_getenv("RECVX_DISPLAY_HZ")) : 0;
     if (test_hz > 1) return test_hz;
+    if (xr_display_hz() > 1.0) return xr_display_hz();   /* VR: the headset's refresh */
     const SDL_DisplayMode* m = SDL_GetCurrentDisplayMode(SDL_GetDisplayForWindow(g_window));
     return m && m->refresh_rate > 1.0f ? m->refresh_rate : 60.0;
 }
@@ -96,7 +100,7 @@ void render_loop(void)
             uint64_t swap;
             if (!interp) t = 1.0f;
             else if (fixed_t > 0.0f) t = shown ? 1.0f : fixed_t;
-            else if (g_config.vsync && n > 1.5 && fabs(n - floor(n + 0.5)) < 0.1) t = (float)((shown + 1) / floor(n + 0.5));
+            else if ((g_config.vsync || xr_active()) && n > 1.5 && fabs(n - floor(n + 0.5)) < 0.1) t = (float)((shown + 1) / floor(n + 0.5));
             else t = (float)((double)(now - arrived) / period);
             /* the next game frame is already waiting (the game runs below its rate): an
                in-between image of this one would only delay it (a whole replay of the scene) */
@@ -119,7 +123,8 @@ void render_loop(void)
             {   /* on a fixed grid (a late present does not shift the following ones) */
                 uint64_t tick = (uint64_t)(1e9 / present_hz());
                 swap_avg += ((double)swap - swap_avg) / 8;
-                if (g_config.vsync && swap_avg >= tick / 8 && present_hz() == display_hz()) pace_until = 0;   /* limited: always paced */
+                if (xr_active()) pace_until = 0;   /* VR: xrWaitFrame in gs_present paces to the headset */
+                else if (g_config.vsync && swap_avg >= tick / 8 && present_hz() == display_hz()) pace_until = 0;   /* limited: always paced */
                 else pace_until = pace_until && pace_until + tick > now ? pace_until + tick : now + tick;
             }
         }

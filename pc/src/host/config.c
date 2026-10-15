@@ -1,4 +1,5 @@
 /* User settings: <save_dir>/recvx.ini, "key = value" lines. */
+#include "xr.h"
 #include "../ps2_platform.h"
 #include "coop.h"
 #include "actors.h"
@@ -58,6 +59,9 @@ static const struct { const char* key; int* val; int lo, hi; } keys[] = {
     { "enemy_place", &g_enemy_opts.place, 0, 1 },
     { "enemy_random", &g_enemy_opts.rand, 0, 1 },
     { "enemy_seed", &g_enemy_opts.seed, 0, 0x7FFFFFFF },
+    { "vr", &g_vr_request, 0, 1 },                        /* VR output (host/xr.c) */
+    { "vr_dist", &g_vr_screen_dist, 50, 2000 },
+    { "vr_width", &g_vr_screen_width, 50, 3000 },
     { "tps", (int*)&g_tps.on, 0, 1 },
     { "tps_fov", &g_tps.fov, 30, 130 },
     { "tps_aim_fov", &g_tps.aim_fov, 20, 130 },

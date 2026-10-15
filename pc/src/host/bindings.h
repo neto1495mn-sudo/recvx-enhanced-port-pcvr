@@ -23,6 +23,7 @@ enum {
     B_TPS_STATUS, B_TPS_MAP, B_TPS_AIM, B_TPS_FIRE, B_TPS_QUICKTURN,
     /* port hotkeys (keyboard) */
     B_TPS_TOGGLE, B_SETTINGS, B_CHEATS, B_COOP, B_FULLSCREEN, B_NOCLIP_UP, B_NOCLIP_DOWN,
+    B_VR_RECENTER,
     B_COUNT
 };
 enum { BIND_KB, BIND_PAD };            /* device sets */

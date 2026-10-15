@@ -31,6 +31,19 @@ else()
     find_package(SDL3 REQUIRED CONFIG)
 endif()
 
+# OpenXR loader (Apache-2.0), linked statically: VR output (src/host/xr.c, --vr). Windows only for now.
+option(RECVX_VR "Build the OpenXR VR output (Windows)" ON)
+if(WIN32 AND RECVX_VR)
+    include(FetchContent)
+    set(DYNAMIC_LOADER OFF CACHE BOOL "" FORCE)
+    set(BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(BUILD_API_LAYERS OFF CACHE BOOL "" FORCE)
+    FetchContent_Declare(openxr GIT_REPOSITORY https://github.com/KhronosGroup/OpenXR-SDK.git GIT_TAG release-1.1.63 GIT_SHALLOW TRUE)
+    FetchContent_MakeAvailable(openxr)
+    # mingw-w64's winapifamily.h lacks WINAPI_PARTITION_SYSTEM, which the loader tests under -Werror=undef
+    target_compile_options(openxr_loader PRIVATE -Wno-undef -DWINAPI_PARTITION_SYSTEM=0)
+endif()
+
 # Dear ImGui (MIT) for the F1 overlay, with its SDL3 + OpenGL3 backends.
 include(FetchContent)
 FetchContent_Declare(imgui GIT_REPOSITORY https://github.com/ocornut/imgui.git GIT_TAG v1.92.9b GIT_SHALLOW TRUE)
@@ -149,6 +162,10 @@ target_compile_options(recvx_platform PRIVATE
     -Wall -Wno-unused-function
 )
 target_link_libraries(recvx_platform PRIVATE SDL3::SDL3 imgui miniupnpc::miniupnpc natpmp monocypher)
+if(TARGET openxr_loader)
+    target_link_libraries(recvx_platform PRIVATE OpenXR::headers)
+    target_compile_definitions(recvx_platform PRIVATE RECVX_HAVE_OPENXR=1)
+endif()
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_compile_options(recvx_platform PRIVATE -fno-pie)
 endif()
@@ -167,6 +184,9 @@ add_executable(recvx ${LAYOUT_PAD_SRC} $<TARGET_OBJECTS:recvx_game> $<TARGET_OBJ
 target_link_libraries(recvx PRIVATE imgui SDL3::SDL3 miniupnpc::miniupnpc natpmp monocypher m)
 if(WIN32)
     target_link_libraries(recvx PRIVATE ws2_32 pthread shell32)   # co-op UDP (src/net); clock_gettime (winpthreads)
+    if(TARGET openxr_loader)
+        target_link_libraries(recvx PRIVATE openxr_loader advapi32 pathcch)
+    endif()
     # Same address window as Linux: fixed image base, no ASLR relocation; large-address-aware
     # gives the 32-bit exe 4 GB on 64-bit Windows (Linux already uses addresses above 2 GB). -static: libstdc++,
     # libgcc and winpthread go into the exe, only system DLLs (UCRT, opengl32, ...) remain.

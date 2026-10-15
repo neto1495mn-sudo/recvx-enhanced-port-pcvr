@@ -18,6 +18,7 @@
 #include "stream.h"
 #include "../ps2_platform.h"
 #include "../render/gl_loader.h"
+#include "../host/xr.h"
 #include <SDL3/SDL.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -1831,6 +1832,11 @@ uint64_t gs_present(const struct Frame* cur, float t)
         dump_window();
     }
     gt_present_end(inbetween);
+    if (xr_active()) {   /* VR: the finished image (overlay included) to the headset, paced by it */
+        int ww = 0, wh = 0;
+        SDL_GetWindowSizeInPixels(g_window, &ww, &wh);
+        xr_submit_backbuffer(ww, wh);
+    }
     swap = SDL_GetTicksNS();
     SDL_GL_SwapWindow(g_window);
     swap = SDL_GetTicksNS() - swap;
