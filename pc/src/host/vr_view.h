@@ -32,9 +32,12 @@ typedef struct {
     float W[16];                /* local -> world */
     float cx, cy, kx, ky;       /* the game's projection: screen = c * Vz + k * V.xy (GS pixels, before XYOFFSET) */
     float za, zb;               /* GS depth of a view depth: z = -zb / Vz - za (Ps2_zbuff_a/b) */
-    int   sight_n;              /* aiming sights to draw (0..2): where each gun's shot would hit */
-    float sight[2][3];          /* their points (world) */
+    int   mk_n;                 /* VR markers drawn over the eyes (vr_glue.c): */
+    float mk[12][3];            /*   their points (world) */
+    int   mk_kind[12];          /*   VRMK_* */
+    int   mk_val[12];           /*   VRMK_NUMBER: the number shown */
 } VrView;
+enum { VRMK_DOT = 0, VRMK_BUTTON = 1, VRMK_NUMBER = 2 };   /* aiming dot, "A" over what the action button can use, the holster's ammo count */
 
 /* small 4x4 helpers (column-major), vr_math.c */
 void vr_mat_identity(float m[16]);

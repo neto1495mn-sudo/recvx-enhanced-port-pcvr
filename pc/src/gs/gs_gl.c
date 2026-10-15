@@ -128,8 +128,9 @@ static int batch_valid;
 static GLuint prog, vao, vbo, present_prog, present_vao, svao, svbo;
 static GLint u_vr_on, u_vr_src, u_vr_dst, u_vr_m0, u_vr_m1, u_vr_m2, u_vr_m3, u_vr_zab, u_vr_zs, u_vr_hud;
 /* VR re-projection of the draws being replayed for an eye (gs_present_vr); off otherwise */
-static struct { int on; float src[4], dst[4], m[16], zab[2], zs, hud[2]; } vr_u;
+static struct { int on; float src[4], dst[4], m[16], zab[2], zs, hud[3]; } vr_u;
 int g_vr_hud_dist = 150;   /* ini vr_hud_dist: the panel of the game's texts and 2D, cm in front of the head */
+int g_vr_hud_y = 0;        /* ini vr_hud_y: the panel moved up (+) or down (-), cm */
 int g_vr_hud_angle = 50;   /* ini vr_hud_angle: its width seen from the head (degrees); 0 = drawn over the whole view as before */
 /* VR diagnosis: what the first eye's replay draws, by path (logged now and then while stereo is on) */
 /* path: 'N' native triangles, 'S' sprites/lines (gs_draw_raw), 'R' GS register writes (VU1 / packets) */
@@ -165,7 +166,7 @@ static const char* vs_src =
        (columns) take V to the eye's view (same axes: x right, y down, z forward), which is
        projected with the eye's frustum onto the display area (u_vr_dst: c', k'). The GS depth
        is kept, so the game's depth tests between draws behave as before. */
-    "uniform int u_vr_on; uniform vec4 u_vr_src, u_vr_dst, u_vr_m0, u_vr_m1, u_vr_m2, u_vr_m3; uniform vec2 u_vr_zab; uniform float u_vr_zs; uniform vec2 u_vr_hud;\n"
+    "uniform int u_vr_on; uniform vec4 u_vr_src, u_vr_dst, u_vr_m0, u_vr_m1, u_vr_m2, u_vr_m3; uniform vec2 u_vr_zab; uniform float u_vr_zs; uniform vec4 u_vr_hud;\n"
     /* everything perspective-correct: for GS vertices w = 1, so that is the GS's screen-space
        interpolation; native 3D triangles stay whole where VU1 would have cut them at the guard
        band, and screen-linear colour/fog across a triangle reaching far off-screen near the
@@ -180,7 +181,7 @@ static const char* vs_src =
     /* a_vr 3: the game's own 2D (texts, message window, icons; not the screen layers): on a
        panel u_vr_hud.y units in front of the frame's head, u_vr_hud.x units per pixel from the
        screen centre - re-projected like the 3D, so it sits still in front of the eyes */
-    "    if (vrm > 2.5) V = vec3((P.x / P.w - u_vr_src.x) * u_vr_hud.x, (P.y / P.w - u_vr_src.y) * u_vr_hud.x, u_vr_hud.y);\n"
+    "    if (vrm > 2.5) V = vec3((P.x / P.w - u_vr_src.x) * u_vr_hud.x, (P.y / P.w - u_vr_src.y) * u_vr_hud.x - u_vr_hud.z, u_vr_hud.y);\n"
     "    else {\n"
     /* a_vr 2: sprite/line corners of 3D points (w = 1): the view depth from the GS depth, z = -b / Vz - a */
     "      if (vrm > 1.5) P = vec4(P.xy, P.z, 1.0) * (-u_vr_zab.y / (P.z + u_vr_zab.x));\n"
@@ -1195,7 +1196,7 @@ void gs_flush(void)
         uni4f(u_vr_m3, vr_u.m[12], vr_u.m[13], vr_u.m[14], vr_u.m[15]);
         uni2f(u_vr_zab, vr_u.zab[0], vr_u.zab[1]);
         uni1f(u_vr_zs, vr_u.zs);
-        uni2f(u_vr_hud, vr_u.hud[0], vr_u.hud[1]);
+        uni4f(u_vr_hud, vr_u.hud[0], vr_u.hud[1], vr_u.hud[2], 0.0f);
     }
     {
         uint32_t zpsm = (st->ctx.zbuf >> 24) & 0xF;
@@ -1343,6 +1344,7 @@ static const float* u8_unit(void)
 /* VR: the primitive being pushed covers more than half the screen either way (full-screen
    layers, copies, fades): never taken for a projected effect (vr_fx_fix) */
 static int prim_big;
+static int prim_tall;   /* VR: covers more than half the screen top to bottom - a screen layer (fades, filters, copies); wide and low (message bands) goes on the panel */
 
 static void push(const GsVertex* v, const GsVertex* attr, float s, float t)
 {
@@ -1355,7 +1357,7 @@ static void push(const GsVertex* v, const GsVertex* attr, float s, float t)
         extern int gs_raw_vr, gs_vu1_vr, gs_in_raw, g_vr_fx_fix;
         int fx = g_vr_fx_fix && o->z > 100.0f;
         if (fx && prim_big) { fx = 0; if (vr_st.on) vr_st.nbig++; }   /* a screen layer, not an effect */
-        o->vr = (gs_raw_vr || gs_vu1_vr || fx) ? 2.0f : prim_big ? 0.0f : 3.0f;   /* 3: the game's 2D, on the VR panel; 0: screen layers */
+        o->vr = (gs_raw_vr || gs_vu1_vr || fx) ? 2.0f : prim_tall ? 0.0f : 3.0f;   /* 3: the game's 2D, on the VR panel; 0: screen layers */
         vr_stat_vertex_p(o, gs_in_raw ? 'S' : 'R');
     }
     o->s = s; o->t = t; o->q = attr->q;
@@ -1403,6 +1405,7 @@ void gs_draw_primitive(int type, const GsVertex* v, int count, const GsContext* 
         float x0 = v[0].x, x1 = v[0].x, y0 = v[0].y, y1 = v[0].y;
         for (int i = 1; i < count; i++) { x0 = fminf(x0, v[i].x); x1 = fmaxf(x1, v[i].x); y0 = fminf(y0, v[i].y); y1 = fmaxf(y1, v[i].y); }
         prim_big = (x1 - x0) > 320.0f || (y1 - y0) > 240.0f;
+        prim_tall = (y1 - y0) > 240.0f;
     }
     int fst = (prim >> 8) & 1;
     batch_for(type, v, count, c, prim);
@@ -1926,13 +1929,14 @@ static const char* vig_fs =
     "in vec2 v_t; uniform float u_amt; out vec4 o;\n"
     "void main(){ float r = length(v_t); float a = smoothstep(0.45, 1.25, r) * u_amt; o = vec4(0.75, 0.0, 0.0, a); }\n";
 
-/* VR aiming sights (VrView.sight, vr_glue.c sight_add): a small white ring with a thin dark
-   edge at each point, drawn over the eye image; its size is an angle (vr_sight_size: hundredths
-   of a degree across) */
-int g_vr_sight_size = 120;
-static GLuint sight_prog;
-static GLint us_rect;
-static const char* sight_vs =
+/* VR markers (VrView.mk*, vr_glue.c) over each eye: the aiming dot (a small white dot,
+   vr_sight_size hundredths of a degree across), the "A" over what the action button can use
+   (8 cm across where it stands) and the holster's ammo count (6 cm high digits on a dark
+   rounded plate). Drawn after the eye's picture, facing the eye. */
+int g_vr_sight_size = 30;
+static GLuint mk_prog;
+static GLint um_rect, um_kind, um_val, um_aspect;
+static const char* mk_vs =
     "#version 330 core\n"
     "uniform vec4 u_rect;\n"   /* centre (NDC) and half size (NDC) */
     "out vec2 v_c;\n"
@@ -1941,40 +1945,91 @@ static const char* sight_vs =
     "  v_c = c;\n"
     "  gl_Position = vec4(u_rect.xy + c * u_rect.zw, 0.0, 1.0);\n"
     "}\n";
-static const char* sight_fs =
+static const char* mk_fs =
     "#version 330 core\n"
     "in vec2 v_c; out vec4 o;\n"
+    "uniform int u_kind; uniform int u_val; uniform float u_aspect;\n"
+    "const int F[70] = int[70](14,17,19,21,25,17,14, 4,12,4,4,4,4,14, 14,17,1,2,4,8,31, 31,2,4,2,1,17,14, 2,6,10,18,31,2,2,\n"
+    "                          31,16,30,1,1,17,14, 6,8,16,30,17,17,14, 31,1,2,4,8,8,8, 14,17,17,14,17,17,14, 14,17,17,15,1,2,12);\n"
+    "float seg(vec2 p, vec2 a, vec2 b){ vec2 pa = p - a, ba = b - a; float h = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0); return length(pa - ba * h); }\n"
     "void main(){\n"
-    "  float r = length(v_c), aa = fwidth(r);\n"
-    "  float ring = smoothstep(0.50 - aa, 0.50 + aa, r) * (1.0 - smoothstep(0.72 - aa, 0.72 + aa, r));\n"
-    "  float edge = smoothstep(0.36 - aa, 0.36 + aa, r) * (1.0 - smoothstep(0.90 - aa, 0.90 + aa, r));\n"
-    "  vec3 col = mix(vec3(0.0), vec3(1.0), ring);\n"
-    "  float a = max(ring * 0.95, edge * 0.45);\n"
+    "  float aa;\n"
+    "  if (u_kind == 0) {\n"   /* the dot */
+    "    float r = length(v_c); aa = fwidth(r);\n"
+    "    float a = 1.0 - smoothstep(1.0 - aa * 1.5, 1.0, r);\n"
+    "    if (a <= 0.0) discard; o = vec4(1.0, 1.0, 1.0, a); return;\n"
+    "  }\n"
+    "  if (u_kind == 1) {\n"   /* the A button: a dark disc, a thin white rim, a white A */
+    "    float r = length(v_c); aa = fwidth(r);\n"
+    "    float disc = 1.0 - smoothstep(0.95 - aa, 0.95 + aa, r);\n"
+    "    float rim = smoothstep(0.80 - aa, 0.80 + aa, r) * disc;\n"
+    "    vec2 p = v_c;\n"   /* y up */
+    "    float d = min(min(seg(p, vec2(-0.34, -0.45), vec2(0.0, 0.47)), seg(p, vec2(0.34, -0.45), vec2(0.0, 0.47))), seg(p, vec2(-0.19, -0.10), vec2(0.19, -0.10)));\n"
+    "    float glyph = 1.0 - smoothstep(0.075 - aa, 0.075 + aa, d);\n"
+    "    float w = max(rim, glyph * disc);\n"
+    "    float a = max(disc * 0.55, w * 0.95);\n"
+    "    if (a <= 0.0) discard;\n"
+    "    o = vec4(mix(vec3(0.08, 0.07, 0.06), vec3(1.0, 0.97, 0.88), clamp(w / max(a, 1e-3) * min(w * 1.2, 1.0), 0.0, 1.0)), a); return;\n"
+    "  }\n"
+    /* the number: n digits of 5x7 dots in cells of 6x9, on a plate of n*6+2 x 11 */
+    "  int n = u_val >= 100 ? 3 : u_val >= 10 ? 2 : 1;\n"
+    "  vec2 g = (v_c * 0.5 + 0.5) * vec2(float(n * 6 + 2), 11.0);\n"
+    "  g.y = 11.0 - g.y;\n"
+    "  vec2 q = abs(v_c) * vec2(u_aspect, 1.0); vec2 lim = vec2(u_aspect, 1.0) - 0.25;\n"
+    "  float plate = length(max(q - lim, 0.0)) - 0.25; aa = fwidth(plate);\n"
+    "  float pa = (1.0 - smoothstep(-aa, aa, plate)) * 0.6;\n"
+    "  float lit = 0.0;\n"
+    "  vec2 c = g - vec2(1.0, 2.0);\n"
+    "  int di = int(floor(c.x / 6.0));\n"
+    "  if (di >= 0 && di < n && c.y >= 0.0 && c.y < 7.0) {\n"
+    "    int v = u_val; for (int k = 0; k < n - 1 - di; k++) v /= 10; v = v - (v / 10) * 10;\n"
+    "    vec2 cc = vec2(c.x - float(di) * 6.0, c.y);\n"
+    "    int col = int(floor(cc.x)), row = int(floor(cc.y));\n"
+    "    if (col < 5) {\n"
+    "      int bits = F[v * 7 + row];\n"
+    "      if (((bits >> (4 - col)) & 1) != 0) { vec2 f = fract(cc) - 0.5; float e = length(max(abs(f) - 0.36, 0.0)) - 0.16; float ea = fwidth(e); lit = 1.0 - smoothstep(-ea, ea, e); }\n"
+    "    }\n"
+    "  }\n"
+    "  float a = max(pa, lit);\n"
     "  if (a <= 0.0) discard;\n"
-    "  o = vec4(col, a);\n"
+    "  o = vec4(mix(vec3(0.05), vec3(1.0, 0.97, 0.9), lit), a);\n"
     "}\n";
 
-static void draw_sights(const VrView* v, const float M[16], const VrEye* E, int w, int h)
+static void draw_markers(const VrView* v, const float M[16], const VrEye* E, int w, int h)
 {
-    if (!v || v->sight_n <= 0) return;
-    if (!sight_prog) { sight_prog = compile(sight_vs, sight_fs); us_rect = glGetUniformLocation(sight_prog, "u_rect"); }
+    if (!v || v->mk_n <= 0) return;
+    if (!mk_prog) {
+        mk_prog = compile(mk_vs, mk_fs);
+        um_rect = glGetUniformLocation(mk_prog, "u_rect"); um_kind = glGetUniformLocation(mk_prog, "u_kind");
+        um_val = glGetUniformLocation(mk_prog, "u_val"); um_aspect = glGetUniformLocation(mk_prog, "u_aspect");
+    }
     glViewport(0, 0, w, h);
     glEnable(GL_BLEND);
     glBlendEquationSeparate(GL_FUNC_ADD, GL_FUNC_ADD);
     glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ZERO, GL_ONE);
-    glUseProgram(sight_prog);
+    glUseProgram(mk_prog);
     glBindVertexArray(present_vao);
-    for (int i = 0; i < v->sight_n && i < 2; i++) {
-        const float* p = v->sight[i];
-        float V[3], e[3], tx, ty, half, nx, ny;
+    for (int i = 0; i < v->mk_n && i < 12; i++) {
+        const float* p = v->mk[i];
+        float V[3], e[3], tx, ty, nx, ny, hx, hy, ang;
+        int kind = v->mk_kind[i];
         for (int k = 0; k < 3; k++) V[k] = v->G[k] * p[0] + v->G[4 + k] * p[1] + v->G[8 + k] * p[2] + v->G[12 + k];   /* world -> V */
         for (int k = 0; k < 3; k++) e[k] = M[k] * V[0] + M[4 + k] * V[1] + M[8 + k] * V[2] + M[12 + k];               /* V -> eye (x right, y down, z forward) */
         if (e[2] < 0.05f) continue;
         tx = e[0] / e[2]; ty = -e[1] / e[2];                                    /* tangents right, up */
         nx = (tx - E->l) / (E->r - E->l) * 2.0f - 1.0f;
         ny = (ty - E->d) / (E->u - E->d) * 2.0f - 1.0f;
-        half = tanf(g_vr_sight_size / 100.0f * (3.14159265f / 360.0f)) / 0.9f;   /* the ring's outer edge at 0.9 */
-        glUniform4f(us_rect, nx, ny, half / (E->r - E->l) * 2.0f, half / (E->u - E->d) * 2.0f);
+        if (kind == 0) { ang = tanf(g_vr_sight_size / 100.0f * (3.14159265f / 360.0f)); hx = hy = ang; }
+        else if (kind == 1) { hx = hy = 0.04f / e[2]; }                         /* 8 cm across */
+        else {
+            int n = v->mk_val[i] >= 100 ? 3 : v->mk_val[i] >= 10 ? 2 : 1;
+            hy = 0.035f / e[2];                                                 /* the plate 7 cm high */
+            hx = hy * (float)(n * 6 + 2) / 11.0f;
+            glUniform1f(um_aspect, (float)(n * 6 + 2) / 11.0f);
+        }
+        glUniform1i(um_kind, kind);
+        glUniform1i(um_val, v->mk_val[i]);
+        glUniform4f(um_rect, nx, ny, hx / (E->r - E->l) * 2.0f, hy / (E->u - E->d) * 2.0f);
         glDrawArrays(0x0005 /* GL_TRIANGLE_STRIP */, 0, 4);
     }
     glBindVertexArray(vao);
@@ -2088,7 +2143,8 @@ static int present_vr_stereo(const struct Frame* cur)
             float d = g_vr_hud_dist / 100.0f * vr_u.zs;
             vr_u.hud[1] = d;
             vr_u.hud[0] = d * tanf(g_vr_hud_angle * (3.14159265f / 360.0f)) / 320.0f;
-        } else vr_u.hud[0] = vr_u.hud[1] = 0.0f;
+            vr_u.hud[2] = g_vr_hud_y / 100.0f * vr_u.zs;   /* V.y is down: up is subtracted */
+        } else vr_u.hud[0] = vr_u.hud[1] = vr_u.hud[2] = 0.0f;
         vr_u.on = 1;
         {
             static unsigned nlog;
@@ -2115,7 +2171,7 @@ static int present_vr_stereo(const struct Frame* cur)
             glBindFramebuffer(GL_FRAMEBUFFER, vr_fbo);
             glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
             draw_area_to(rt->tex, rt->vw, rt->vh, w, h);
-            draw_sights(v, M, E, w, h);
+            draw_markers(v, M, E, w, h);
             draw_vignette(E, w, h);
             glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
             glBindFramebuffer(GL_FRAMEBUFFER, 0);

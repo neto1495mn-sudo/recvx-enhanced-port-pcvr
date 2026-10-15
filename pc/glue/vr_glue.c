@@ -30,6 +30,8 @@
 #include "../../decomp/include/ps2/veronica/prog/weapon.h"
 #include "../../decomp/include/ps2/veronica/prog/sdfunc.h"
 #include "../../decomp/include/ps2/veronica/prog/pwksub.h"
+#include "../../decomp/include/ps2/veronica/prog/item.h"
+#include "../../decomp/include/ps2/veronica/prog/sub1.h"
 #include <stdint.h>
 extern uint64_t SDL_GetTicks(void);     /* SDL3 (the game glue does not see its headers) */
 extern uint64_t SDL_GetTicksNS(void);
@@ -48,6 +50,9 @@ extern int g_vr_danger_fx;    /* gs_gl.c, ini vr_danger_fx */
 int g_vr_hit_tilt = 5;       /* ini vr_hit_tilt: the view tilts this many degrees away from a hit; 0 = off */
 int g_vr_left_mirror = 1;    /* ini vr_left_mirror: the left hand without a weapon holds its controller as the right does, mirrored (1/2/3: the bone axis mirrored x/y/z; 0 = the game's own pose) */
 int g_vr_dmg_head = 130, g_vr_dmg_body = 100, g_vr_dmg_arm = 75, g_vr_dmg_leg = 75;   /* ini vr_dmg_*: damage by the body part hit (zombies), percent */
+int g_vr_prompts = 1;        /* ini vr_prompts: an "A" over doors, items and whatever the action button can use, when near */
+int g_vr_prompt_dist = 250;  /* ini vr_prompt_dist: how near (cm) */
+int g_vr_holster = 1;        /* ini vr_holster: the ammo in the boxes, shown at the belt */
 int g_vr_sight = 1;          /* ini vr_sight: a small white ring where the aimed gun's shot would hit */
 int g_vr_recoil = 1;         /* ini vr_recoil: the weapon kicks in the hand at each shot */
 int g_vr_haptics = 1;        /* ini vr_haptics: the controllers vibrate (shots, cuts) */
@@ -182,6 +187,111 @@ static void hit_update(void)
 }
 
 static void make_Wg(float Wg[16]);
+static void mk_add(int kind, const float p[3], int val);
+static int mk_n;
+static float mk_pt[12][3];
+static int mk_kind[12], mk_val[12];
+static int knife_equipped(void);
+static int vr_eye_world(float out[3]);
+
+/* The ammo in the boxes for the gun in hand: the inventory items the game would reload it
+   from (as bhSearchBullet: ammo items whose combination list names the weapon), summed;
+   -1 if no gun is equipped */
+static int box_ammo(void)
+{
+    S_WORK* st = &swork;
+    int max, wpn, n = 0;
+    unsigned short bt;
+    if (!st->pip) return -1;
+    wpn = (st->pip[*st->pip] >> 16) & 0xFF;
+    bt = (st->pip[*st->pip] >> 16) & 0xFF00;
+    if (wpn == 0) return -1;
+    if (wpn == 7 && (bt & 0x2000)) wpn = 155;
+    max = (sys->st_flg & 0x8000000) ? 10 : 8;
+    for (int i = 0; i < max; i++) {
+        unsigned int y = (st->pip[i + 2] >> 16) & 0xFF;
+        if (y >= 156 || !(itemdata[y].type & 0x2)) continue;
+        {
+            int z = combidata[itemdata[y].cmb], it = itemdata[y].cmb + 1;
+            for (; z > 0; z--, it += 3)
+                if (wpn == combidata[it] && (combidata[it + 2] & 0xF000)) { n += st->pip[i + 2] & 0xFFFF; break; }
+        }
+    }
+    return n;
+}
+
+/* the holster: in front of the belly at the belt (about 62 cm below the eyes, 15 cm forward of
+   them), turned with the head's heading smoothed - the box ammo of the gun in hand */
+static void holster_update(const float Wg[16], const VrPose* h)
+{
+    static float yaw_s;
+    static int have;
+    float hr[9], fx, fz, yaw, pl[3], pw[3];
+    int n;
+    if (!g_vr_holster || knife_equipped() || (n = box_ammo()) < 0) return;
+    quat_to_rows(hr, h);
+    fx = -hr[2]; fz = -hr[8];
+    if (fx * fx + fz * fz < 1e-4f) return;
+    yaw = atan2f(fx, fz);
+    if (!have) { yaw_s = yaw; have = 1; }
+    {
+        float d = yaw - yaw_s;
+        while (d > 3.14159265f) d -= 6.2831853f;
+        while (d < -3.14159265f) d += 6.2831853f;
+        if (fabsf(d) > 0.6f) yaw_s += d - (d > 0 ? 0.6f : -0.6f);   /* follows when the head turns far, not every glance down */
+        yaw_s += d * 0.02f;
+    }
+    pl[0] = h->px + sinf(yaw_s) * 0.15f; pl[1] = h->py - 0.62f; pl[2] = h->pz + cosf(yaw_s) * 0.15f;
+    pw[0] = Wg[0] * pl[0] + Wg[4] * pl[1] + Wg[8] * pl[2] + Wg[12];
+    pw[1] = Wg[1] * pl[0] + Wg[5] * pl[1] + Wg[9] * pl[2] + Wg[13];
+    pw[2] = Wg[2] * pl[0] + Wg[6] * pl[1] + Wg[10] * pl[2] + Wg[14];
+    mk_add(VRMK_NUMBER, pw, n > 999 ? 999 : n);
+}
+
+/* "A" over what the action button can use near the player: the game's action areas (the ones
+   bhCheckExmAtari tests: doors, items, things to examine or push) on the player's floor within
+   vr_prompt_dist, the nearest few, not behind a wall from the eyes */
+static void prompts_update(void)
+{
+    int etc_n, cnt = 0;
+    float lim = g_vr_prompt_dist / 100.0f * (g_vr_scale / 10.0f), eye[3];
+    struct { float d, p[3]; } best[6];
+    if (!g_vr_prompts || !plp || !rom || !vr_eye_world(eye)) return;
+    etc_n = rom->etc_n + sys->metc_n;
+    for (int i = 0; i < etc_n; i++) {
+        ATR_WORK* exp = i < rom->etc_n ? &rom->etcp[i] : &sys->metcp[i - rom->etc_n];
+        float cx, cz, nx, nz, d, top, y, p[3];
+        if (!(exp->flg & 0x1) || exp->type > 4 || exp->flr_no != plp->flr_no) continue;
+        nx = plp->px < exp->px ? exp->px : plp->px > exp->px + exp->w ? exp->px + exp->w : plp->px;   /* nearest point of the area */
+        nz = plp->pz < exp->pz ? exp->pz : plp->pz > exp->pz + exp->d ? exp->pz + exp->d : plp->pz;
+        d = sqrtf((nx - plp->px) * (nx - plp->px) + (nz - plp->pz) * (nz - plp->pz));
+        if (d > lim) continue;
+        cx = exp->px + exp->w * 0.5f; cz = exp->pz + exp->d * 0.5f;
+        top = exp->py + (exp->h > 0 ? exp->h : 0);
+        y = top + 1.5f;
+        if (y < plp->py + 4.0f) y = plp->py + 4.0f;
+        if (y > plp->py + 15.0f) y = plp->py + 15.0f;
+        p[0] = cx; p[1] = y; p[2] = cz;
+        {   /* not through a wall */
+            NJS_LINE line;
+            NJS_POINT3 apos = sys->apos;
+            ATR_WORK* ahtp = sys->ahtp;
+            float len, L;
+            line.px = eye[0]; line.py = eye[1]; line.pz = eye[2];
+            line.vx = p[0] - eye[0]; line.vy = p[1] - eye[1]; line.vz = p[2] - eye[2];
+            L = sqrtf(line.vx * line.vx + line.vy * line.vy + line.vz * line.vz);
+            if (bhCheckL2Wall(&line, 0x400, &len) && len < L - 2.0f) { sys->apos = apos; sys->ahtp = ahtp; continue; }
+            sys->apos = apos; sys->ahtp = ahtp;
+        }
+        if (cnt < 6) { best[cnt].d = d; memcpy(best[cnt].p, p, sizeof(p)); cnt++; }
+        else {
+            int w = 0;
+            for (int k = 1; k < 6; k++) if (best[k].d > best[w].d) w = k;
+            if (d < best[w].d) { best[w].d = d; memcpy(best[w].p, p, sizeof(p)); }
+        }
+    }
+    for (int k = 0; k < cnt; k++) mk_add(VRMK_BUTTON, best[k].p, 0);
+}
 
 /* end of tps_camera(), the third-person camera already in `cam`: replace it with the head's */
 void vr_camera(void)
@@ -199,7 +309,7 @@ void vr_camera(void)
             host_log("vr: camera %s\n", names[why]);
             last = why;
         }
-        if (why) { extern volatile int g_vr_danger; g_vr_danger = 0; vr_active = 0; return; }
+        if (why) { extern volatile int g_vr_danger; g_vr_danger = 0; vr_active = 0; mk_n = 0; return; }
     }
 
     {   /* heading: the player's own with controllers (right stick), else the character's facing */
@@ -248,6 +358,8 @@ void vr_camera(void)
     cam.ln = 0;
     cam.pers = (int)(g_vr_fov * (65536.0f / 360.0f));
     tps_vr_view(TO_ANGLE(ax[0]), TO_ANGLE(ax[1]));   /* walking and head aim relative to where the head looks */
+    prompts_update();
+    holster_update(Wg, &h);
     vr_frame = 1;
     vr_active = 1;
     cam_ms = SDL_GetTicks();
@@ -260,6 +372,8 @@ void vr_camera(void)
 }
 
 int vr_on(void) { return vr_active && xr_stereo_ready(); }
+
+static int vr_eye_world(float out[3]) { out[0] = cam.px; out[1] = cam.py; out[2] = cam.pz; return 1; }   /* set by vr_camera before use */
 
 /* in play: the VR camera ran in the last moments - in menus, the inventory, the map and the
    title it does not run (tps_pad, pad.c) */
@@ -544,10 +658,29 @@ static void vr_slash(BH_PWORK* p, const VrPose* hp, const float* H)
     }
 }
 
-/* Aiming sights: while a gun is raised, where each gun's shot would hit - the first wall or
-   enemy on the ray from its muzzle along its controller (as the shot itself goes, vr_gun_ray) */
-static int sight_n;
-static float sight_pt[2][3];
+/* VR markers handed to the renderer with the frame (VrView.mk*): the aiming dots, the "A"
+   over what the action button can use, the holster's ammo count. Filled during the game frame,
+   handed over and cleared by vr_after_draw. */
+static void mk_add(int kind, const float p[3], int val)
+{
+    if (mk_n >= 12) return;
+    memcpy(mk_pt[mk_n], p, 3 * sizeof(float));
+    mk_kind[mk_n] = kind; mk_val[mk_n] = val;
+    mk_n++;
+}
+
+/* the barrel of the weapon in a hand (world, unit): from the hand node towards the muzzle the
+   game puts at wp_fps1.z on the node's z axis; 0 if the weapon has none */
+static int barrel_dir(const float* H, int wno, float d[3])
+{
+    float z = (wno >= 0 && wno < 23) ? WpnTab[wno].wp_fps1.z : 0.0f, l;
+    if (fabsf(z) < 1e-3f) return 0;
+    d[0] = H[8]; d[1] = H[9]; d[2] = H[10];
+    l = sqrtf(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+    if (l < 1e-6f) return 0;
+    for (int k = 0; k < 3; k++) d[k] = d[k] / l * (z > 0 ? 1.0f : -1.0f);
+    return 1;
+}
 
 static float ray_capsule(const float o[3], const float d[3], const NJS_CAPSULE* c)
 {
@@ -562,20 +695,16 @@ static float ray_capsule(const float o[3], const float d[3], const NJS_CAPSULE* 
     return best;
 }
 
-static void sight_add(const float* H, const VrPose* hp, int wno)
+/* the aiming dot: where the gun in a hand would hit - the first wall or enemy along its
+   barrel from its muzzle (as the shot goes, vr_gun_ray) */
+static void sight_add(const float* H, int wno)
 {
-    float r[9], f[3], d[3], o[3], l, dist = 1000.0f, len, c = cosf(vr_yaw), sn = sinf(vr_yaw);
+    float d[3], o[3], dist = 1000.0f, len, p[3];
     float z = (wno >= 0 && wno < 23) ? WpnTab[wno].wp_fps1.z : 0.0f;
     NJS_LINE line;
     NJS_POINT3 apos;
     ATR_WORK* ahtp;
-    if (sight_n >= 2) return;
-    quat_to_rows(r, hp);
-    f[0] = -r[2]; f[1] = -r[5]; f[2] = -r[8];
-    d[0] = c * f[0] + sn * f[2]; d[1] = f[1]; d[2] = -sn * f[0] + c * f[2];
-    l = sqrtf(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
-    if (l < 1e-4f) return;
-    for (int k = 0; k < 3; k++) d[k] /= l;
+    if (!barrel_dir(H, wno, d)) return;
     o[0] = H[8] * z + H[12]; o[1] = H[9] * z + H[13]; o[2] = H[10] * z + H[14];   /* the muzzle (wp_fps1.z on the hand) */
     line.px = o[0]; line.py = o[1]; line.pz = o[2];
     line.vx = d[0] * dist; line.vy = d[1] * dist; line.vz = d[2] * dist;
@@ -589,8 +718,35 @@ static void sight_add(const float* H, const VrPose* hp, int wno)
         t = ray_capsule(o, d, &e->watr);
         if (t > 0 && t < dist) dist = t;
     }
-    for (int k = 0; k < 3; k++) sight_pt[sight_n][k] = o[k] + d[k] * dist;
-    sight_n++;
+    for (int k = 0; k < 3; k++) p[k] = o[k] + d[k] * dist;
+    mk_add(VRMK_DOT, p, 0);
+}
+
+const char* pc_save_dir(void);   /* config.c */
+static float grip_ref[9];
+static int grip_ok, grip_loaded;
+static void grip_path(char* out, size_t n) { snprintf(out, n, "%s/vr_grip.txt", pc_save_dir()); }
+static void grip_save(void)
+{
+    char pth[512];
+    FILE* f;
+    grip_path(pth, sizeof(pth));
+    if (!(f = fopen(pth, "w"))) return;
+    for (int i = 0; i < 9; i++) fprintf(f, "%.6f\n", grip_ref[i]);
+    fclose(f);
+}
+static void grip_load(void)
+{
+    char pth[512];
+    FILE* f;
+    int n = 0;
+    grip_loaded = 1;
+    grip_path(pth, sizeof(pth));
+    if (!(f = fopen(pth, "r"))) return;
+    while (n < 9 && fscanf(f, "%f", &grip_ref[n]) == 1) n++;
+    fclose(f);
+    grip_ok = n == 9;
+    if (grip_ok) vr_log("vr: hand pose loaded (%s)\n", pth);
 }
 
 void vr_hand(BH_PWORK* p)
@@ -608,9 +764,9 @@ void vr_hand(BH_PWORK* p)
     float ya, pa;
     int wn, aiming, ctl;
     hand_ok[0] = hand_ok[1] = 0;
-    sight_n = 0;
     if (!vr_on() || !p || !p->mlwP) return;
     if (!hooked) { hooked = 1; vr_log("vr: hand hook running (player model %d nodes)\n", p->mlwP->obj_num); }
+    if (!grip_loaded) grip_load();
     log_hand_objects();
     wn = p->wpnr_no & 63;
     aiming = p->mode0 == 1 && p->mode1 == 1;
@@ -645,8 +801,17 @@ void vr_hand(BH_PWORK* p)
         if (!aiming && !rok[side][1][wn]) { rows_from_angles(A, ya, 0); learn(rrel[side][1][wn], A, H); rok[side][1][wn] = 1; }
         hp = side ? &in.aiml : &in.aim;
         if (!ctl || !(side ? in.aiml_valid : in.aim_valid)) { hand_log(side, 1, wn); continue; }
+        /* one hand pose for every weapon: the grip the right hand learned with the first gun it
+           aimed (kept in <save>/vr_grip.txt); the left hand the same, mirrored */
+        if (side == 0 && !grip_ok && rok[0][0][wn] && !knife_equipped() && !dual_equipped()) {
+            memcpy(grip_ref, rrel[0][0][wn], sizeof(grip_ref));
+            grip_ok = 1;
+            grip_save();
+            vr_log("vr: hand pose taken from weapon %d (one pose for every weapon, %s/vr_grip.txt)\n", wn, pc_save_dir());
+        }
         R = rok[side][0][wn] ? rrel[side][0][wn] : rrel[side][1][wn];
-        if (side == 1 && g_vr_left_mirror > 0 && !dual_equipped() && right_ok) {
+        if (grip_ok) R = grip_ref;
+        if (side == 1 && g_vr_left_mirror > 0 && (grip_ok || !dual_equipped()) && right_ok) {
             /* the left hand without a weapon: the right hand's grip, mirrored - F (left/right in
                the controller's frame) * Rright * B (the bone axis the skeleton mirrors) */
             static float Rm[9];
@@ -654,31 +819,6 @@ void vr_hand(BH_PWORK* p)
             for (int i = 0; i < 3; i++)
                 for (int j = 0; j < 3; j++) Rm[i * 3 + j] = (i == 0 ? -1.0f : 1.0f) * Rright[i * 3 + j] * (j == ax ? -1.0f : 1.0f);
             R = Rm;
-        }
-        if (side == 0 && knife_equipped()) {   /* the knife: its blade along the controller (cut by swinging) */
-            static float Rk[9];
-            const NJS_POINT3* tp = &WpnTab[p->wpnr_no].wp_fps1;
-            float b[3] = { tp->x, tp->y, tp->z }, l = sqrtf(b[0] * b[0] + b[1] * b[1] + b[2] * b[2]);
-            if (l > 1e-3f) {
-                float u[3], t[3] = { 0, 0, -1 }, ax[3], c, sn, Q[9];
-                for (int i = 0; i < 3; i++) b[i] /= l;
-                for (int i = 0; i < 3; i++) u[i] = R[i * 3 + 0] * b[0] + R[i * 3 + 1] * b[1] + R[i * 3 + 2] * b[2];   /* the blade in the controller's frame */
-                ax[0] = u[1] * t[2] - u[2] * t[1]; ax[1] = u[2] * t[0] - u[0] * t[2]; ax[2] = u[0] * t[1] - u[1] * t[0];
-                c = u[0] * t[0] + u[1] * t[1] + u[2] * t[2];
-                sn = sqrtf(ax[0] * ax[0] + ax[1] * ax[1] + ax[2] * ax[2]);
-                if (sn > 1e-4f) {   /* Q: the shortest turn taking the blade to the controller's forward */
-                    for (int i = 0; i < 3; i++) ax[i] /= sn;
-                    for (int i = 0; i < 3; i++)
-                        for (int j = 0; j < 3; j++) {
-                            float k = ax[i] * ax[j] * (1 - c) + (i == j ? c : 0);
-                            if (i != j) { int m = 3 - i - j; k += (((i + 1) % 3 == j) ? -1.0f : 1.0f) * ax[m] * sn; }
-                            Q[i * 3 + j] = k;
-                        }
-                    for (int i = 0; i < 3; i++)
-                        for (int j = 0; j < 3; j++) Rk[i * 3 + j] = Q[i * 3 + 0] * R[0 * 3 + j] + Q[i * 3 + 1] * R[1 * 3 + j] + Q[i * 3 + 2] * R[2 * 3 + j];
-                    R = Rk;
-                }
-            }
         }
         if (side == 0) { memcpy(Rright, R, sizeof(Rright)); right_ok = 1; }
         quat_to_rows(ra, hp);
@@ -724,7 +864,7 @@ void vr_hand(BH_PWORK* p)
         hand_ok[side] = 1;
         hand_log(side, 0, wn);
         if (side == 0) vr_slash(p, hp, H);
-        if (g_vr_sight && aiming && !knife_equipped() && (side == 0 || dual_equipped())) sight_add(H, hp, p->wpnr_no);
+        if (g_vr_sight && aiming && !knife_equipped() && (side == 0 || dual_equipped())) sight_add(H, p->wpnr_no);
     }
 }
 
@@ -758,9 +898,11 @@ int vr_gun_ray(GA_WORK* gap)
     st = 1;
     if (xr_input(&in) && (side ? in.aiml_valid : in.aim_valid) && hand_ok[side]) {
         const VrPose* hp = side ? &in.aiml : &in.aim;
+        float bd[3];
         quat_to_rows(r, hp);
         f[0] = -r[2]; f[1] = -r[5]; f[2] = -r[8];   /* -z of the controller */
         d.x = c * f[0] + s * f[2]; d.y = f[1]; d.z = -s * f[0] + c * f[2];
+        if (barrel_dir(plp->mlwP->owP[side ? 13 : 9].mtx, gap->wpn_no, bd)) { d.x = bd[0]; d.y = bd[1]; d.z = bd[2]; }   /* along the barrel in the hand */
         l = sqrtf(d.x * d.x + d.y * d.y + d.z * d.z);
         if (l > 1e-4f) {
             o.x = gap->gx; o.y = gap->gy; o.z = gap->gz;   /* the muzzle, on the tracked hand */
@@ -799,7 +941,7 @@ int vr_quick_knife(void) { VrInput in; return xr_input(&in) && in.lgrip > 0.5f; 
 void vr_after_draw(void)
 {
     VrView v;
-    if (!vr_frame) return;
+    if (!vr_frame) { mk_n = 0; return; }
     memset(&v, 0, sizeof(v));
     v.valid = 1;
     memcpy(v.G, cam.mtx, sizeof(v.G));
@@ -810,8 +952,9 @@ void vr_after_draw(void)
     v.cx = fVu1OffsetX; v.cy = fVu1OffsetY;
     v.kx = fVu1AspectW * fVu1Projection; v.ky = fVu1AspectH * fVu1Projection;
     v.za = vr_za; v.zb = vr_zb;
-    v.sight_n = sight_n;
-    memcpy(v.sight, sight_pt, sizeof(v.sight));   /* as drawn (vr_camera), not the room's restored by tps_after_draw */
+    v.mk_n = mk_n;
+    memcpy(v.mk, mk_pt, sizeof(v.mk)); memcpy(v.mk_kind, mk_kind, sizeof(v.mk_kind)); memcpy(v.mk_val, mk_val, sizeof(v.mk_val));
+    mk_n = 0;   /* as drawn (vr_camera), not the room's restored by tps_after_draw */
     stream_vr_view(&v);
     vr_frame = 0;
 }

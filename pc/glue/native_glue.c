@@ -190,7 +190,12 @@ uint32_t pc_native_prim(unsigned int prim, const unsigned int* dp, int n, int cl
         if (!clip_3d_on && g_vr_fx_fix && o->z > VR_FX_MIN_DEPTH) o->cull |= 0x40;
     }
     if (!clip_3d_on && n > 0 && vr_big(v[0].x, v[0].y, v, n, sizeof(NativeVertex)))   /* a screen layer: stays 2D */
-        for (int i = 0; i < n; i++) v[i].cull = (uint8_t)((v[i].cull & ~0x40) | 0x20);   /* 0x20: a screen layer (VR keeps it over the whole view) */
+        for (int i = 0; i < n; i++) v[i].cull &= (uint8_t)~0x40;
+    if (!clip_3d_on && n > 0) {   /* tall (more than half the screen top to bottom): a screen layer VR keeps over the whole view (0x20); wide and low goes on the panel */
+        float y0 = v[0].y, y1 = v[0].y;
+        for (int i = 1; i < n; i++) { y0 = fminf(y0, v[i].y); y1 = fmaxf(y1, v[i].y); }
+        if (y1 - y0 > 240.0f) for (int i = 0; i < n; i++) v[i].cull |= 0x20;
+    }
     return native_defer(prim, v, n, deferred ? pc_cur_mesh : 0, pc_cur_strip);
 }
 
