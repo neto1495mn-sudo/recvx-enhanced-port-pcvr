@@ -628,6 +628,9 @@ int vr_shot_wakes(BH_PWORK* pp, GA_WORK* gap)
 {
     float dx, dz;
     if (!vr_on() || !g_vr_wake_shots || !player_shot(gap) || !pp || (pp->id != 1 && pp->id != 26)) return 0;
+    /* only one still lying asleep (its Move mode, idle): not one falling, dying or getting up,
+       which the game keeps unhittable on purpose (shot then, it came back broken and undying) */
+    if (pp->mode0 != 1 || pp->mode1 != 0 || pp->hp <= 0) return 0;
     dx = pp->px - plp->px; dz = pp->pz - plp->pz;
     if (dx * dx + dz * dz < 30.0f * 30.0f * (g_vr_scale / 100.0f) * (g_vr_scale / 100.0f)) return 0;
     {

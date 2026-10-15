@@ -183,7 +183,7 @@ add_executable(recvx ${LAYOUT_PAD_SRC} $<TARGET_OBJECTS:recvx_game> $<TARGET_OBJ
                $<$<TARGET_EXISTS:glibc_compat>:$<TARGET_OBJECTS:glibc_compat>>)
 target_link_libraries(recvx PRIVATE imgui SDL3::SDL3 miniupnpc::miniupnpc natpmp monocypher m)
 if(WIN32)
-    target_link_libraries(recvx PRIVATE ws2_32 pthread shell32)   # co-op UDP (src/net); clock_gettime (winpthreads)
+    target_link_libraries(recvx PRIVATE ws2_32 pthread shell32 winmm)   # co-op UDP (src/net); clock_gettime (winpthreads)
     if(TARGET openxr_loader)
         target_link_libraries(recvx PRIVATE openxr_loader advapi32 pathcch)
     endif()

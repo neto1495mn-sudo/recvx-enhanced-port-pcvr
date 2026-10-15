@@ -280,8 +280,8 @@ int main(int argc, char** argv)
     if (profile_path[0]) { extern void prof_open_csv(const char*); prof_open_csv(profile_path); }
 #ifndef _WIN32
     if (getenv("RECVX_WATCHDOG")) { signal(SIGALRM, watchdog); alarm((unsigned)atoi(getenv("RECVX_WATCHDOG"))); }
-    { extern void profile_start(void); profile_start(); }
 #endif
+    { extern void profile_start(void); profile_start(); }   /* --profile-samples (host/profile.c) */
     config_load();
     parse_args(argc, argv);   /* command line overrides the saved settings */
     ps2_memory_init();

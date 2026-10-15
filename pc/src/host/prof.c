@@ -76,6 +76,7 @@ void prof_frame_end(void)
         if (frame_no % 60 == 0) fflush(csv);
     }
     frame_no++;
+    { extern volatile unsigned g_prof_frame; g_prof_frame = (unsigned)frame_no; }   /* (the Windows sampler tags samples with it, profile.c) */
 }
 
 int prof_history(ProfFrame* out, int n)

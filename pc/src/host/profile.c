@@ -94,6 +94,66 @@ void profile_start(void)
     atexit(dump);
 }
 #else
-void profile_start(void) {}
-void profile_thread(char tag) { (void)tag; }
+/* Windows: a sampler thread suspends the game thread every millisecond and records where it
+   was (EIP) plus the code addresses found on top of its stack (a rough call chain), tagged with
+   the --profile frame number, so the slow frames of the CSV can be looked up. Written as it
+   goes (the game may be closed abruptly). Lines: "<frame> <eip> <stack code addresses...>";
+   the first line "base <image base> <text end>". */
+#include <windows.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdint.h>
+volatile unsigned g_prof_frame;
+static HANDLE game_thread;
+static FILE* out;
+static uintptr_t img_lo, img_hi;
+
+static DWORD WINAPI sampler(LPVOID arg)
+{
+    unsigned n = 0;
+    (void)arg;
+    timeBeginPeriod(1);
+    for (;;) {
+        CONTEXT c;
+        Sleep(1);
+        if (!game_thread) continue;
+        if (SuspendThread(game_thread) == (DWORD)-1) continue;
+        c.ContextFlags = CONTEXT_CONTROL;
+        if (GetThreadContext(game_thread, &c)) {
+            uint32_t sp = (uint32_t)c.Esp, found = 0;
+            fprintf(out, "%u %x", g_prof_frame, (unsigned)c.Eip);
+            for (int i = 0; i < 2048 && found < 12; i++) {   /* the stack, 8 KB from the top */
+                uint32_t v;
+                SIZE_T got = 0;
+                if (!ReadProcessMemory(GetCurrentProcess(), (void*)(uintptr_t)(sp + i * 4), &v, 4, &got) || got != 4) break;
+                if (v >= img_lo && v < img_hi) { fprintf(out, " %x", v); found++; }
+            }
+            fputc('\n', out);
+        }
+        ResumeThread(game_thread);
+        if (++n % 500 == 0) fflush(out);
+    }
+    return 0;
+}
+
+void profile_thread(char tag)
+{
+    if (tag != 'g' || !out) return;
+    DuplicateHandle(GetCurrentProcess(), GetCurrentThread(), GetCurrentProcess(), &game_thread,
+                    THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT, FALSE, 0);
+}
+
+void profile_start(void)
+{
+    const char* path = getenv("RECVX_PROFILE");
+    IMAGE_DOS_HEADER* dos;
+    IMAGE_NT_HEADERS* nt;
+    if (!path || !(out = fopen(path, "w"))) return;
+    dos = (IMAGE_DOS_HEADER*)GetModuleHandle(NULL);
+    nt = (IMAGE_NT_HEADERS*)((char*)dos + dos->e_lfanew);
+    img_lo = (uintptr_t)dos;
+    img_hi = img_lo + nt->OptionalHeader.SizeOfImage;
+    fprintf(out, "base %x %x\n", (unsigned)img_lo, (unsigned)img_hi);
+    CreateThread(NULL, 0, sampler, NULL, 0, NULL);
+}
 #endif
