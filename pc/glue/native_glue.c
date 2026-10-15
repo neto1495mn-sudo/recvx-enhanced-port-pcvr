@@ -149,6 +149,7 @@ uint32_t pc_native_prim(unsigned int prim, const unsigned int* dp, int n, int cl
         const float* f0 = (const float*)dp; const float* f2 = (const float*)(dp + 8);
         NativeVertex* o = &v[i];
         float x = f2[0], y = f2[1], z = f2[2], q = f0[2], sz;
+        o->cull = 0;
         if (clip_3d_on) {
             sz = -Ps2_zbuff_b * q - Ps2_zbuff_a;
             o->w = z;
@@ -163,6 +164,9 @@ uint32_t pc_native_prim(unsigned int prim, const unsigned int* dp, int n, int cl
             o->near_d = o->far_d = 1.0f;
             x = (float)(int)(x * 16.0f) / 16.0f;   /* the GS gets 2D positions as 12.4 fixed point (FTOI4) */
             y = (float)(int)(y * 16.0f) / 16.0f;
+            /* VR: 2D effects the game projected itself (fire, glows: njDrawTexture with z = -1 / view depth)
+               carry their view depth; screen overlays use the minimum z (depth 1) and stay 2D */
+            if (z < 0.0f && -1.0f / z > 1.5f) { o->cull |= 0x40; o->far_d = -1.0f / z; }
         }
         *last_sz = sz < 0.0f ? 0.0f : sz > 65534.0f ? 65534.0f : sz;
         o->x = x * o->w; o->y = y * o->w;
@@ -170,7 +174,7 @@ uint32_t pc_native_prim(unsigned int prim, const unsigned int* dp, int n, int cl
         else { o->s = q != 0.0f ? f0[0] / q : 0.0f; o->t = q != 0.0f ? f0[1] / q : 0.0f; }
         o->r = (uint8_t)dp[4]; o->g = (uint8_t)dp[5]; o->b = (uint8_t)dp[6]; o->a = (uint8_t)dp[7];
         o->fog = f2[3];
-        o->cull = (uint8_t)((clip_3d_on && (dp[3] & 0x8000) ? 2 : 0) | (clip_3d_on ? 0x80 : 0));
+        o->cull = (uint8_t)(o->cull | (clip_3d_on && (dp[3] & 0x8000) ? 2 : 0) | (clip_3d_on ? 0x80 : 0));
     }
     return native_defer(prim, v, n, deferred ? pc_cur_mesh : 0, pc_cur_strip);
 }
@@ -203,6 +207,8 @@ uint32_t pc_native_prim_raw(unsigned int prim, const unsigned int* dp, int n, in
         o->r = (uint8_t)dp[4]; o->g = (uint8_t)dp[5]; o->b = (uint8_t)dp[6]; o->a = (uint8_t)dp[7];
         o->adc = clip_3d_on && (clip_flag != 0 || (dp[3] & 0x8000));
         o->vr3d = clip_3d_on ? 1 : 0;
+        o->vz = 0.0f;
+        if (!clip_3d_on && z < 0.0f && -1.0f / z > 1.5f) { o->vr3d = 2; o->vz = -1.0f / z; }   /* as pc_native_prim */
     }
     return native_defer_raw(prim, v, n);
 }
