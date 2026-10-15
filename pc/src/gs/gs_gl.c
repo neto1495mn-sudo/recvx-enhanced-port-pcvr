@@ -525,10 +525,12 @@ int gs_take_view_change(void)
 float pc_hor_scale(void) { return (640.0f + 2.0f * game_margin) / 640.0f; }   /* game thread */
 float gs_hor_scale(void) { return (640.0f + 2.0f * g_margin_x) / 640.0f; }    /* render thread */
 
+int g_vr_eye_shape = 1;   /* ini vr_eye_shape: 1 = eye images at the headset's own size and shape, 0 = 16:9 */
 static int wanted_margin(void)
 {
     int ww, wh;
     float k;
+    if (xr_active() && g_vr_stereo && g_vr_eye_shape) return 0;   /* VR: the 4:3 area, the nearest the game draws to the eye's shape */
     if (g_config.aspect != ASPECT_WIDE) return 0;
     SDL_GetWindowSizeInPixels(g_window, &ww, &wh);
     k = (ww * 3.0f) / (wh * 4.0f);
@@ -1972,6 +1974,12 @@ static int present_vr_stereo(const struct Frame* cur)
     float iG[16], iW[16], A[16];
     float dw = 640.0f + 2.0f * g_margin_x;
     int w = (int)(dw * g_scale + 0.5f), h = (int)(480.0f * g_scale + 0.5f), ok = 1;
+    if (g_vr_eye_shape && xr_recommended_eye_width() > 0 && xr_recommended_eye_height() > 0) {
+        /* the eye images at the headset's recommended size and shape (Quest 2: 1832 x 1920 at
+           100%); the frustum fills the drawn area, which is resampled onto them */
+        w = (int)(xr_recommended_eye_width() * (float)g_vr_res / 100.0f + 0.5f);
+        h = (int)(xr_recommended_eye_height() * (float)g_vr_res / 100.0f + 0.5f);
+    }
     const GsContext* c = &gs.ctx[0];
     float ofx = (float)(c->xyoffset & 0xFFFF) / 16.0f, ofy = (float)((c->xyoffset >> 32) & 0xFFFF) / 16.0f;
     {   /* why a frame stays on the cinema screen: logged when the reason changes */
@@ -2073,7 +2081,13 @@ static uint64_t gs_present_vr(const struct Frame* cur, float t)
             draw_display(final_vw ? img[fin].tex : 0, final_vw ? final_vw : 640, final_vw ? final_vh : 512);
             overlay_render();
         }
-        if (fr == 1) xr_frame_end_quad(ww, wh);
+        if (fr == 1) {   /* the game's picture only (no black bars), at its own aspect */
+            int vx, vy, vw, vh;
+            float dw;
+            display_rect(ww, wh, &vx, &vy, &vw, &vh, &dw);
+            if (vw > 0 && vh > 0) xr_frame_end_quad_rect(vx, wh - vy - vh, vw, vh);
+            else xr_frame_end_quad(ww, wh);
+        }
         else if (fr == 0) xr_frame_end_none();
     }
     swap = SDL_GetTicksNS();

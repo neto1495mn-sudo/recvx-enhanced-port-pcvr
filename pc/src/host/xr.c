@@ -24,8 +24,10 @@ int g_vr_screen_dist = 250;
 int g_vr_screen_width = 400;
 int g_vr_stereo = 1;
 int g_vr_res = 100;       /* ini vr_res: eye resolution, percent of the headset's recommended size */
-static int rec_eye_h;     /* the headset's recommended eye height (pixels) */
+static int rec_eye_h, rec_eye_w;     /* the headset's recommended eye size (pixels) */
 int xr_recommended_eye_height(void) { return rec_eye_h; }
+int xr_recommended_eye_width(void) { return rec_eye_w; }
+int g_vr_screen_angle = 60;   /* ini vr_screen_angle: the cinema screen's width as seen from the head (degrees) */
 
 /* recentring (shared): recentred = Ry(-yaw0) * (local - origin) */
 static SDL_SpinLock pose_lock;
@@ -417,6 +419,7 @@ int xr_init(void)
         {
             host_log("vr: recommended eye size %ux%u\n", vcv[0].recommendedImageRectWidth, vcv[0].recommendedImageRectHeight);
             rec_eye_h = (int)vcv[0].recommendedImageRectHeight;
+            rec_eye_w = (int)vcv[0].recommendedImageRectWidth;
         }
     }
 
@@ -642,7 +645,11 @@ void xr_frame_end_stereo(void)
     end_frame(layers, 1);
 }
 
-void xr_frame_end_quad(int w, int h)
+void xr_frame_end_quad(int w, int h) { xr_frame_end_quad_rect(0, 0, w, h); }
+
+/* the cinema screen: the game's picture (x, y, w, h of the window's back buffer, the black
+   bars left out) at its own aspect, as wide as vr_screen_angle degrees seen from vr_dist */
+void xr_frame_end_quad_rect(int x, int y, int w, int h)
 {
     XrCompositionLayerQuad quad = { XR_TYPE_COMPOSITION_LAYER_QUAD };
     const XrCompositionLayerBaseHeader* layers[1];
@@ -654,7 +661,7 @@ void xr_frame_end_quad(int w, int h)
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, blit_fbo);
     glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
     glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);   /* the window's back buffer, as just drawn */
-    glBlitFramebuffer(0, 0, w, h, 0, 0, w, h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+    glBlitFramebuffer(x, y, x + w, y + h, 0, 0, w, h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
     glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     chain_release(&quad_chain);
@@ -665,7 +672,10 @@ void xr_frame_end_quad(int w, int h)
     quad.subImage.imageRect.extent.width = quad_chain.w;
     quad.subImage.imageRect.extent.height = quad_chain.ht;
     quad.pose = screen_pose;
-    quad.size.width = (float)g_vr_screen_width / 100.0f;
+    {
+        float a = (float)(g_vr_screen_angle < 20 ? 20 : g_vr_screen_angle > 120 ? 120 : g_vr_screen_angle) * (3.14159265f / 360.0f);
+        quad.size.width = 2.0f * ((float)g_vr_screen_dist / 100.0f) * tanf(a);
+    }
     quad.size.height = quad.size.width * (float)quad_chain.ht / (float)quad_chain.w;
     layers[0] = (const XrCompositionLayerBaseHeader*)&quad;
     chain_release(&eye_chain[0]); chain_release(&eye_chain[1]);

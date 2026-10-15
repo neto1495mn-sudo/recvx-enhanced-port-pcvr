@@ -2,6 +2,7 @@
  * libpad on the host: a DualShock 2 in pressure-sensitive mode on port 0,
  * fed by the first SDL gamepad and/or the keyboard. Rumble via SDL.
  */
+#include "../host/xr.h"
 #include "../ps2_platform.h"
 #include "../host/tps.h"
 #include "../host/lobby.h"
@@ -130,6 +131,27 @@ static void build_report(unsigned char* r)
 
     { extern int vr_pad_start(void); if (input_enabled && vr_pad_start()) b |= PAD_START; }   /* VR: left menu button */
     { extern int vr_pad_select(void); if (input_enabled && vr_pad_select()) b |= PAD_SELECT; }   /* VR: LT + Y */
+    {   /* VR: outside play (title and main menu, menus, screens before the game) the Touch
+           controllers are a plain pad: A Cross, B Circle, X Square, Y Triangle, the left stick the
+           d-pad and the left analog stick. In play they go through the third-person keys
+           (tps_input.c) and must not also steer the game's tank controls here. */
+        extern int vr_playing(void);
+        VrInput in;
+        if (input_enabled && !vr_playing() && xr_input(&in)) {
+            if (in.buttons & VRB_A) b |= PAD_CROSS;
+            if (in.buttons & VRB_B) b |= PAD_CIRCLE;
+            if (in.buttons & VRB_X) b |= PAD_SQUARE;
+            if ((in.buttons & VRB_Y) && in.ltrig <= 0.5f) b |= PAD_TRIANGLE;
+            if (in.ly > 0.5f) b |= PAD_UP;
+            if (in.ly < -0.5f) b |= PAD_DOWN;
+            if (in.lx < -0.5f) b |= PAD_LEFT;
+            if (in.lx > 0.5f) b |= PAD_RIGHT;
+            if (in.lx < -0.2f || in.lx > 0.2f || in.ly < -0.2f || in.ly > 0.2f) {
+                int x = 128 + (int)(in.lx * 127.0f), y = 128 - (int)(in.ly * 127.0f);
+                lx = (uint8_t)(x < 0 ? 0 : x > 255 ? 255 : x); ly = (uint8_t)(y < 0 ? 0 : y > 255 ? 255 : y);
+            }
+        }
+    }
     b |= scripted_buttons();
     {   /* RECVX_PAD_TRACE=1: log the DS2 buttons when they change */
         static int trace = -1; static uint32_t last;

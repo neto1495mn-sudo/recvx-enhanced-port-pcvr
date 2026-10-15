@@ -18,7 +18,9 @@ extern int g_vr_screen_dist;    /* ini vr_dist: cinema screen distance in cm (de
 extern int g_vr_screen_width;   /* ini vr_width: cinema screen width in cm (default 400) */
 extern int g_vr_stereo;
 extern int g_vr_res;            /* ini vr_res: eye resolution, percent of the headset's recommended size (default 100) */
-int xr_recommended_eye_height(void);         /* ini vr_stereo: 1 = first-person stereo in normal play (default), 0 = cinema only */
+int xr_recommended_eye_height(void);
+int xr_recommended_eye_width(void);
+extern int g_vr_screen_angle;   /* ini vr_screen_angle (degrees) */         /* ini vr_stereo: 1 = first-person stereo in normal play (default), 0 = cinema only */
 
 int    xr_init(void);           /* after the GL context is current; 1 if a VR session was created */
 int    xr_active(void);         /* a VR session exists (it may not be visible yet) */
@@ -60,6 +62,7 @@ unsigned int xr_eye_target(int e, int w, int h);  /* acquire eye e's image (w x 
 void         xr_eye_release(int e);
 void         xr_frame_end_stereo(void);           /* both eye images as a projection layer */
 void         xr_frame_end_quad(int w, int h);     /* the window's back buffer (w x h) on the cinema screen */
+void         xr_frame_end_quad_rect(int x, int y, int w, int h);   /* a part of it (the game's picture) */
 void         xr_frame_end_none(void);
 
 #endif

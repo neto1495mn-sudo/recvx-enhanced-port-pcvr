@@ -56,7 +56,8 @@ static float frame_Wg[16];   /* this frame's recentred tracking space -> world *
 static float vr_yaw;         /* the view's heading (radians, forward (-sin, 0, -cos)) */
 static unsigned rec_seen;    /* xr_recenter_gen at the last heading reset */
 static int snap_held;        /* the right stick is still out after a snap turn */
-static int cam_ran, playing; /* the VR camera ran since the last pad read / it ran in the last game frame (in play, not a menu) */
+static uint64_t cam_ms;      /* when the VR camera last ran (SDL ticks): it runs only in play, not in menus */
+static float vr_za, vr_zb;   /* the GS depth constants the frame is drawn with (Ps2_zbuff_a/b after tps_camera's njClipZ) */
 
 void tps_vr_view(float yaw, float pitch);   /* tps_glue.c: its camera yaw/pitch (game angle units) */
 
@@ -241,16 +242,21 @@ void vr_camera(void)
     tps_vr_view(TO_ANGLE(ax[0]), TO_ANGLE(ax[1]));   /* walking and head aim relative to where the head looks */
     vr_frame = 1;
     vr_active = 1;
-    cam_ran = 1;
+    cam_ms = SDL_GetTicks();
+    {   /* the depth constants now, while the frame's near/far (njClipZ in tps_camera) are set:
+           tps_after_draw puts the room's own back before vr_after_draw runs */
+        extern float Ps2_zbuff_a, Ps2_zbuff_b;
+        vr_za = Ps2_zbuff_a; vr_zb = Ps2_zbuff_b;
+    }
     cam_gen++;   /* the next game frame computes its base anew */
 }
 
 int vr_on(void) { return vr_active && xr_stereo_ready(); }
 
-/* tps_pad(), once per game frame at the pad read: whether the last frame was played with the
-   VR camera (normal play) - in menus, the inventory and the map it does not run */
-void vr_pad_frame(void) { playing = cam_ran; cam_ran = 0; }
-int vr_playing(void) { return vr_on() && playing; }
+/* in play: the VR camera ran in the last moments - in menus, the inventory, the map and the
+   title it does not run (tps_pad, pad.c) */
+void vr_pad_frame(void) {}
+int vr_playing(void) { return vr_on() && SDL_GetTicks() - cam_ms < 100; }
 
 static int knife_equipped(void)
 {
@@ -641,7 +647,7 @@ void vr_after_draw(void)
     memcpy(v.W, frame_W, sizeof(v.W));
     v.cx = fVu1OffsetX; v.cy = fVu1OffsetY;
     v.kx = fVu1AspectW * fVu1Projection; v.ky = fVu1AspectH * fVu1Projection;
-    { extern float Ps2_zbuff_a, Ps2_zbuff_b; v.za = Ps2_zbuff_a; v.zb = Ps2_zbuff_b; }
+    v.za = vr_za; v.zb = vr_zb;   /* as drawn (vr_camera), not the room's restored by tps_after_draw */
     stream_vr_view(&v);
     vr_frame = 0;
 }
