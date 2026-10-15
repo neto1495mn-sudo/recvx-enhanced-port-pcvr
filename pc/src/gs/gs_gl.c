@@ -530,7 +530,6 @@ static int wanted_margin(void)
 {
     int ww, wh;
     float k;
-    if (xr_active() && g_vr_stereo && g_vr_eye_shape) return 0;   /* VR: the 4:3 area, the nearest the game draws to the eye's shape */
     if (g_config.aspect != ASPECT_WIDE) return 0;
     SDL_GetWindowSizeInPixels(g_window, &ww, &wh);
     k = (ww * 3.0f) / (wh * 4.0f);
