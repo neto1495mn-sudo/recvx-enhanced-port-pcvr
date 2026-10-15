@@ -62,6 +62,54 @@ static void quat_to_rows(float m[9], const VrPose* p)
     m[6] = 2 * (x * z - y * w);     m[7] = 2 * (y * z + x * w);     m[8] = 1 - 2 * (x * x + y * y);
 }
 
+/* Where the play space sits under the player this frame (the eyes are g_vr_eye_height above
+   it). Normally the player's position. On stairs the game moves the model by its animation and
+   the position only jumps forward at the end of each step (player.c bhCPM2_act_kdu), so there
+   the base follows the model's root node (node 0; the game itself takes its x/z as the position
+   when the stairs end) and, vertically, the root less its usual height above the feet, lightly
+   smoothed. Changes between the two are eased out over a few frames. Computed once per game
+   frame (the first of vr_hand / vr_camera to ask). */
+static unsigned base_gen, cam_gen = 1;
+static float base[3], base_res[3], root_ref = -1.0f, sm_y;
+static int on_stairs = -1;
+
+static void play_base(float out[3])
+{
+    if (base_gen != cam_gen) {
+        float t[3];
+        int st = 0;
+        base_gen = cam_gen;
+        if (plp && plp->mlwP && plp->mlwP->obj_num > 0) {
+            const float* r = plp->mlwP->owP[0].mtx;
+            st = (plp->stflg & 0x80000000u) && (plp->flg & 0x400);
+            if (!st) {   /* the root's usual height above the feet, averaged */
+                float h = r[13] - plp->py;
+                root_ref = root_ref < 0 ? h : root_ref + (h - root_ref) * 0.05f;
+            }
+            if (st && root_ref >= 0) {
+                float y = r[13] - root_ref;
+                if (on_stairs != 1) sm_y = y;
+                sm_y += (y - sm_y) * 0.25f;
+                t[0] = r[12]; t[1] = sm_y; t[2] = r[14];
+            } else { t[0] = plp->px; t[1] = plp->py; t[2] = plp->pz; st = 0; }
+        } else if (plp) { t[0] = plp->px; t[1] = plp->py; t[2] = plp->pz; }
+        else { t[0] = t[1] = t[2] = 0; }
+        if (on_stairs >= 0 && st != on_stairs)   /* switching: keep the old base, ease into the new */
+            for (int k = 0; k < 3; k++) base_res[k] = base[k] - t[k];
+        if (st != on_stairs && on_stairs >= 0) {
+            extern void host_log(const char* fmt, ...);
+            host_log("vr: stairs %s\n", st ? "start (camera follows the body)" : "end");
+        }
+        on_stairs = st;
+        for (int k = 0; k < 3; k++) {
+            base_res[k] *= 0.75f;
+            if (fabsf(base_res[k]) > 30.0f) base_res[k] = 0;   /* a teleport (door, cut): no easing */
+            base[k] = t[k] + base_res[k];
+        }
+    }
+    out[0] = base[0]; out[1] = base[1]; out[2] = base[2];
+}
+
 /* end of tps_camera(), the third-person camera already in `cam`: replace it with the head's */
 void vr_camera(void)
 {
@@ -102,7 +150,11 @@ void vr_camera(void)
     Wg[0] = cb * s;  Wg[8] = sb * s;
     Wg[5] = s;
     Wg[2] = -sb * s; Wg[10] = cb * s;
-    Wg[12] = plp->px; Wg[13] = plp->py + g_vr_eye_height / 10.0f; Wg[14] = plp->pz;
+    {
+        float b[3];
+        play_base(b);
+        Wg[12] = b[0]; Wg[13] = b[1] + g_vr_eye_height / 10.0f; Wg[14] = b[2];
+    }
     xr_recenter_matrix(rec);
     vr_mat_mul(frame_W, Wg, rec);   /* local -> world */
     memcpy(frame_Wg, Wg, sizeof(Wg));
@@ -129,6 +181,7 @@ void vr_camera(void)
     tps_vr_view(TO_ANGLE(ax[0]), TO_ANGLE(ax[1]));   /* walking and head aim relative to where the head looks */
     vr_frame = 1;
     vr_active = 1;
+    cam_gen++;   /* the next game frame computes its base anew */
 }
 
 int vr_on(void) { return vr_active && xr_stereo_ready(); }
@@ -181,7 +234,11 @@ static void make_Wg(float Wg[16])
     Wg[0] = c * s;  Wg[8] = sn * s;
     Wg[5] = s;
     Wg[2] = -sn * s; Wg[10] = c * s;
-    Wg[12] = plp->px; Wg[13] = plp->py + g_vr_eye_height / 10.0f; Wg[14] = plp->pz;
+    {
+        float b[3];
+        play_base(b);
+        Wg[12] = b[0]; Wg[13] = b[1] + g_vr_eye_height / 10.0f; Wg[14] = b[2];
+    }
 }
 
 static void xform(const float m[16], float x, float y, float z, float o[3])
@@ -195,9 +252,10 @@ static void xform(const float m[16], float x, float y, float z, float o[3])
    muzzle flash and the shot's origin hang on it) the right controller, node 13 (left hand) the
    left one. The hand objects the game links to these nodes (sys->obwp, drawn from owP[lkono])
    follow with them. How a hand holds each weapon relative to the controller is taken from the
-   game's own pose: when it aims, the hand's rotation relative to the aim direction Ry(ay) Rx(wax)
-   (the gun pointing where the controller points); until the weapon was first aimed, relative to
-   the body Ry(ay). The hand is put at the palm (the grip pose, plus vr_hand_offset), never closer than vr_gun_min to the
+   game's own pose, once per weapon: the first time it aims and the pose holds still, the hand's
+   rotation relative to the aim direction Ry(ay) Rx(wax) (the gun pointing where the controller
+   points); until then, relative to the body Ry(ay). After that the weapon stays fixed in the
+   hand (the game's swing / recoil animations no longer move it). The hand is put at the palm (the grip pose, plus vr_hand_offset), never closer than vr_gun_min to the
    eyes. The body is not turned by the hands (its facing is the head's, tps_glue.c).
    tps_calc_model(), after the player's model is computed, before the linked objects. */
 static void vr_log(const char* fmt, ...);
@@ -250,6 +308,8 @@ void vr_hand(BH_PWORK* p)
 {
     static float rrel[2][2][64][9];          /* [hand][0 aim grip, 1 body grip][weapon] */
     static unsigned char rok[2][2][64];
+    static float prev[2][9];
+    static int still[2];
     static int hooked;
     VrInput in;
     VrPose h;
@@ -274,8 +334,22 @@ void vr_hand(BH_PWORK* p)
         const VrPose* hp;
         if (p->mlwP->obj_num <= node) { hand_log(side, 2, wn); continue; }
         H = p->mlwP->owP[node].mtx;
-        if (aiming) { rows_from_angles(A, ya, pa); learn(rrel[side][0][wn], A, H); rok[side][0][wn] = 1; }
-        else if (!rok[side][1][wn]) { rows_from_angles(A, ya, 0); learn(rrel[side][1][wn], A, H); rok[side][1][wn] = 1; }
+        /* the grip is learned once per weapon, when the pose has held still for a few frames
+           (not while raising, firing, recoiling or a knife swing moves the hand) */
+        if (aiming && !rok[side][0][wn]) {
+            float cand[9], dmax = 0;
+            rows_from_angles(A, ya, pa);
+            learn(cand, A, H);
+            for (int k = 0; k < 9; k++) { float dd = fabsf(cand[k] - prev[side][k]); if (dd > dmax) dmax = dd; }
+            memcpy(prev[side], cand, sizeof(cand));
+            still[side] = dmax < 0.02f ? still[side] + 1 : 0;
+            if (still[side] >= 6) {
+                memcpy(rrel[side][0][wn], cand, sizeof(cand));
+                rok[side][0][wn] = 1;
+                vr_log("vr: %s hand grip learned for weapon %d\n", side ? "left" : "right", wn);
+            }
+        } else if (!aiming) still[side] = 0;
+        if (!aiming && !rok[side][1][wn]) { rows_from_angles(A, ya, 0); learn(rrel[side][1][wn], A, H); rok[side][1][wn] = 1; }
         hp = side ? &in.aiml : &in.aim;
         if (!ctl || !(side ? in.aiml_valid : in.aim_valid)) { hand_log(side, 1, wn); continue; }
         R = rok[side][0][wn] ? rrel[side][0][wn] : rrel[side][1][wn];
