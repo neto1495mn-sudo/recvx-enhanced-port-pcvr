@@ -3,7 +3,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
-#include <emmintrin.h>
 
 #define VU_INLINE static inline __attribute__((always_inline))
 
@@ -156,48 +155,27 @@ uint32_t vu_upper_on(VuState* s, const VuVec* vf, const VuVec* acc, float q, int
 /* the strip clip test of njCnkCsUvh/njCnkCsUvn (ps2_NinjaCnk.c, asm2c of the EE asm): per
    vertex, CLIPw of the previous one's transform by the vf24..vf27 matrix, then that
    transform (MULAx/MADDAy/MADDAz/MADDw); the AND of the clip flags. The same macro-mode ops
-   as vu_upper, inlined (it was a call with a register copy per op, ~10 ms a frame in a
-   65k-strip room); leaves g_vu0 exactly as they did. Stops early (0) when the AND is 0. */
+   (vu_upper, inlined) in one loop instead of an asm2c block per strip; leaves g_vu0 exactly
+   as they did. Stops early (0) when the AND is 0. */
 uint32_t vu_strip_clip(const uint16_t* idx, int n, const void* vbuf)
 {
-    VuState* const s = &g_vu0;
     const uint8_t* const vb = (const uint8_t*)vbuf;
-    uint32_t op0 = 63, cb = 0;
-    int wc;
+    uint32_t op0 = 63;
 #define XFORM() do { \
-        s->mac = upper_on(s, s->vf, &s->acc, s->q, U_MULA, VU_XYZW, 0, 24, 4, BC_X, &wc, &cb); vf0_fix(s); \
-        s->mac = upper_on(s, s->vf, &s->acc, s->q, U_MADDA, VU_XYZW, 0, 25, 4, BC_Y, &wc, &cb); vf0_fix(s); \
-        s->mac = upper_on(s, s->vf, &s->acc, s->q, U_MADDA, VU_XYZW, 0, 26, 4, BC_Z, &wc, &cb); vf0_fix(s); \
-        s->mac = upper_on(s, s->vf, &s->acc, s->q, U_MADD, VU_XYZW, 5, 27, 0, BC_W, &wc, &cb); vf0_fix(s); } while (0)
-#define CLIPW() do { \
-        s->mac = upper_on(s, s->vf, &s->acc, s->q, U_CLIP, VU_XYZ, 0, 5, 5, BC_W, &wc, &cb); \
-        s->clip = ((s->clip << 6) | cb) & 0xFFFFFF; vf0_fix(s); } while (0)
-    memcpy(&s->vf[4], vb + ((uint32_t)idx[0] << 6) + 32, 16);
+        vu_upper(U_MULA, VU_XYZW, 0, 24, 4, BC_X); vu_upper(U_MADDA, VU_XYZW, 0, 25, 4, BC_Y); \
+        vu_upper(U_MADDA, VU_XYZW, 0, 26, 4, BC_Z); vu_upper(U_MADD, VU_XYZW, 5, 27, 0, BC_W); } while (0)
+    vu_load_vf(4, vb + ((uint32_t)idx[0] << 6) + 32);
     XFORM();
     for (int k = 1; k < n; k++) {
         if (op0 == 0) return 0;
-        memcpy(&s->vf[4], vb + ((uint32_t)idx[k * 3] << 6) + 32, 16);
-        CLIPW();
+        vu_load_vf(4, vb + ((uint32_t)idx[k * 3] << 6) + 32);
+        vu_clipw(5, 5);
         XFORM();
-        op0 &= s->clip;
+        op0 &= g_vu0.clip;
     }
-    CLIPW();
-    return op0 & s->clip;
+    vu_clipw(5, 5);
+    return op0 & g_vu0.clip;
 #undef XFORM
-#undef CLIPW
-}
-
-void vu_upper(int op, int mask, int fd, int fs, int ft, int bc)
-{
-    VuVec vf_in[32], acc_in = g_vu0.acc;
-    int wrote_clip; uint32_t bits = 0;
-    /* operands are read before any write; copy only what is touched */
-    vf_in[fs] = g_vu0.vf[fs];
-    if (bc != BC_Q && bc != BC_I) vf_in[ft] = g_vu0.vf[ft];
-    vf_in[fd] = g_vu0.vf[fd];
-    g_vu0.mac = vu_upper_on(&g_vu0, vf_in, &acc_in, g_vu0.q, op, mask, fd, fs, ft, bc, &wrote_clip, &bits);
-    if (wrote_clip) g_vu0.clip = ((g_vu0.clip << 6) | bits) & 0xFFFFFF;
-    vf0_fix(&g_vu0);
 }
 
 void vu_move(int mask, int ft, int fs)
@@ -222,11 +200,6 @@ static float vu_divide(float a, float b)
 void vu_div(int fs, int fsf, int ft, int ftf)   { g_vu0.q = vu_divide(g_vu0.vf[fs].f[fsf], g_vu0.vf[ft].f[ftf]); }
 void vu_sqrt(int ft, int ftf)                   { g_vu0.q = vu_clampf(sqrtf(fabsf(g_vu0.vf[ft].f[ftf]))); }
 void vu_rsqrt(int fs, int fsf, int ft, int ftf) { g_vu0.q = vu_divide(g_vu0.vf[fs].f[fsf], sqrtf(fabsf(g_vu0.vf[ft].f[ftf]))); }
-
-void vu_clipw(int fs, int ft)
-{
-    vu_upper(U_CLIP, VU_XYZ, 0, fs, ft, BC_W);
-}
 
 void vu_mtir(int it, int fs, int fsf) { if (it) g_vu0.vi[it] = (uint16_t)g_vu0.vf[fs].u[fsf]; }
 
@@ -567,131 +540,130 @@ static void vu_micro_run(VuState* s, const VuMicroInstr* code, int count, int ad
 #include "vu_static.inc"
 VU_STATIC(vu0_static_run, vu0_micro_code, VU0_CASES, 0)
 
-/* SSE2, lane c = component c: the VU float rules (vu_clampf) on four lanes */
-typedef __m128 V4;
-static inline V4 v4clamp(V4 x)
-{
-    __m128i b = _mm_castps_si128(x);
-    __m128i e = _mm_and_si128(b, _mm_set1_epi32(0x7F800000));
-    __m128i sg = _mm_and_si128(b, _mm_set1_epi32((int)0x80000000u));
-    __m128i inf = _mm_cmpeq_epi32(e, _mm_set1_epi32(0x7F800000));   /* Inf/NaN: +-FLT_MAX */
-    __m128i den = _mm_cmpeq_epi32(e, _mm_setzero_si128());          /* denormal: +-0 */
-    b = _mm_or_si128(_mm_andnot_si128(inf, b), _mm_and_si128(inf, _mm_or_si128(sg, _mm_set1_epi32(0x7F7FFFFF))));
-    b = _mm_or_si128(_mm_andnot_si128(den, b), _mm_and_si128(den, sg));
-    return _mm_castsi128_ps(b);
-}
-static inline V4 v4mask(int m)   /* VU field mask (x = 8) as lanes */
-{
-    return _mm_castsi128_ps(_mm_set_epi32((m & 1) ? -1 : 0, (m & 2) ? -1 : 0, (m & 4) ? -1 : 0, (m & 8) ? -1 : 0));
-}
-static inline V4 v4sel(V4 dst, V4 r, int m) { V4 k = v4mask(m); return _mm_or_ps(_mm_andnot_ps(k, dst), _mm_and_ps(k, r)); }
-static inline V4 v4mul(V4 a, V4 b) { return v4clamp(_mm_mul_ps(a, b)); }
-static inline V4 v4madd(V4 acc, V4 a, V4 b) { return v4clamp(_mm_add_ps(acc, v4mul(a, b))); }
-static inline V4 v4sub(V4 a, V4 b) { return v4clamp(_mm_sub_ps(a, b)); }
-static inline float v4lane(V4 v, int c) { float f[4]; _mm_storeu_ps(f, v); return f[c]; }
-static inline uint32_t v4mac(V4 v, int m)   /* MAC flags of the masked lanes */
-{
-    float f[4];
-    uint32_t r = 0;
-    _mm_storeu_ps(f, v);
-    for (int c = 0; c < 4; c++) if (vu_field_on(m, c)) r |= mac_bits(f[c], c);
-    return r;
-}
-#define BC(v, c) _mm_shuffle_ps((v), (v), _MM_SHUFFLE(c, c, c, c))
-#define LD(r) _mm_loadu_ps(s->vf[r].f)
-#define LM(a) _mm_loadu_ps(s->mem[a].f)
+#define LD(r) v4ld(&s->vf[r])
+#define LM(a) v4ld(&s->mem[a])
+#define ST(r, v) v4st(&s->vf[r], v)
 
-/* VU0_CALCPOINT (vsm/ps2_vu0.vsm) without point lights (directional lights only, or none): one
-   vertex of a chunk model, called once per vertex of every node drawn (~0.8 us through
-   vu_step, 166 ms a frame for the 205k vertices of a whole-village room). The same operations
-   in program order with the interpreter's arithmetic (upper_on: products and sums clamped
-   per component, here four lanes at a time), and its timing resolved for these paths, which
-   have no data-dependent branches: every source is ready when read (the DIV's Q at MULq.xyz
-   vf06, at each FMAND the MAC flags of the FMAC 4 cycles before it, the CLIP flags at FCGET),
-   the light loop's RSQRTs leave the last one in Q, and the MAC flags are the ADDz.x's. Leaves
-   the whole VU state as vu0_static_run does (RECVX_VU_CHECK=1 compares every call against the
-   interpreter; pc/tests/test_vu.c). Other paths: 0, interpreted. */
-static int calcpoint_fast(VuState* s)
+/* VU0_CALCPOINT (vsm/ps2_vu0.vsm): one vertex of a chunk model, called once per vertex of
+   every node drawn (205k a frame in a whole-village room, ~3.7k in a retail room). The same
+   operations in program order with the interpreter's arithmetic (upper_on: products and sums
+   clamped per component, here four lanes at a time), and its timing resolved for every path
+   (the program has no loops; stalls only delay, they never change a value):
+   - Q: MULq.xyz vf06 reads the DIV of vf18z (ready exactly then); in a point light's path
+     (LIGHTk_POINT) the MULq in the branch delay slot reads that light's RSQRT (13 cycles
+     after it, ready) and the MULq after the six NOPs the DIV issued in that slot; Q at the
+     end is the last DIV/RSQRT issued, so the other lights' RSQRTs are not computed.
+   - MAC flags: each FMAND reads those of the FMAC 4 cycles before it; at the end the ADDz.x's.
+   - CLIP flags: FCGET reads the CLIPw's (4 cycles before it).
+   Leaves the whole VU state as the interpreter does (RECVX_VU_CHECK=1 compares every call;
+   pc/tests/test_vu.c). */
+static void calcpoint_fast(VuState* s)
 {
-    const uint16_t vi10 = s->vi[10];
-    const V4 r0 = LD(0), r12 = LD(12), r13 = LD(13), r17 = LD(17), r24 = LD(24), r25 = LD(25), r26 = LD(26), r27 = LD(27);
+    /* registers the program only reads are read where used (x86-32 has 8 vector registers) */
+#define r0 LD(0)
+#define r12 LD(12)
+#define r13 LD(13)
+#define r17 LD(17)
+#define r24 LD(24)
+#define r25 LD(25)
+#define r26 LD(26)
+#define r27 LD(27)
     V4 r4 = LD(4), r5 = LD(5), r6 = LD(6), r7 = LD(7), r8 = LD(8), r9 = LD(9), r10 = LD(10), r11 = LD(11);
-    V4 r18 = LD(18), r19 = LD(19), r28 = LD(28), r29 = LD(29), r30 = LD(30), r31 = LD(31), acc = _mm_loadu_ps(s->acc.f);
-    uint32_t mac5, mac6, mac7, cb = 0;
-    float q, div;
-    for (uint16_t m = vi10, k = 0; k < 4; k++, m = (uint16_t)(m + m))
-        if ((m & s->vi[7]) && (m & s->vi[8])) return 0;   /* a point light */
-    acc = v4mul(r28, BC(r4, 0));                               /* MULAx.xyzw ACC, vf28, vf04x */
+    V4 r18, r19 = LD(19), r28 = LD(28), r29 = LD(29), r30 = LD(30), r31 = LD(31), acc;
+    uint16_t vi1, vi12, vi13, vi14 = s->vi[10], vi15 = s->vi[15];
+    uint32_t cb;
+    float q;
+    int q_rsqrt = 3;   /* the last Q operation: light k's RSQRT, or -1: q (a DIV) */
+    acc = v4mul(r28, V4BC(r4, 0));                             /* MULAx.xyzw ACC, vf28, vf04x */
     r6 = v4sel(r6, LD(1), VU_Z);                               /*  | MOVE.z vf06, vf01 */
-    acc = v4madd(acc, r29, BC(r4, 1));
-    acc = v4madd(acc, r30, BC(r4, 2));
-    r18 = v4madd(acc, r31, BC(r0, 3));                         /* vf18: view position */
-    acc = v4sel(acc, v4mul(r28, BC(r5, 0)), VU_XYZ);
-    acc = v4sel(acc, v4madd(acc, r29, BC(r5, 1)), VU_XYZ);
-    r19 = v4sel(r19, v4madd(acc, r30, BC(r5, 2)), VU_XYZ);     /* vf19: normal */
-    div = vu_divide(v4lane(r0, 3), v4lane(r18, 2));            /*  | DIV Q, vf00w, vf18z */
+    acc = v4madd(acc, r29, V4BC(r4, 1));
+    acc = v4madd(acc, r30, V4BC(r4, 2));
+    r18 = v4madd(acc, r31, V4BC(r0, 3));                       /* vf18: view position */
+    acc = v4sel(acc, v4mul(r28, V4BC(r5, 0)), VU_XYZ);
+    acc = v4sel(acc, v4madd(acc, r29, V4BC(r5, 1)), VU_XYZ);
+    r19 = v4sel(r19, v4madd(acc, r30, V4BC(r5, 2)), VU_XYZ);   /* vf19: normal */
+    q = vu_divide(v4lane(r0, 3), v4lane(r18, 2));             /*  | DIV Q, vf00w, vf18z */
     r6 = v4sel(r6, v4mul(r18, r17), VU_X | VU_Y);
     r8 = v4sub(r8, r8);
-    r9 = v4sub(r24, BC(r18, 0));  r28 = LM(56);
-    r10 = v4sub(r25, BC(r18, 1)); r29 = LM(57);
-    r11 = v4sub(r26, BC(r18, 2)); r30 = LM(58);
+    r9 = v4sub(r24, V4BC(r18, 0));  r28 = LM(56);
+    r10 = v4sub(r25, V4BC(r18, 1)); r29 = LM(57);
+    r11 = v4sub(r26, V4BC(r18, 2)); r30 = LM(58);
     r31 = LM(59);
-    r6 = v4sel(r6, v4mul(r0, BC(r19, 2)), VU_W);
-    r6 = v4sel(r6, v4mul(r6, _mm_set1_ps(div)), VU_XYZ);      /* MULq.xyz: the DIV is done */
+    r6 = v4sel(r6, v4mul(r0, V4BC(r19, 2)), VU_W);
+    r6 = v4sel(r6, v4mul(r6, v4set1(q)), VU_XYZ);              /* MULq.xyz: the DIV is done */
     acc = v4mul(r9, r9);
     acc = v4madd(acc, r10, r10);
-    r5 = v4madd(acc, r11, r11);
-    acc = v4mul(r9, BC(r19, 0));
-    acc = v4madd(acc, r10, BC(r19, 1));
-    r4 = v4madd(acc, r11, BC(r19, 2));  mac5 = v4mac(r4, VU_XYZW);
-    mac6 = v4mac(v4sub(r12, r5), VU_XYZW);                     /* SUB.xyzw vf00, vf12, vf05 */
-    mac7 = v4mac(v4sub(r13, r5), VU_XYZW);
-    s->vi[13] = (uint16_t)((mac5 & s->vi[9]) | (mac7 & s->vi[9]));   /* FMAND x3, IOR */
-    s->vi[12] = (uint16_t)(mac6 & s->vi[9]);
-    s->vi[14] = vi10;
-    q = s->q;
-#define LIGHT(k) do { /* LIGHTk: header, then LIGHTk_PARA when on: vf08[k] = max(L . N, 0) */      \
-        r10 = v4sel(r10, v4mul(r19, BC(r27, k)), VU_XYZ);                                          \
-        q = vu_divide(v4lane(r0, 3), sqrtf(fabsf(v4lane(r5, k))));   /* RSQRT Q, vf00w, vf05[k] */ \
-        s->vi[1] = s->vi[14] & s->vi[7];                                                            \
-        s->vi[15] = s->vi[14] & s->vi[8];                                                           \
-        s->vi[14] = (uint16_t)(s->vi[14] + s->vi[14]);                                              \
-        if (s->vi[1]) {                                                                             \
-            acc = v4sel(acc, v4mul(r24, BC(r10, 0)), VU_X >> k);                                    \
-            acc = v4sel(acc, v4madd(acc, r25, BC(r10, 1)), VU_X >> k);                              \
-            r8 = v4sel(r8, v4madd(acc, r26, BC(r10, 2)), VU_X >> k);                                \
-            r8 = v4sel(r8, v4clamp(_mm_max_ps(r8, BC(r0, 0))), VU_X >> k);   /* MAXx: A > B ? A : B */ \
+    r5 = v4madd(acc, r11, r11);                                /* vf05: squared distances */
+    acc = v4mul(r9, V4BC(r19, 0));
+    acc = v4madd(acc, r10, V4BC(r19, 1));
+    r4 = v4madd(acc, r11, V4BC(r19, 2));                       /* vf04: (light - point) . normal */
+    vi13 = (uint16_t)(v4mac(r4, VU_XYZW) & s->vi[9]);           /* FMAND x3, IOR */
+    vi12 = (uint16_t)(v4mac(v4sub(r12, r5), VU_XYZW) & s->vi[9]);   /* SUB.xyzw vf00, vf12, vf05 */
+    vi1 = (uint16_t)(v4mac(v4sub(r13, r5), VU_XYZW) & s->vi[9]);
+    vi13 |= vi1;
+#define RSQRT(k) vu_divide(v4lane(r0, 3), sqrtf(fabsf(v4lane(r5, k))))   /* RSQRT Q, vf00w, vf05[k] */
+    /* The lights' writes of ACC and vf10.xyz are dead (overwritten at LIGHT4 before any read), so
+       each light is computed on its own values and only its vf08 lane is kept: no dependency
+       from one light to the next. */
+#define LIGHT(k) do { /* LIGHTk: header, then LIGHTk_PARA (directional) or LIGHTk_POINT */          \
+        vi1 = vi14 & s->vi[7];                                                                     \
+        vi15 = vi14 & s->vi[8];                                                                    \
+        vi14 = (uint16_t)(vi14 + vi14);                                                            \
+        q_rsqrt = k;                                                                               \
+        if (vi1 && !vi15) {          /* vf08[k] = max(L . N, 0) */                                \
+            const V4 l = v4mul(r19, V4BC(r27, k));   /* MULk.xyz vf10, vf19, vf27[k] */            \
+            V4 t = v4madd(v4madd(v4mul(r24, V4BC(l, 0)), r25, V4BC(l, 1)), r26, V4BC(l, 2));       \
+            r8 = v4sel(r8, v4max(t, V4BC(r0, 0)), VU_X >> k);                                      \
+        } else if (vi1) {            /* point: facing and in range */                              \
+            vi1 = vi13 & s->vi[7 - k];                                                             \
+            vi15 = vi12 & s->vi[7 - k];                                                            \
+            if (!vi1) {                                                                            \
+                V4 t = v4mul(r4, v4set1(RSQRT(k)));  /* MULq | DIV */                              \
+                q = vu_divide(v4lane(r12, k), v4lane(r5, k));                                     \
+                q_rsqrt = -1;                                                                      \
+                if (vi15) t = v4mul(t, v4set1(q));                                                 \
+                r8 = v4sel(r8, t, VU_X >> k);                                                      \
+            }                                                                                      \
         } } while (0)
     LIGHT(0); LIGHT(1); LIGHT(2); LIGHT(3);
 #undef LIGHT
-    acc = v4mul(r28, BC(r18, 0));             r7 = v4sel(r7, LM(71), VU_XYZ);
-    acc = v4madd(acc, r29, BC(r18, 1));       r9 = v4sel(r9, LM(72), VU_XYZ);
-    acc = v4madd(acc, r30, BC(r18, 2));       r10 = v4sel(r10, LM(73), VU_XYZ);
-    r5 = v4madd(acc, r31, BC(r0, 3));         r11 = v4sel(r11, LM(74), VU_XYZ);   /* clip-space position */
-    acc = v4sel(acc, v4mul(r7, BC(r8, 0)), VU_XYZ);            r28 = LM(60);
-    acc = v4sel(acc, v4madd(acc, r9, BC(r8, 1)), VU_XYZ);      r29 = LM(61);
-    acc = v4sel(acc, v4madd(acc, r10, BC(r8, 2)), VU_XYZ);     r30 = LM(62);
+    if (q_rsqrt == 3) q = RSQRT(3);
+#undef RSQRT
+    acc = v4mul(r28, V4BC(r18, 0));           r7 = v4sel(r7, LM(71), VU_XYZ);
+    acc = v4madd(acc, r29, V4BC(r18, 1));     r9 = v4sel(r9, LM(72), VU_XYZ);
+    acc = v4madd(acc, r30, V4BC(r18, 2));     r10 = v4sel(r10, LM(73), VU_XYZ);
+    r5 = v4madd(acc, r31, V4BC(r0, 3));       r11 = v4sel(r11, LM(74), VU_XYZ);   /* clip-space position */
+    acc = v4sel(acc, v4mul(r7, V4BC(r8, 0)), VU_XYZ);          r28 = LM(60);
+    acc = v4sel(acc, v4madd(acc, r9, V4BC(r8, 1)), VU_XYZ);    r29 = LM(61);
+    acc = v4sel(acc, v4madd(acc, r10, V4BC(r8, 2)), VU_XYZ);   r30 = LM(62);
     {   /* CLIPw.xyz vf05, vf05w */
         float w = fabsf(v4lane(r5, 3)), x = v4lane(r5, 0), y = v4lane(r5, 1), z = v4lane(r5, 2);
-        cb = (x > w) | (x < -w) << 1 | (y > w) << 2 | (y < -w) << 3 | (z > w) << 4 | (z < -w) << 5;
+        cb = (uint32_t)((x > w) | (x < -w) << 1 | (y > w) << 2 | (y < -w) << 3 | (z > w) << 4 | (z < -w) << 5);
     }                                                          r31 = LM(63);
-    r7 = v4sel(r7, v4madd(acc, r11, BC(r8, 3)), VU_XYZ);       /* colour */
-    r11 = v4sel(r11, v4clamp(_mm_add_ps(r0, BC(r6, 2))), VU_X);   /* ADDz.x vf11, vf00, vf06z */
+    r7 = v4sel(r7, v4madd(acc, r11, V4BC(r8, 3)), VU_XYZ);     /* colour */
+    r11 = v4sel(r11, v4add(r0, V4BC(r6, 2)), VU_X);            /* ADDz.x vf11, vf00, vf06z */
     s->mac = v4mac(r11, VU_X);
     s->clip = ((s->clip << 6) | cb) & 0xFFFFFF;
     s->vi[1] = (uint16_t)(s->clip & 0xFFF);                    /* FCGET */
     s->vi[11] &= s->vi[1];
+    s->vi[12] = vi12; s->vi[13] = vi13; s->vi[14] = vi14; s->vi[15] = vi15;
     s->q = q;
-    _mm_storeu_ps(s->vf[4].f, r4);   _mm_storeu_ps(s->vf[5].f, r5);   _mm_storeu_ps(s->vf[6].f, r6);
-    _mm_storeu_ps(s->vf[7].f, r7);   _mm_storeu_ps(s->vf[8].f, r8);   _mm_storeu_ps(s->vf[9].f, r9);
-    _mm_storeu_ps(s->vf[10].f, r10); _mm_storeu_ps(s->vf[11].f, r11); _mm_storeu_ps(s->vf[18].f, r18);
-    _mm_storeu_ps(s->vf[19].f, r19); _mm_storeu_ps(s->vf[28].f, r28); _mm_storeu_ps(s->vf[29].f, r29);
-    _mm_storeu_ps(s->vf[30].f, r30); _mm_storeu_ps(s->vf[31].f, r31); _mm_storeu_ps(s->acc.f, acc);
-    return 1;
+    ST(4, r4);   ST(5, r5);   ST(6, r6);   ST(7, r7);   ST(8, r8);   ST(9, r9);   ST(10, r10); ST(11, r11);
+    ST(18, r18); ST(19, r19); ST(28, r28); ST(29, r29); ST(30, r30); ST(31, r31);
+#undef r0
+#undef r12
+#undef r13
+#undef r17
+#undef r24
+#undef r25
+#undef r26
+#undef r27
+    v4st(&s->acc, acc);
 }
-#undef BC
 #undef LD
 #undef LM
+#undef ST
+#undef V4BC
 VU_STATIC(vu1_static_run, vu1_micro_code, VU1_CASES, 1)
 
 /* RECVX_VU_INTERP=1: run the microcode through the interpreter instead (reference) */
@@ -735,10 +707,17 @@ static void check_against(const VuState* s, int unit, int addr)
 
 static void dump_vf(const char* tag, int r) { fprintf(stderr, "  %s vf%-2d = %12.5f %12.5f %12.5f %12.5f\n", tag, r, g_vu0.vf[r].f[0], g_vu0.vf[r].f[1], g_vu0.vf[r].f[2], g_vu0.vf[r].f[3]); }
 
+static int dump_calcpoint(void)   /* RECVX_DUMP_CALCPOINT=n */
+{
+    static int v = -1;
+    if (v < 0) v = getenv("RECVX_DUMP_CALCPOINT") ? atoi(getenv("RECVX_DUMP_CALCPOINT")) : 0;
+    return v;
+}
+
 void vu0_callms(int addr)
 {
-    static int dbg = -1, ndump;
-    if (dbg < 0) dbg = getenv("RECVX_DUMP_CALCPOINT") ? atoi(getenv("RECVX_DUMP_CALCPOINT")) : 0;
+    static int ndump;
+    const int dbg = dump_calcpoint();
     if (dbg && addr == VU0_ADDR_VU0_CALCPOINT && ++ndump == dbg) {
         static const int regs[] = { 0, 1, 4, 5, 12, 13, 17, 23, 24, 25, 26, 27, 28, 29, 30, 31 };
         fprintf(stderr, "CALCPOINT call %d, inputs:\n", ndump);
@@ -753,15 +732,209 @@ void vu0_callms(int addr)
     g_vu0.cmsar0 = (uint32_t)addr;
     if (!g_vu0.mem_mask) g_vu0.mem_mask = 0xFF;
     /* ~100 ns: not timed (the clock reads cost as much), so it counts as game logic */
-    if (addr == VU0_ADDR_VU0_CALCPOINT && !vu_check() && !use_interp() && calcpoint_fast(&g_vu0)) return;
+    if (addr == VU0_ADDR_VU0_CALCPOINT && !vu_check() && !use_interp()) { calcpoint_fast(&g_vu0); return; }
     prof_push(PROF_VU0);   /* (the time: --profile) */
     if (vu_check()) { vu_ref = g_vu0; vu_micro_run_k(&vu_ref, vu0_micro_code, VU0_MICRO_COUNT, addr, 0, 1); }
     if (use_interp()) vu_micro_run(&g_vu0, vu0_micro_code, VU0_MICRO_COUNT, addr, 0);
-    else if (addr != VU0_ADDR_VU0_CALCPOINT || !calcpoint_fast(&g_vu0)) vu0_static_run(&g_vu0, addr);
+    else if (addr == VU0_ADDR_VU0_CALCPOINT) calcpoint_fast(&g_vu0);
+    else vu0_static_run(&g_vu0, addr);
     if (vu_check()) check_against(&g_vu0, 0, addr);
     prof_pop();
 }
 
+/* CALCPOINT for four vertices side by side, one per lane (vu0_calcpoint_n): per vertex the
+   operations of calcpoint_fast in the same order and operand order, on what the caller
+   reads (vf07.xyz, vf18, vf06, vf11.x, the clip flags); the rest of the VU state (vf04/05,
+   ACC, Q, MAC, vi12-15, ...) is overwritten by the next vertex and is left to the last one,
+   which runs through calcpoint_fast. Every vertex starts with vf08 = 0: the previous one's
+   vf08 is clamped (finite), and x - x = +0. vf28-31 must already be the view matrix that the
+   program restores at its end (mem 60-63). */
+static inline __attribute__((always_inline)) void calcpoint_soa_body(VuState* s, const float* in, uint8_t* out, int n)
+{
+    V4 m1[4][4], m2[4][4], col[4][3], l24[4], l25[4], l26[4], l27[4], l12[4], l13[4];
+    const V4 one = v4set1(s->vf[0].f[3]), zero = v4set1(s->vf[0].f[0]), v17x = v4set1(s->vf[17].f[0]), v17y = v4set1(s->vf[17].f[1]);
+    const V4 v01z = v4set1(s->vf[1].f[2]), w7 = v4set1(s->vf[7].f[3]);
+    int on = 0, point = 0;
+    uint32_t clip = s->clip;
+    uint16_t vi11 = s->vi[11];
+    for (int r = 0; r < 4; r++)
+        for (int c = 0; c < 4; c++) { m1[r][c] = v4set1(s->vf[28 + r].f[c]); m2[r][c] = v4set1(s->mem[56 + r].f[c]); }
+    for (int r = 0; r < 4; r++) for (int c = 0; c < 3; c++) col[r][c] = v4set1(s->mem[71 + r].f[c]);
+    for (int k = 0; k < 4; k++) {
+        const uint16_t vi14 = (uint16_t)(s->vi[10] << k);   /* the light loop's vi14 */
+        l24[k] = v4set1(s->vf[24].f[k]); l25[k] = v4set1(s->vf[25].f[k]); l26[k] = v4set1(s->vf[26].f[k]);
+        l27[k] = v4set1(s->vf[27].f[k]); l12[k] = v4set1(s->vf[12].f[k]); l13[k] = v4set1(s->vf[13].f[k]);
+        if (vi14 & s->vi[7]) { on |= 1 << k; if (vi14 & s->vi[8]) point |= 1 << k; }
+    }
+    for (; n > 0; n -= 4, in += 32, out += 256) {
+        const int valid = n < 4 ? n : 4;   /* a last, partial group: the missing lanes repeat its last vertex */
+        float pad[32];
+        uint8_t tmp[256];
+        const float* src = in;
+        uint8_t* dst = out;
+        if (valid < 4) {
+            for (int v = 0; v < 4; v++) memcpy(pad + 8 * v, in + 8 * (v < valid ? v : valid - 1), 32);
+            src = pad; dst = tmp;
+        }
+        V4 px = v4ld((const VuVec*)src), py = v4ld((const VuVec*)(src + 8)), pz = v4ld((const VuVec*)(src + 16)), pw = v4ld((const VuVec*)(src + 24));
+        V4 nx = v4ld((const VuVec*)(src + 4)), ny = v4ld((const VuVec*)(src + 12)), nz = v4ld((const VuVec*)(src + 20)), nw = v4ld((const VuVec*)(src + 28));
+        V4 v18[4], v19[3], v5[4], v7[4], v6x, v6y, v6z, v6w, q, r8[4];
+        v4transpose(&px, &py, &pz, &pw);
+        v4transpose(&nx, &ny, &nz, &nw);
+        for (int c = 0; c < 4; c++)   /* MULAx/MADDAy/MADDAz/MADDw vf18, vf28-31 */
+            v18[c] = v4madd(v4madd(v4madd(v4mul(m1[0][c], px), m1[1][c], py), m1[2][c], pz), m1[3][c], one);
+        for (int c = 0; c < 3; c++)
+            v19[c] = v4madd(v4madd(v4mul(m1[0][c], nx), m1[1][c], ny), m1[2][c], nz);
+        q = v4div(one, v18[2]);                                    /* DIV Q, vf00w, vf18z */
+        v6x = v4mul(v4mul(v18[0], v17x), q);                       /* MUL.xy vf06, then MULq.xyz */
+        v6y = v4mul(v4mul(v18[1], v17y), q);
+        v6z = v4mul(v01z, q);                                      /* (MOVE.z vf06, vf01) */
+        v6w = v4mul(one, v19[2]);                                  /* MULz.w vf06, vf00, vf19z */
+        r8[0] = r8[1] = r8[2] = r8[3] = v4zero();
+        if (point) {   /* the whole lead-in of the light loop: vf09-11, vf05, vf04 and the FMANDs */
+            V4 d2[4], dot[4];
+            int m4z = 0, m4n = 0, m6z = 0, m6n = 0, m7z = 0, m7n = 0;
+            for (int k = 0; k < 4; k++) {
+                const V4 d9 = v4sub(l24[k], v18[0]), d10 = v4sub(l25[k], v18[1]), d11 = v4sub(l26[k], v18[2]);
+                d2[k] = v4madd(v4madd(v4mul(d9, d9), d10, d10), d11, d11);
+                dot[k] = v4madd(v4madd(v4mul(d9, v19[0]), d10, v19[1]), d11, v19[2]);
+                const V4 s6 = v4sub(l12[k], d2[k]), s7 = v4sub(l13[k], d2[k]);
+                /* MAC bit (3 - k) zero, (7 - k) sign of light k; lane v of each mask: vertex v */
+                m4z |= v4zero_bits(dot[k]) << 4 * k; m4n |= v4neg_bits(dot[k]) << 4 * k;
+                m6z |= v4zero_bits(s6) << 4 * k;     m6n |= v4neg_bits(s6) << 4 * k;
+                m7z |= v4zero_bits(s7) << 4 * k;     m7n |= v4neg_bits(s7) << 4 * k;
+            }
+            uint16_t vi13[4], vi12[4];
+            for (int v = 0; v < 4; v++) {
+                uint32_t a = 0, b = 0, c = 0;
+                for (int k = 0; k < 4; k++) {
+                    a |= (m4z >> (4 * k + v) & 1u) << (3 - k) | (m4n >> (4 * k + v) & 1u) << (7 - k);
+                    b |= (m6z >> (4 * k + v) & 1u) << (3 - k) | (m6n >> (4 * k + v) & 1u) << (7 - k);
+                    c |= (m7z >> (4 * k + v) & 1u) << (3 - k) | (m7n >> (4 * k + v) & 1u) << (7 - k);
+                }
+                vi13[v] = (uint16_t)((a & s->vi[9]) | (c & s->vi[9]));
+                vi12[v] = (uint16_t)(b & s->vi[9]);
+            }
+            for (int k = 0; k < 4; k++) {
+                if (!(point >> k & 1) || !(on >> k & 1)) continue;
+                int facing = 0, atten = 0;   /* lanes: vi01 = 0 (lit), vi15 != 0 (second MULq) */
+                for (int v = 0; v < 4; v++) {
+                    facing |= !(vi13[v] & s->vi[7 - k]) << v;
+                    atten |= ((vi12[v] & s->vi[7 - k]) != 0) << v;
+                }
+                if (!facing) continue;
+                const V4 t = v4mul(dot[k], v4div(one, v4sqrt(v4fabs(d2[k]))));   /* MULq: the RSQRT */
+                r8[k] = v4blend(r8[k], v4blend(t, v4mul(t, v4div(l12[k], d2[k])), atten), facing);
+            }
+        }
+        for (int k = 0; k < 4; k++) {   /* LIGHTk_PARA */
+            if (!(on >> k & 1) || (point >> k & 1)) continue;
+            const V4 lx = v4mul(v19[0], l27[k]), ly = v4mul(v19[1], l27[k]), lz = v4mul(v19[2], l27[k]);
+            r8[k] = v4max(v4madd(v4madd(v4mul(l24[k], lx), l25[k], ly), l26[k], lz), zero);
+        }
+        for (int c = 0; c < 4; c++)   /* LIGHT4: vf05 = vf18 by vf28-31 (mem 56-59) */
+            v5[c] = v4madd(v4madd(v4madd(v4mul(m2[0][c], v18[0]), m2[1][c], v18[1]), m2[2][c], v18[2]), m2[3][c], one);
+        for (int c = 0; c < 3; c++)   /* colour: vf07/09/10/11 (mem 71-74) by vf08 */
+            v7[c] = v4madd(v4madd(v4madd(v4mul(col[0][c], r8[0]), col[1][c], r8[1]), col[2][c], r8[2]), col[3][c], r8[3]);
+        v7[3] = w7;
+        {   /* CLIPw.xyz vf05, vf05w; FCGET; IAND vi11 */
+            const V4 w = v4fabs(v5[3]), nw4 = v4fneg(w);
+            const int gx = v4gt_bits(v5[0], w), lx = v4lt_bits(v5[0], nw4), gy = v4gt_bits(v5[1], w), ly = v4lt_bits(v5[1], nw4);
+            const int gz = v4gt_bits(v5[2], w), lz = v4lt_bits(v5[2], nw4);
+            for (int v = 0; v < valid; v++) {
+                const uint32_t cb = (gx >> v & 1) | (lx >> v & 1) << 1 | (gy >> v & 1) << 2 | (ly >> v & 1) << 3 | (gz >> v & 1) << 4 | (lz >> v & 1) << 5;
+                clip = ((clip << 6) | cb) & 0xFFFFFF;
+                vi11 &= (uint16_t)(clip & 0xFFF);
+            }
+        }
+        v18[3] = v4add(zero, v6z);   /* the fog slot: ADDz.x vf11, vf00, vf06z */
+        v4transpose(&v7[0], &v7[1], &v7[2], &v7[3]);
+        v4transpose(&v18[0], &v18[1], &v18[2], &v18[3]);
+        v4transpose(&v6x, &v6y, &v6z, &v6w);
+        for (int v = 0; v < 4; v++) {
+            v4st((VuVec*)(dst + 64 * v + 16), v7[v]);
+            v4st((VuVec*)(dst + 64 * v + 32), v18[v]);
+        }
+        v4st((VuVec*)(dst + 48), v6x); v4st((VuVec*)(dst + 112), v6y); v4st((VuVec*)(dst + 176), v6z); v4st((VuVec*)(dst + 240), v6w);
+        if (valid < 4) for (int v = 0; v < valid; v++) memcpy(out + 64 * v + 16, tmp + 64 * v + 16, 48);
+    }
+    s->clip = clip;
+    s->vi[11] = vi11;
+    memset(&s->vf[8], 0, sizeof(s->vf[8]));   /* any finite vf08: the next vertex starts at 0 */
+}
+
+static void calcpoint_soa_sse2(VuState* s, const float* in, uint8_t* out, int n) { calcpoint_soa_body(s, in, out, n); }
+/* x86: also compiled for AVX (Sandy Bridge on) and chosen at run time: the same operations in
+   VEX encoding, without SSE's register copies (an ALU slot each before Ivy Bridge); ~25%
+   faster in a micro benchmark, ~5% in game on a Zen 5. vu_avx: -1 detect, 0 SSE2
+   (RECVX_VU_AVX=0), 1 AVX */
+#if defined(__SSE2__) && !defined(RECVX_VU_PORTABLE) && (defined(__i386__) || defined(__x86_64__))
+__attribute__((target("avx"))) static void calcpoint_soa_avx(VuState* s, const float* in, uint8_t* out, int n) { calcpoint_soa_body(s, in, out, n); }
+int vu_avx = -1;
+static void calcpoint_soa(VuState* s, const float* in, uint8_t* out, int n)
+{
+    if (vu_avx < 0) {
+        __builtin_cpu_init();
+        vu_avx = __builtin_cpu_supports("avx") && !(getenv("RECVX_VU_AVX") && !atoi(getenv("RECVX_VU_AVX")));
+    }
+    if (vu_avx) calcpoint_soa_avx(s, in, out, n);
+    else calcpoint_soa_sse2(s, in, out, n);
+}
+#else
+int vu_avx;
+#define calcpoint_soa calcpoint_soa_sse2
+#endif
+
+/* the decomp's per-vertex sequence: load vf04/vf05, CALCPOINT, store vf07, vf18 (w: vf11.x), vf06 */
+static void calcpoint_one(const float* in, uint8_t* out)
+{
+    vu_load_vf(4, in); vu_load_vf(5, in + 4);
+    vu0_callms(VU0_ADDR_VU0_CALCPOINT);
+    memcpy(out + 16, &g_vu0.vf[7], 16);
+    memcpy(out + 32, &g_vu0.vf[18], 12);
+    memcpy(out + 44, &g_vu0.vf[11], 4);
+    memcpy(out + 48, &g_vu0.vf[6], 16);
+}
+
+static void calcpoint_n_native(const float* in, uint8_t* out, int n)
+{
+    VuState* const s = &g_vu0;
+    s->cmsar0 = VU0_ADDR_VU0_CALCPOINT;
+    if (n > 4) {
+        int m;
+        if (memcmp(&s->vf[28], &s->mem[60], 64)) { calcpoint_one(in, out); in += 8; out += 64; n--; }   /* vf28-31 not yet the restored matrix */
+        m = n - 1;   /* the last vertex through calcpoint_fast */
+        calcpoint_soa(s, in, out, m);
+        in += 8 * m; out += 64 * m; n -= m;
+    }
+    for (; n > 0; n--, in += 8, out += 64) calcpoint_one(in, out);
+}
+
+/* VU0_CALCPOINT for n vertices: the vertex loop of njCnkCvVnPs2 after its first vertex
+   (ps2_NinjaCnk.c). in: 8 floats per vertex (position, normal); out: 64 bytes per vertex
+   (VU1_STRIP_BUF), +16 vf07, +32 vf18 with vf11.x (the fog input) in its w slot, +48 vf06.
+   The VU state afterwards is that of n calls. RECVX_VU_INTERP and RECVX_DUMP_CALCPOINT go
+   through vu0_callms per vertex; RECVX_VU_CHECK compares this with the per-vertex calls
+   (each of them checked against the interpreter). */
+void vu0_calcpoint_n(const float* in, void* out, int n)
+{
+    static uint8_t* ref;
+    static int ref_n;
+    if (!use_interp() && !vu_check() && !dump_calcpoint()) { calcpoint_n_native(in, (uint8_t*)out, n); return; }
+    if (vu_check() && !use_interp() && n > 0) {
+        VuState before = g_vu0, after;
+        if (ref_n < n) { free(ref); ref_n = n; ref = (uint8_t*)malloc((size_t)n * 64); }
+        memcpy(ref, out, (size_t)n * 64);
+        calcpoint_n_native(in, ref, n);
+        after = g_vu0; g_vu0 = before;
+        for (int i = 0; i < n; i++) calcpoint_one(in + 8 * i, (uint8_t*)out + 64 * i);
+        check_calls++;
+        if ((memcmp(ref, out, (size_t)n * 64) || memcmp(&after, &g_vu0, sizeof(after))) && check_bad++ < 20)
+            fprintf(stderr, "vu0 CALCPOINT run of %d vertices: native/per-vertex mismatch (%s)\n", n, memcmp(ref, out, (size_t)n * 64) ? "outputs" : "state");
+        return;
+    }
+    for (int i = 0; i < n; i++) calcpoint_one(in + 8 * i, (uint8_t*)out + 64 * i);
+}
 
 void vu1_callms(int addr)
 {

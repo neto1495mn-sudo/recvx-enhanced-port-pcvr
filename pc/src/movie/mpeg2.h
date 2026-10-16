@@ -17,5 +17,7 @@ void     mpeg2_destroy(Mpeg2* d);
 /* Decode all complete start-code units in data; returns the bytes consumed (keep the rest
    and pass it again with more data). eof = no more data follows. */
 size_t   mpeg2_decode(Mpeg2* d, const uint8_t* data, size_t len, int eof);
+/* the same, but returns once a frame has been delivered */
+size_t   mpeg2_decode_frame(Mpeg2* d, const uint8_t* data, size_t len, int eof);
 unsigned mpeg2_slice_errors(const Mpeg2* d);
 unsigned mpeg2_pictures(const Mpeg2* d);

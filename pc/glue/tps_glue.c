@@ -21,6 +21,8 @@ int tps_cam_active;    /* our camera is the view of the current frame */
 extern float fNaViwClipNear, fNaViwClipFar;
 void bhCalcModel(BH_PWORK* ewP);   /* MdlPut.h */
 void actor_aim_offset(const BH_PWORK* p, float* out);   /* actor_glue.c */
+int actor_aim_hand(const BH_PWORK* p, float* hand);
+float actor_cam_scale(void);
 uint64_t gs_frame_count(void); /* the presented frame (RECVX_INPUT, frame dumps) */
 
 static float yaw, pitch;          /* camera, game angle units (65536 = 360 deg); pitch > 0 looks up */
@@ -31,6 +33,7 @@ static int trace;                 /* RECVX_TPS_TRACE=1: log the free aim */
 static NJS_POINT3 aim_t;          /* free aim: the crosshair target (tps_calc_model) */
 static int aim_h;                 /* free aim: the aim height bit given to the game (at_flg 4 up, 8 down), 0: none */
 static float bend_a;   /* the last free-aim bend (radians per node), 0: none */
+static float aim_corr;            /* free aim with a model: the drawn weapon's pitch minus the hand's (radians), eased */
 static int no_cam_walls;          /* test aid (RECVX_TPS_ORBIT): the eye goes through walls */
 static unsigned move_keys;        /* camera A (g_tps.free_cam): the WASD keys held, walked relative to the camera */
 static int pad_steer;             /* the game rows (arrows, gamepad) press a direction: tank controls, the camera follows */
@@ -117,12 +120,13 @@ static void clear_of_walls(const NJS_POINT3* a, NJS_POINT3* b)
 static void view(NJS_POINT3* eye, NJS_POINT3* dir, NJS_POINT3* sh)
 {
     float s = sinf(RAD(yaw)), c = cosf(RAD(yaw)), sp = sinf(RAD(pitch)), cp = cosf(RAD(pitch));
-    float side = (g_tps.left ? -g_tps.shoulder : g_tps.shoulder) / 10.0f;
+    float k = actor_cam_scale();   /* "You appear as" a taller or shorter model: its height (1: the character's) */
+    float side = (g_tps.left ? -g_tps.shoulder : g_tps.shoulder) / 10.0f * k;
     NJS_POINT3 at, csh;
 
     /* forward (-sin, 0, -cos), right (cos, 0, -sin) */
     dir->x = -s * cp; dir->y = sp; dir->z = -c * cp;
-    at.x = plp->px; at.y = plp->py + g_tps.height / 10.0f; at.z = plp->pz;
+    at.x = plp->px; at.y = plp->py + g_tps.height / 10.0f * k; at.z = plp->pz;
     sh->x = at.x + c * side; sh->y = at.y; sh->z = at.z - s * side;
     csh = *sh;
     clear_of_walls(&at, &csh);
@@ -157,7 +161,7 @@ void tps_camera(void)
         if (pad_steer) yaw = wrap(yaw + wrap(plp->ay - yaw) * 0.4f);
     } else if (!aim) yaw = wrap(yaw + wrap(plp->ay - yaw) * 0.4f);   /* free aim: the mouse steers the camera */
     look(1.0f);
-    cur_dist += ((aiming() ? g_tps.aim_dist : g_tps.dist) / 10.0f - cur_dist) * 0.35f;
+    cur_dist += ((aiming() ? g_tps.aim_dist : g_tps.dist) / 10.0f * actor_cam_scale() - cur_dist) * 0.35f;
     cur_fov += ((float)(aiming() ? g_tps.aim_fov : g_tps.fov) - cur_fov) * 0.35f;
 
     {   /* test aid RECVX_TPS_ORBIT=degrees: the view only turned about the player (side views for
@@ -544,6 +548,9 @@ static void aim_at_crosshair(void)
     h = sqrtf((t.x - o.x) * (t.x - o.x) + (t.z - o.z) * (t.z - o.z));
     plp->ay += (short)(ay - plp->ay);
     plp->wax = plp->waxp = (short)(int)(atan2f(t.y - o.y, h) * (32768.0f / 3.14159265f));
+    /* the knife slashes level at anything not below it: an enemy right in front puts the crosshair
+       on its body, well above the hand at that range, which raised the slash */
+    if ((WpnTab[plp->wpnr_no].flg & 0x40000000) && plp->wax > 0) plp->wax = plp->waxp = 0;
     aim_t = t;
     /* the game's aim height for what the shot goes at, read by the enemies until the next mode
        handler (tps_player_mode): zombies and the anatomist on the ground, a knocked-down Hunter,
@@ -751,7 +758,7 @@ void tps_calc_model(void)
     bhCalcModel(plp);
     bend_a = 0;
     w += (on - w) * 0.35f;
-    if (w < 0.01f || plp->mlwP->obj_num <= 9) { vr_hand(plp); return; }
+    if (w < 0.01f || plp->mlwP->obj_num <= 9) { aim_corr = 0; vr_hand(plp); return; }
     /* pitch from the weapon hand of the straight pose to the target (not wax: the shot starts
        lower, at 11 units, and needs a steeper angle for close targets); with "You appear as" the
        hand where the model holds the weapon (a Tyrant's is higher: its weapon pointed over the
@@ -759,8 +766,45 @@ void tps_calc_model(void)
     actor_aim_offset(plp, ofs);
     dx = aim_t.x - ow[9].mtx[12] - ofs[0]; dz = aim_t.z - ow[9].mtx[14] - ofs[2];
     a = atan2f(aim_t.y - ow[9].mtx[13] - ofs[1], sqrtf(dx * dx + dz * dz));
+    if ((WpnTab[plp->wpnr_no].flg & 0x40000000) && a > 0) a = 0;   /* knife: level at targets above (an enemy
+                                                                       right in front raised the slash to its head), still bends down */
     bend_a = a = w * (a > 1.047f ? 1.047f : a < -1.047f ? -1.047f : a) / 2;   /* at most 60 degrees */
     bend(plp, a);
+    {   /* "You appear as" another model (the retargeting): the weapon is drawn in the model's hand, which
+           the bend swings about the chest as well, farther the taller the model, and in a gender-matched
+           pose the hand turns the weapon as that motion does. The pitch is solved on the weapon as it will
+           be drawn: its barrel (the hand's x axis from the muzzle) through the crosshair target.
+           actor_aim_hand is the hand as drawn last tick, in the frame of the chest now, so it is solved
+           only while the aim pose stands still (weapon raised, mode2 65, no motion blend) and not for the
+           knife (no barrel). Raising, shots, recoil and slashes keep the last correction, which is eased:
+           solved on a moving hand the upper body jumped back and forth. */
+        static int still;   /* ticks the aim pose has stood still (the hand read is last tick's) */
+        float h[16], t0 = a * 2 / w, t = t0, goal = aim_corr;
+        int it, steady;
+        still = plp->mode2 == 65 && !plp->hokan_count && !(WpnTab[plp->wpnr_no].flg & 0x40000000) ? still + 1 : 0;
+        steady = still >= 2;
+        if (!actor_aim_hand(plp, h)) { aim_corr = 0; vr_hand(plp); return; }   /* no model: the hand's pitch */
+        for (it = 0; steady && it < 4 && (it == 0 || actor_aim_hand(plp, h)); it++) {
+            const NJS_POINT3* f = &WpnTab[plp->wpnr_no].wp_fps1;
+            float m[3], e, sg;
+            for (int j = 0; j < 3; j++) m[j] = f->x * h[j] + f->y * h[4 + j] + f->z * h[8 + j] + h[12 + j];
+            dx = aim_t.x - m[0]; dz = aim_t.z - m[2];
+            sg = dx * h[0] + (aim_t.y - m[1]) * h[1] + dz * h[2] < 0 ? -1.0f : 1.0f;   /* (the barrel's way along the axis) */
+            e = atan2f(aim_t.y - m[1], sqrtf(dx * dx + dz * dz)) - atan2f(sg * h[1], sqrtf(h[0] * h[0] + h[2] * h[2]));
+            if (fabsf(e) < 0.002f) break;
+            t += e;
+            t = t > 1.047f ? 1.047f : t < -1.047f ? -1.047f : t;
+            bhCalcModel(plp);   /* (unbent) */
+            bend(plp, w * t / 2);
+        }
+        if (steady) goal = t - t0;
+        aim_corr += (goal - aim_corr) * 0.35f;
+        t = t0 + aim_corr;
+        t = t > 1.047f ? 1.047f : t < -1.047f ? -1.047f : t;
+        bhCalcModel(plp);   /* (unbent) */
+        bend_a = w * t / 2;
+        bend(plp, bend_a);
+    }
     vr_hand(plp);   /* VR: the weapon hand to the right controller */
 }
 

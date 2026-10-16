@@ -2,11 +2,14 @@
  * Replacement for ps2_MovieFunc.c (libmpeg + IPU + IOP audio streaming). Compiled with the
  * decomp's types.
  *
- * The PSS is decoded in software (pc/src/movie) into the IPU's output layout; the frame is
- * then uploaded and drawn by the game's own setImageTag()/vbrank_draw() (copied verbatim
- * from ps2_MovieFunc.c), so size and position follow mwPlySetDispSize/Pos as on the PS2.
- * Sofdec status goes PREP -> PLAYING -> PLAYEND; frames are chosen from the elapsed
- * vblanks (29.97 Hz = every second NTSC field) so video keeps pace with the audio.
+ * The PSS is played by pc/src/movie (a thread of its own reads, demultiplexes and decodes it
+ * and queues the sound). Each game frame picks the frame to show and draws it with the game's
+ * own vbrank_draw() sprite (copied from ps2_MovieFunc.c), so size, position and the screen
+ * fades drawn over it are as on the PS2; the sprite's texture is the decoded frame, which the
+ * render thread uploads and converts to RGB on the GPU (stream_movie, gs_gl.c).
+ * Sofdec status goes PREP -> PLAYING -> PLAYEND. Frames advance one per two vblanks (29.97 Hz,
+ * every second NTSC field) for an even cadence, and are pulled back to the sound's clock when
+ * the two differ by a frame or more.
  */
 #include "../../decomp/include/ps2/veronica/prog/types.h"
 #include "../../decomp/include/ps2/veronica/prog/ps2_MovieFunc.h"
@@ -14,12 +17,17 @@
 #include "../../decomp/include/ps2/veronica/prog/ps2_dummy.h"
 #include "../../decomp/include/ps2/veronica/prog/ps2_loadtim2.h"
 
-int  movie_open(uint32_t lsn, uint32_t size);
-void movie_close(void);
-void movie_pause(int paused);
-const uint8_t* movie_frame(int index, int* width, int* height);
-void audio_movie_volume(float gain);
+int    movie_open(uint32_t lsn, uint32_t size);
+void   movie_close(void);
+void   movie_pause(int paused);
+int    movie_frames_total(void);
+double movie_clock(double* queued);
+void   movie_size(int* w, int* h);
+void   movie_stats(int* frames, double* dec_avg_ms, double* dec_max_ms, int* late);
+void   stream_movie(uint32_t tbp, int index);
+void   audio_movie_volume(float gain);
 uint64_t ps2_vblank_count(void);
+uint64_t SDL_GetTicksNS(void);
 
 #define MOVIE_STAT_PREP    1
 #define MOVIE_STAT_PLAYING 2
@@ -36,7 +44,8 @@ static int __image_w__;
 static int __image_h__;
 
 static uint64_t start_vblank, paused_at, paused_total;
-static int skip_movies, skip_frames, frame_shown = -1;
+static int skip_movies, skip_frames, frame_shown = -1, clock_ofs;
+static FILE* trace;   /* RECVX_MOVIE_TRACE (test aid): one line per game frame of a movie */
 
 void initAll(void)
 {
@@ -45,15 +54,23 @@ void initAll(void)
     rmi.iMovieState = MOVIE_STAT_PREP;
     skip_movies = getenv("RECVX_SKIP_MOVIES") != NULL;   /* testing aid: one second per movie */
     frame_shown = -1;
+    clock_ofs = 0;
     paused_total = 0; paused_at = 0;
+    if (getenv("RECVX_MOVIE")) {   /* test aid: play MV_n instead */
+        char name[32];
+        sprintf(name, "\\MOVIE\\MV_%03d.PSS;1", atoi(getenv("RECVX_MOVIE")));
+        sceCdSearchFile(&infile.fp, name);
+    }
+    if (getenv("RECVX_MOVIE_TRACE") && !trace) trace = fopen(getenv("RECVX_MOVIE_TRACE"), "w");
     if (!skip_movies && !movie_open(infile.fp.lsn, infile.fp.size)) printf("movie: cannot decode %u\n", infile.fp.lsn);
+    movie_size(&__image_w__, &__image_h__);
 }
 
 void readMpeg(void)
 {
-    uint64_t now = ps2_vblank_count();
-    int index, w, h;
-    const uint8_t* img;
+    uint64_t now = ps2_vblank_count(), t0 = SDL_GetTicksNS();
+    int index, total;
+    double a, queued;
 
     if (rmi.iMovieState == MOVIE_STAT_PREP) {
         rmi.iMovieState = MOVIE_STAT_PLAYING;
@@ -77,16 +94,34 @@ void readMpeg(void)
         return;
     }
     index = (int)((now - start_vblank - paused_total) / 2);
-    img = movie_frame(index, &w, &h);
-    if (!img) { rmi.iMovieState = MOVIE_STAT_PLAYEND; return; }
-    voBuf.data = (VoData*)img;
-    __image_w__ = w;
-    __image_h__ = h;
+    a = movie_clock(&queued);
+    if (a >= 0) {   /* the sound's position in frames: follow it once a whole frame apart */
+        double err = a * 30000.0 / 1001.0 - (index + clock_ofs);
+        if (err >= 1.0 || err <= -1.0) clock_ofs += (int)err;
+    }
+    index += clock_ofs;
+    if (index < frame_shown) index = frame_shown;   /* never backwards */
+    if (index < 0) index = 0;
+    total = movie_frames_total();
+    if (trace) {
+        fprintf(trace, "%.3f vb=%.0f idx=%d dec_us=%.0f a=%.3f aq=%.3f av_ms=%.1f\n", t0 / 1e9, (double)(now - start_vblank), index,
+                (SDL_GetTicksNS() - t0) / 1000.0, a, queued, a >= 0 ? (a - index * 1.001 / 30.0) * 1000 : 0.0);
+        fflush(trace);
+    }
+    if (total >= 0 && index >= total) { rmi.iMovieState = MOVIE_STAT_PLAYEND; return; }
+    voBuf.data = NULL;
     frame_shown = index;
 }
 
 void termAll(void)
 {
+    if (trace && !skip_movies) {
+        int n, late;
+        double avg, mx;
+        movie_stats(&n, &avg, &mx, &late);
+        fprintf(trace, "# %d frames decoded, %.2f ms average, %.2f ms longest; shown before decoded: %d\n", n, avg, mx, late);
+        fflush(trace);
+    }
     movie_close();
     rmi.iMovieState = 0;
 }
@@ -96,61 +131,9 @@ int sendToIOP(int dst, u_char* src, int size) { (void)dst; (void)src; (void)size
 
 /* ---- from ps2_MovieFunc.c ---- */
 
-void setImageTag(u_int *tags, void *image)
-{
-    int mbx = __image_w__ / 16;
-    int mby = __image_h__ / 16;
-    int i;
-    u_long* tag;
-    const u_long giftag[2] = { SCE_GIF_SET_TAG(0, 0, 0, 0, 0, 1), 0x000000000000000EL };
-
-    if (!image || skip_movies) return;
-    for (i = 0; i < mbx; i++)
-    {
-        D2_SyncTag();
-
-        tag = (void*)((u_int)tags | UNCBASE);
-
-        *tag++ = DMAcnt | 0x3;
-        *tag++ = 0;
-
-        *tag++ = giftag[0] | 0x2;
-        *tag++ = giftag[1];
-
-        *tag++ = SCE_GS_SET_BITBLTBUF(0, 0, 0, 909312 / 64, 5, 0);
-        *tag++ = SCE_GS_BITBLTBUF;
-
-        *tag++ = SCE_GS_SET_TRXREG(1 * 16, mby * 16);
-        *tag++ = SCE_GS_TRXREG;
-
-        *tag++ = DMAcnt | 0x4;
-        *tag++ = 0;
-
-        *tag++ = giftag[0] | 0x2;
-        *tag++ = giftag[1];
-
-        *tag++ = SCE_GS_SET_TRXPOS(0, 0, i * 16, 0, 0);
-        *tag++ = SCE_GS_TRXPOS;
-
-        *tag++ = SCE_GS_SET_TRXDIR(0);
-        *tag++ = SCE_GS_TRXDIR;
-
-        *tag++ = SCE_GIF_SET_TAG((mby * 1024) / 16, SCE_GS_TRUE, SCE_GS_FALSE, 0, SCE_GIF_IMAGE, 0);
-        *tag++ = 0;
-
-        /* PC: the image lives above 16 MB of the address window; keep 28 address bits (was 0xFFFFFF) */
-        *tag++ = (unsigned long)((unsigned int)image & 0xFFFFFFF) << 32 | 0x30000000L | ((mby * 1024) / 16);
-        *tag++ = 0;
-
-        image = (unsigned char*)image + (mby * 1024);
-
-        SyncPath();
-
-        loadImage(tags);
-    }
-
-    D2_SyncTag();
-}
+/* the PS2 uploaded the IPU's output to GS memory here (macroblock columns); the render thread
+   now takes the frame from the player itself (stream_movie in vbrank_draw) */
+void setImageTag(u_int *tags, void *image) { (void)tags; (void)image; }
 
 void vbrank_draw(void)
 {
@@ -161,6 +144,7 @@ void vbrank_draw(void)
     int w, h;
 
     if (skip_movies || frame_shown < 0) return;
+    stream_movie(14208, frame_shown);   /* the texture TEX0_2 below samples: this frame */
     D2_SyncTag();
 
     tag = (void*)((u_int)new_tags | UNCBASE);

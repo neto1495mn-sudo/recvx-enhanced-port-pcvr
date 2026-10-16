@@ -12,6 +12,7 @@ uint8_t iop_ram[IOP_RAM_SIZE];
 static uint32_t iop_heap_top = 0x020000;  /* heap: 0x20000-0xFFFFF; 0x100000+ belongs to the sound driver */
 
 int iop_rpc_dispatch(u_int server, u_int fno, void* send, int ssize, void* receive, int rsize);
+void snd_iop_status(uint32_t iop_addr);
 
 void* iop_ptr(uint32_t iop_addr) { return &iop_ram[iop_addr & (IOP_RAM_SIZE - 1)]; }
 
@@ -64,6 +65,7 @@ int sceSifDmaStat(u_int id) { (void)id; return -1; /* completed */ }
 int sceSifGetOtherData(sceSifReceiveData* rd, void* src, void* dest, int size, u_int mode)
 {
     (void)rd; (void)mode;
+    snd_iop_status((uint32_t)(uintptr_t)src);   /* the sound driver's status block: brought up to date */
     memcpy(dest, iop_ptr((uint32_t)(uintptr_t)src), (size_t)size);
     return 0;
 }

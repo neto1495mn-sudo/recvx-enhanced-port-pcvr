@@ -222,7 +222,20 @@ Room ambient and lights 0..3 (muzzle flash, lighter, ...) do not change per cut.
 * **"You appear as" another model** ([ACTORS.md](ACTORS.md) "You appear as"): the weapon is drawn
   in the model's hand, so the bend's pitch is taken from there (`actor_aim_offset`: drawn minus
   real hand, in the frame of the real chest). The shot stays the real skeleton's
-  (`actor_hands_back`).
+  (`actor_hands_back`). With the retargeting ([ACTORS.md](ACTORS.md) "Retargeting") the pitch is
+  then solved on the weapon as it will be drawn (`actor_aim_hand`: the drawn hand's position and
+  rotation in the frame of the real chest, which the bend turns): up to four steps of bend, measure
+  the barrel's pitch against the line from its muzzle to the crosshair target, correct. The bend
+  swings a hand far from the chest (a tall model's) off the line the unbent pose measured; the drawn
+  barrel now stays within about 0.35 degrees of the target (before: up to 1.5 degrees on a far wall,
+  11 on a near ceiling). The camera's height, shoulder offset and distance scale with the model's
+  head height (`actor_cam_scale`). Nothing changes without a model.
+  `actor_aim_hand` is the hand as drawn in the previous tick, so the solve runs only while the aim
+  pose stands still: the weapon raised (`mode2` 65) for two ticks without a motion blend, never
+  for the knife (it has no barrel). Its correction to the hand's pitch eases in (0.35 per frame)
+  and is kept through raising, shots, recoil and slashes. Solved every tick on a moving hand, it
+  bent the upper body back and forth from one tick to the next (the twitch when raising a weapon,
+  firing or slashing).
 * Sniper rifle and linear launcher switch to the game's scope (first person); no bend.
 
 ### Aim height

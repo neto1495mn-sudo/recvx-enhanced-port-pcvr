@@ -12,11 +12,13 @@ void     stream_image(const uint8_t* data, uint32_t len);
 void     stream_disp(uint32_t fbp, uint32_t fbw, uint32_t psm);
 void     stream_tag(uint32_t mesh);                 /* following GS output belongs to this mesh (0: none) */
 void     stream_strip(uint32_t strip);              /* ... and within it to this strip */
+void     stream_tag_last(uint32_t mesh, uint32_t strip);   /* the primitive group just drawn belongs to this mesh and strip */
 void     stream_tex_def_begin(uint32_t id, uint32_t tbp, uint32_t cbp, uint32_t image_pages);
 void     stream_tex_def_end(void);
 void     stream_tex_bind(uint32_t id, uint32_t tbp, uint32_t cbp);
 void     stream_tex_forget(uint32_t id);
-void     stream_rtex_capture(uint32_t id, uint32_t fbp, uint32_t fbw, uint32_t w, uint32_t h);
+void     stream_rtex_capture(uint32_t id, uint32_t fbp, uint32_t fbw, uint32_t w, uint32_t h, int wide);
+void     stream_movie(uint32_t tbp, int index);    /* movie frame index is the texture at tbp */
 /* a point the overlay draws at (the co-op name tag), kept with the frame being drawn: screen x, y
    (640x480) and view depth w, STREAM_PT_* (only the frame's last call counts; none: 0) */
 enum { STREAM_PT_FRONT = 1, STREAM_PT_BEHIND = 2 };

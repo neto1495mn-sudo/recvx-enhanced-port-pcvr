@@ -8,6 +8,8 @@
  * Sound data arrives through SIF DMA into a staging buffer: HD (bank headers),
  * BD (ADPCM bodies, 48 KB double-buffered packets) and SQ (MIDI sequences).
  * The driver acknowledges header uploads with a byte checksum in SND_STATUS.
+ * Data commands run here at once; the sound commands go in order to the mixer's queue, which
+ * plays each at the time it was sent (snd_synth.c "command queue").
  *
  * Playback (TQ sound effects, SQ MIDI ports, HD/BD synthesis) is in snd_synth.c.
  */
@@ -126,6 +128,9 @@ static void exec_cmd(const uint8_t* c, int len)
     trace_cmd(c, len);
     SndStatus* st = status();
     const uint8_t* staging = iop_ptr(IOP_STAGING);
+    /* bank data is taken from the staging buffer now (the EE reuses it and polls the checksum),
+       after the commands queued before it */
+    if (cd >= 0x28 && cd <= 0x2D) snd_synth_flush();
     switch (cd) {
     case 0x28: { /* HDDataSet: MIDI program bank header */
         int bank = c[1] & 3; uint32_t size = le32(c + 4);
@@ -157,10 +162,20 @@ static void exec_cmd(const uint8_t* c, int len)
         snd_synth_bank_changed(SND_BANK_SQ, port);
         break;
     }
-    default:
-        snd_synth_command(c, len);
+    default:   /* played by the mixer at the time it was sent (snd_synth.c "command queue") */
+        snd_synth_post(c, len);
         break;
     }
+}
+
+/* the EE reads the status block (sceSifGetOtherData): the driver's state as it is now */
+void snd_iop_status(uint32_t iop_addr)
+{
+    if (iop_addr != IOP_STATUS || !initialised) return;
+    snd_synth_lock();
+    for (int port = 0; port < 5; port++) status()->se_info[port] = snd_synth_se_active(port);
+    status()->midi_info = snd_synth_midi_active();
+    snd_synth_unlock();
 }
 
 int iop_rpc_dispatch(u_int server, u_int fno, void* send, int ssize, void* receive, int rsize)
@@ -182,8 +197,6 @@ int iop_rpc_dispatch(u_int server, u_int fno, void* send, int ssize, void* recei
             exec_cmd(p + i, len);
             i += len;
         }
-        for (int port = 0; port < 5; port++) status()->se_info[port] = snd_synth_se_active(port);
-        status()->midi_info = snd_synth_midi_active();
         snd_synth_unlock();
         return 0;
     }

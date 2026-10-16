@@ -1,7 +1,8 @@
 /*
- * Decodes every PSS movie of the game disc and checks that each MPEG-2 slice ends exactly at
- * the next start code (a wrong VLC table entry desynchronises slices). Needs RECVX_ISO;
- * skipped (exit 77) without it. Reads the image in place.
+ * Decodes every PSS movie of the game disc a frame at a time, as the player does, and checks
+ * that each MPEG-2 slice ends exactly at the next start code (a wrong VLC table entry
+ * desynchronises slices) and that every picture comes out. Needs RECVX_ISO; skipped (exit 77)
+ * without it. Reads the image in place.
  */
 #include "../src/movie/mpeg2.h"
 #include "../src/movie/pss.h"
@@ -23,6 +24,14 @@ static void on_video(void* u, const uint8_t* d, size_t n)
     memcpy(es + es_len, d, n); es_len += n;
 }
 static void on_audio(void* u, const int16_t* s, size_t n, int rate) { (void)u; (void)s; (void)rate; audio_frames += n; }
+/* a frame at a time, as the player decodes; returns the bytes consumed */
+static size_t decode(Mpeg2* dec, int eof)
+{
+    size_t total = 0, used;
+    do total += used = mpeg2_decode_frame(dec, es + total, es_len - total, eof);
+    while (used && total < es_len);
+    return total;
+}
 
 int main(void)
 {
@@ -53,13 +62,13 @@ int main(void)
                     uint32_t n = size - off < sizeof(chunk) ? size - off : sizeof(chunk);
                     if (!rd(lsn + off / 2048, (n + 2047) / 2048, chunk)) break;
                     pss_feed(pss, chunk, n);
-                    used = mpeg2_decode(dec, es, es_len, 0);
+                    used = decode(dec, 0);
                     memmove(es, es + used, es_len - used); es_len -= used;
                 }
-                mpeg2_decode(dec, es, es_len, 1);
+                decode(dec, 1);
                 printf("%.*s: %u pictures, %u frames out, %.1f s audio, %u slice errors\n", dir[p + 32] - 2, dir + p + 33,
                        mpeg2_pictures(dec), frames, audio_frames / 48000.0, mpeg2_slice_errors(dec));
-                failed |= mpeg2_slice_errors(dec) != 0 || frames == 0;
+                failed |= mpeg2_slice_errors(dec) != 0 || frames == 0 || frames != mpeg2_pictures(dec);
                 count++;
                 mpeg2_destroy(dec);
                 pss_destroy(pss);

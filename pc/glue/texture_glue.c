@@ -126,6 +126,8 @@ int pc_native_rtex(void)
     return on;
 }
 
+int pc_rtex_wide;
+
 void pc_rtex_capture(void* tim2, void* image, unsigned int w, unsigned int h)
 {
     uintptr_t p = (uintptr_t)tim2;
@@ -146,7 +148,8 @@ void pc_rtex_capture(void* tim2, void* image, unsigned int w, unsigned int h)
     static int trace = -1;
     if (trace < 0) trace = getenv("RECVX_TRACE_NTEX") != NULL;
     if (trace) fprintf(stderr, "rtex: capture %p -> id %u gen %u (game frame %u)\n", tim2, r->id, r->gen, (unsigned int)stream_game_frames());
-    stream_rtex_capture(r->id, 0, 10, w, h);   /* StoreRenderTex reads FBP 0, FBW 10 */
+    stream_rtex_capture(r->id, 0, 10, w, h, pc_rtex_wide);   /* StoreRenderTex reads FBP 0, FBW 10 */
+    pc_rtex_wide = 0;
 }
 
 int pc_rtex_bind(const void* image, unsigned int image_adr, unsigned int clut_adr)

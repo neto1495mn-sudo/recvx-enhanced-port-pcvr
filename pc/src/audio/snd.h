@@ -17,9 +17,11 @@ extern SndBanks g_snd_banks;
 enum { SND_BANK_SE, SND_BANK_MIDI, SND_BANK_BODY, SND_BANK_SQ };
 void snd_synth_bank_changed(int kind, int index);
 void snd_synth_command(const uint8_t* cmd, int len);
+void snd_synth_post(const uint8_t* cmd, int len);   /* (lock held) a command for the mixer to run in time */
+void snd_synth_flush(void);                         /* (lock held) run the queued commands now */
 void snd_synth_init(SDL_AudioDeviceID dev);
-void snd_synth_update(void);
-void snd_synth_set_volume(float v);  /* user effects volume */          /* run driver ticks up to the current vblank */
+void snd_synth_update(void);         /* no audio device: run the driver ticks up to the current vblank */
+void snd_synth_set_volume(float v);  /* user effects volume */
 void snd_synth_lock(void);
 void snd_synth_unlock(void);
 uint16_t snd_synth_se_active(int port);

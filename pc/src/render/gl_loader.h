@@ -81,6 +81,9 @@ typedef ptrdiff_t GLsizeiptr; typedef ptrdiff_t GLintptr;
 #define GL_LINES 0x1
 #define GL_POINTS 0x0
 #define GL_UNPACK_ALIGNMENT 0xCF5
+#define GL_UNPACK_ROW_LENGTH 0xCF2
+#define GL_R8 0x8229
+#define GL_RED 0x1903
 #define GL_PACK_ALIGNMENT 0xD05
 #define GL_VERSION 0x1F02
 #define GL_RENDERER 0x1F01

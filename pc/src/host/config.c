@@ -10,6 +10,7 @@ static int g_vr_cfg_ver;   /* ini vr_cfg_ver: the VR settings' version, to move 
 #include "menu_mouse.h"
 #include "enemies.h"
 #include "bindings.h"
+#include "modern.h"
 #include "../net/rdv_proto.h"
 #include <SDL3/SDL.h>
 #include <stdio.h>
@@ -30,6 +31,9 @@ static const struct { const char* key; int* val; int lo, hi; } keys[] = {
     { "screen_filter", &g_config.screen_filter, 0, 2 },
     { "cinema_bars", &g_config.cinema_bars, 0, 2 },
     { "screen_effects", &g_config.screen_effects, 0, 2 },
+    { "brightness", &g_config.brightness, -50, 50 },
+    { "contrast", &g_config.contrast, 50, 150 },
+    { "gamma", &g_config.gamma, 5, 20 },
     { "skip_doors", &g_config.skip_doors, 0, 1 },
     { "fast_doors", &g_fast_doors, 0, 1 },            /* ps2/kernel.c */
     { "vr_door_fade", &g_vr_door_fade, 0, 1 },
@@ -39,6 +43,7 @@ static const struct { const char* key; int* val; int lo, hi; } keys[] = {
     { "quick_knife", &g_config.quick_knife, 0, 1 },
     { "model_cull", &g_config.model_cull, 0, 1 },
     { "skip_intro", &g_config.skip_intro, 0, 1 },
+    { "battle_unlocked", &g_config.battle_unlocked, 0, 1 },
     { "no_ink_ribbon", &g_config.no_ink_ribbon, 0, 1 },   /* typewriters save without an ink ribbon (co-op: the host's) */
     { "save_system", &g_config.save_system, 0, 1 },     /* 0 native files, 1 memory card */
     { "native_3d", &g_config.native_3d, 0, 1 },
@@ -63,6 +68,7 @@ static const struct { const char* key; int* val; int lo, hi; } keys[] = {
     { "menu_mouse", (int*)&g_menu_mouse.on, 0, 1 },
     { "input_source", &g_input_source, 0, 2 },            /* INPUT_*: Auto, Keyboard/mouse only, Gamepad only */
     { "input_pad", &g_input_pad, 0, 4 },                  /* 0 any gamepad, n player n's (bindings.c) */
+    { "fixed_cam_controls", &g_modern_on, 0, 1 },        /* fixed cameras: 0 classic (tank), 1 modern (camera-relative) */
     { "enemy_extra", &g_enemy_opts.extra, 0, 3 },        /* enemy options (docs/ENEMIES.md "Enemy options") */
     { "enemy_place", &g_enemy_opts.place, 0, 1 },
     { "enemy_random", &g_enemy_opts.rand, 0, 1 },

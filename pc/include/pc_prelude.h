@@ -68,12 +68,14 @@ unsigned int pc_native_prim(unsigned int prim, const unsigned int* dp, int n, in
 unsigned int pc_native_prim_raw(unsigned int prim, const unsigned int* dp, int n, int clip_3d_on, float* last_sz);
 void  Ps2AddPrim3DExNative(unsigned long long prim, void* dp, unsigned int num, int mode);   /* 0 Ex, 1 Ex1P, 2 ExI */
 #define NATIVE_MARKER_REG 0x7F
+#define STREAM_TAG_REG 0x7E   /* gs/native.h */
 /* native textures (pc/glue/texture_glue.c) */
 int   pc_native_tex(void);
 unsigned int pc_tex_begin(const void* tim2, const void* phead, unsigned int image_adr, unsigned int clut_adr, int* is_new);
 void  pc_tex_end(unsigned int id, unsigned int image_adr, unsigned int clut_adr, int is_new);
 int   pc_native_rtex(void);   /* StoreRenderTex on the GPU (RECVX_NATIVE_RTEX, default on) */
 void  pc_rtex_capture(void* tim2, void* image, unsigned int w, unsigned int h);
+extern int pc_rtex_wide;      /* set before StoreRenderTex: capture the hor+ widened view (the full-screen render texture) */
 int   pc_rtex_bind(const void* image, unsigned int image_adr, unsigned int clut_adr);
 void  pc_native_strip(const unsigned short* idx_uv, int n, const struct VU1_STRIP_BUF* vbuf, unsigned int prim,
                       int color_mode, int single, float uv_scale);   /* enhanced mode: clip volume enlarged into the GS guard band */
@@ -98,6 +100,8 @@ float pc_overlay_x(float x);
 void  pc_mesh_begin(const void* model);
 void  pc_mesh_end(void);
 void  pc_mesh_strip(const void* strip);   /* within a mesh: the following output is this strip */
+void  pc_effect_tag(const void* op);      /* effect.c: the following output is this effect (O_WRK*, NULL: none) */
+unsigned long long pc_effect_poly(void); /* ps2_dummy.c Ps2AddOT: STREAM_TAG_REG value for an effect polygon (0: none) */
 /* online co-op (pc/glue/coop_glue.c, docs/COOP.md): the hooks are only called while coop_on */
 extern int coop_on;
 void  coop_control_remote(void);
@@ -199,6 +203,9 @@ int   pc_trade_screen(void);                /* the screen is open (menu_pad leav
 void  trade_textures_released(void);        /* njReleaseTextureAll */
 /* quick knife (pc/glue/knife_glue.c) */
 unsigned int knife_pad(unsigned int pad);
+/* modern controls for the fixed cameras (pc/glue/modern_glue.c): nothing while they are off */
+unsigned int modern_pad(unsigned int pad);   /* pad.c bhSetPad, before knife_pad */
+void  modern_player(void);                    /* player.c bhControlPlayer, after the mode handler */
 struct STCAM_WRK;
 void  menu_examine(struct STCAM_WRK* sc);
 
@@ -221,6 +228,9 @@ void  tps_bend(struct BH_PWORK* p);   /* the last free-aim bend on a display cop
 #include "ps2sdk_shim.h"
 #include "ps2_hw.h"
 #define u_long ps2_u_long
+#ifdef __SSE2__
+#include <emmintrin.h>   /* for vu_simd.h (vu0.h), which game files include after the define below */
+#endif
 
 /* EE data model: long is 64-bit. Must come after every host header. */
 #define long long long

@@ -155,7 +155,7 @@ uint32_t pc_native_prim3d(unsigned int prim, const VU1_PRIM_BUF* in, int n, int 
         o->cull = (uint8_t)(((p->ulKick & 0x8001) == 0x8001 ? 2 : 0) | 0x80);
     }
     *zavg = n ? zsum / (float)n : 0.0f;
-    return native_defer(prim, v, n < 64 ? n : 64, deferred ? pc_cur_mesh : 0, pc_cur_strip);
+    return native_defer(prim, v, n < 64 ? n : 64, deferred ? pc_cur_mesh : 0, pc_cur_mesh & 1 ? pc_cur_strip++ : pc_cur_strip);
 }
 
 /* Ps2AddPrim (ps2_dummy.c), the general builder behind the Ninja polygon/particle/effect draw
@@ -231,7 +231,7 @@ uint32_t pc_native_prim(unsigned int prim, const unsigned int* dp, int n, int cl
         for (int i = 1; i < n; i++) { y0 = fminf(y0, v[i].y); y1 = fmaxf(y1, v[i].y); }
         if (y1 - y0 > 240.0f && (layer || !(v[0].cull & 0x40))) for (int i = 0; i < n; i++) v[i].cull |= 0x20;   /* (not a big effect in the world) */
     }
-    return native_defer(prim, v, n, deferred ? pc_cur_mesh : 0, pc_cur_strip);
+    return native_defer(prim, v, n, deferred ? pc_cur_mesh : 0, pc_cur_mesh & 1 ? pc_cur_strip++ : pc_cur_strip);   /* an effect's polygons by number */
 }
 
 /* Ps2AddPrim for points, lines and sprites: what its GS packet would put into the GS

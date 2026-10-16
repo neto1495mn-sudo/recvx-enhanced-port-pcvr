@@ -19,6 +19,7 @@
 #include "../../decomp/include/ps2/veronica/prog/sub1.h"
 #include "../../decomp/include/ps2/veronica/prog/objitm.h"
 #include "../../decomp/include/ps2/veronica/prog/ps2_NaMatrix.h"
+int ikou3(BH_PWORK* epw, NJS_POINT3* pos, int add_dir);   /* zonzon.c (its header redefines libc macros) */
 #include "../../decomp/include/ps2/veronica/prog/sdfunc.h"
 #include "../../decomp/include/ps2/veronica/prog/hitchk.h"
 #include "../../decomp/include/ps2/veronica/prog/player.h"
@@ -209,10 +210,6 @@ static int load_player(int chr, int costume, int mfile)
 /* Weapon models and the weapon motion set (motions 100+), also present for "no weapon". */
 static int load_weapon(int wpn)
 {
-    BH_PWORK* plp_b = plp;
-    O_WRK* obwp_b = sys->obwp;
-    unsigned char *memp_b = sys->memp, *wr_b = sys->wrmdlp, *wl_b = sys->wlmdlp, *wmt_b = sys->plwmtp;
-    unsigned int wmt_size_b = sys->wmt_size;
     int i;
 
     p2_wpn = wpn;   /* also on failure: no retry every frame */
@@ -221,18 +218,8 @@ static int load_weapon(int wpn)
         if (!p2wpn[i].mlwP) p2wpn[i].mlwP = &no_model;   /* the loader releases the old weapon's textures */
     for (i = 100; i < MAX_MTN; i++) ply2.mnwPb[i].datP = NULL;
 
-    plp = &ply2;
-    ply2.wpnr_no = wpn;
     ply2.mnwP = ply2.mnwPb;   /* the weapon motions go to entries 100+ of the base set */
-    sys->obwp = p2wpn;
-    sys->memp = p2file;
-    sys->wrmdlp = p2.wrmdl; sys->wlmdlp = p2.wlmdl; sys->plwmtp = p2.plwmt;
-    bhReadWeaponData();
-    plp = plp_b;
-    sys->obwp = obwp_b;
-    sys->memp = memp_b;
-    sys->wrmdlp = wr_b; sys->wlmdlp = wl_b; sys->plwmtp = wmt_b;
-    sys->wmt_size = wmt_size_b;
+    player_weapon_read(&ply2, p2wpn, wpn, p2file, p2.wrmdl, p2.wlmdl, p2.plwmt);   /* (actor_glue.c) */
     memset(&no_model, 0, sizeof(no_model));
     return 1;
 }

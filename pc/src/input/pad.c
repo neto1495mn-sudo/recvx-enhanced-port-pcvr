@@ -10,6 +10,7 @@
 #include <SDL3/SDL.h>
 #include <string.h>
 #include <stdlib.h>
+#include <math.h>
 
 /* DS2 digital bits (active low in the report) */
 enum {
@@ -102,9 +103,32 @@ int bind_quickturn(int which, int held)
 
 static uint8_t axis8(Sint16 v) { int x = (v + 32768) >> 8; return (uint8_t)(x < 0 ? 0 : x > 255 ? 255 : x); }
 
+/* modern controls (pc/glue/modern_glue.c), game thread: this frame's direction on screen (x
+   right, y up, length up to 1) from the left stick past its dead zone, else from the d-pad rows
+   (arrow keys); and whether the quick-turn row is held */
+static float move_x, move_y;
+static int move_analog, quickturn_on;
+int pad_move_dir(float* x, float* y) { *x = move_x; *y = move_y; return move_analog; }
+int pad_quickturn_held(void) { return quickturn_on; }
+static void set_move_dir(uint32_t b, Sint16 sx, Sint16 sy)
+{
+    float x = sx / 32767.0f, y = -sy / 32767.0f, m = sqrtf(x * x + y * y);
+    const float dead = 0.25f;
+    move_analog = m > dead;
+    if (move_analog) {   /* rescaled from the dead zone on */
+        float k = ((m > 1 ? 1 : m) - dead) / (1 - dead) / m;
+        move_x = x * k; move_y = y * k;
+        return;
+    }
+    move_x = (float)(!!(b & PAD_RIGHT) - !!(b & PAD_LEFT));
+    move_y = (float)(!!(b & PAD_UP) - !!(b & PAD_DOWN));
+    if (move_x != 0 && move_y != 0) { move_x *= 0.70710678f; move_y *= 0.70710678f; }
+}
+
 static void build_report(unsigned char* r)
 {
-    uint32_t b = 0;
+    uint32_t b = 0, qbits = 0;
+    Sint16 slx = 0, sly = 0;
     uint8_t lx = 128, ly = 128, rx = 128, ry = 128;
     const bool* k = bind_keys();
 
@@ -120,10 +144,12 @@ static void build_report(unsigned char* r)
         for (int i = 0; i < 16; i++)
             if (bind_held(i, BIND_KB, k, mouse) || (gamepad && bind_held(i, BIND_PAD, k, 0))) b |= 1u << i;
         qt = bind_quickturn(0, bind_held(B_QUICKTURN, BIND_KB, k, mouse) || (gamepad && bind_held(B_QUICKTURN, BIND_PAD, k, 0)));
-        if (qt) b |= PAD_DOWN | (qt > 1 ? run_bits() : 0);
+        if (qt) qbits = PAD_DOWN | (qt > 1 ? run_bits() : 0);
         if (gamepad) {
-            lx = axis8(SDL_GetGamepadAxis(gamepad, SDL_GAMEPAD_AXIS_LEFTX));
-            ly = axis8(SDL_GetGamepadAxis(gamepad, SDL_GAMEPAD_AXIS_LEFTY));
+            slx = SDL_GetGamepadAxis(gamepad, SDL_GAMEPAD_AXIS_LEFTX);
+            sly = SDL_GetGamepadAxis(gamepad, SDL_GAMEPAD_AXIS_LEFTY);
+            lx = axis8(slx);
+            ly = axis8(sly);
             rx = axis8(SDL_GetGamepadAxis(gamepad, SDL_GAMEPAD_AXIS_RIGHTX));
             ry = axis8(SDL_GetGamepadAxis(gamepad, SDL_GAMEPAD_AXIS_RIGHTY));
         }
@@ -153,6 +179,9 @@ static void build_report(unsigned char* r)
         }
     }
     b |= scripted_buttons();
+    set_move_dir(b, slx, sly);
+    quickturn_on = qbits != 0;
+    b |= qbits;
     {   /* RECVX_PAD_TRACE=1: log the DS2 buttons when they change */
         static int trace = -1; static uint32_t last;
         if (trace < 0) trace = SDL_getenv("RECVX_PAD_TRACE") != NULL;

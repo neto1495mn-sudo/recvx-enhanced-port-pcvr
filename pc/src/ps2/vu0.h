@@ -72,9 +72,68 @@ static inline float vu_clampf(float v)
 
 static inline int vu_field_on(int mask, int comp) { return (mask >> (3 - comp)) & 1; }
 
-/* Execute one upper-pipe style vector op on g_vu0 (macro mode semantics). */
-void vu_upper(int op, int mask, int fd, int fs, int ft, int bc);
-/* Same, but on an explicit register file (used by the micro interpreter). Returns MAC flags. */
+#include "vu_simd.h"
+
+/* Execute one upper-pipe vector op on g_vu0 (macro mode: COP2 instructions in the EE asm that
+   pc/tools/asm2c.py translated). Inlined: at the asm2c call sites every argument is a constant,
+   so each op folds to a few vector instructions. Results, MAC/clip flags and state are those of
+   the interpreter's op (vu_upper_on; test_vu compares them). vf0 is never written (every
+   writer skips register 0), so it is not restored here. */
+static inline __attribute__((always_inline)) void vu_upper(int op, int mask, int fd, int fs, int ft, int bc)
+{
+    VuState* const s = &g_vu0;
+    const V4 a = v4ld(&s->vf[fs]);
+    V4 b, r;
+    int flags = 1, to_acc = 0;
+    switch (bc) {
+    case BC_X: b = V4BC(v4ld(&s->vf[ft]), 0); break;
+    case BC_Y: b = V4BC(v4ld(&s->vf[ft]), 1); break;
+    case BC_Z: b = V4BC(v4ld(&s->vf[ft]), 2); break;
+    case BC_W: b = V4BC(v4ld(&s->vf[ft]), 3); break;
+    case BC_Q: b = v4set1(s->q); break;
+    case BC_I: b = v4set1(s->i); break;
+    default:   b = v4ld(&s->vf[ft]); break;
+    }
+    switch (op) {
+    case U_CLIP: {
+        const float w = fabsf(s->vf[ft].f[3]), x = s->vf[fs].f[0], y = s->vf[fs].f[1], z = s->vf[fs].f[2];
+        const uint32_t bits = (uint32_t)((x > w) | (x < -w) << 1 | (y > w) << 2 | (y < -w) << 3 | (z > w) << 4 | (z < -w) << 5);
+        s->clip = ((s->clip << 6) | bits) & 0xFFFFFF;
+        return;
+    }
+    case U_ADDA:  to_acc = 1; /* fall through */
+    case U_ADD:   r = v4add(a, b); break;
+    case U_SUBA:  to_acc = 1; /* fall through */
+    case U_SUB:   r = v4sub(a, b); break;
+    case U_MULA:  to_acc = 1; /* fall through */
+    case U_MUL:   r = v4mul(a, b); break;
+    case U_MADDA: to_acc = 1; /* fall through */
+    case U_MADD:  r = v4madd(v4ld(&s->acc), a, b); break;
+    case U_MSUBA: to_acc = 1; /* fall through */
+    case U_MSUB:  r = v4msub(v4ld(&s->acc), a, b); break;
+    case U_MAX:   r = v4max(a, b); flags = 0; break;
+    case U_MINI:  r = v4min(a, b); flags = 0; break;
+    case U_ABS:   r = v4abs(a); flags = 0; break;
+    case U_FTOI0:  r = v4ftoi(a, 1.0f); flags = 0; break;
+    case U_FTOI4:  r = v4ftoi(a, 16.0f); flags = 0; break;
+    case U_FTOI12: r = v4ftoi(a, 4096.0f); flags = 0; break;
+    case U_FTOI15: r = v4ftoi(a, 32768.0f); flags = 0; break;
+    case U_ITOF0:  r = v4itof(a, 1.0f); flags = 0; break;
+    case U_ITOF4:  r = v4itof(a, 16.0f); flags = 0; break;
+    case U_ITOF12: r = v4itof(a, 4096.0f); flags = 0; break;
+    case U_ITOF15: r = v4itof(a, 32768.0f); flags = 0; break;
+    case U_OPMULA:   /* MAC flags 0, as the interpreter */
+        r = v4mul(V4YZX(a), V4ZXY(v4ld(&s->vf[ft]))); mask = VU_XYZ; to_acc = 1; s->mac = 0; flags = 0; break;
+    case U_OPMSUB:
+        r = v4opmsub(v4ld(&s->acc), a, v4ld(&s->vf[ft])); mask = VU_XYZ; s->mac = 0; flags = 0; break;
+    default: return;   /* U_NOP */
+    }
+    if (flags) s->mac = v4mac(r, mask);
+    if (to_acc) v4st(&s->acc, v4sel(v4ld(&s->acc), r, mask));
+    else if (fd) v4st(&s->vf[fd], v4sel(v4ld(&s->vf[fd]), r, mask));
+}
+/* The interpreter's op on an explicit register file (the micro interpreter's, the reference
+   for test_vu). Returns MAC flags. */
 uint32_t vu_upper_on(VuState* s, const VuVec* vf_in, const VuVec* acc_in, float q_in, int op, int mask, int fd, int fs, int ft, int bc, int* wrote_clip, uint32_t* clip_bits);
 
 /* misc macro-mode ops */
@@ -83,7 +142,7 @@ void vu_mr32(int mask, int ft, int fs);
 void vu_div(int fs, int fsf, int ft, int ftf);
 void vu_sqrt(int ft, int ftf);
 void vu_rsqrt(int fs, int fsf, int ft, int ftf);
-void vu_clipw(int fs, int ft);
+static inline void vu_clipw(int fs, int ft) { vu_upper(U_CLIP, VU_XYZ, 0, fs, ft, BC_W); }
 void vu_mtir(int it, int fs, int fsf);
 void vu_mfir(int mask, int ft, int is);
 
@@ -100,6 +159,9 @@ void     vu_ctc2(int reg, uint32_t value);
 
 /* Run a microprogram to completion starting at instruction address `addr`. */
 void vu0_callms(int addr);
+/* VU0_CALCPOINT for n vertices (the vertex loop of njCnkCvVnPs2): in 8 floats per vertex,
+   out 64 bytes per vertex (+16 vf07, +32 vf18 with vf11.x in its w, +48 vf06); vu.c */
+void vu0_calcpoint_n(const float* in, void* out, int n);
 void vu1_callms(int addr);
 void vu0_reset(void);
 /* VU1 XGKICK sink (GIF PATH1) */

@@ -204,6 +204,12 @@ add_executable(test_vu tests/test_vu.c src/ps2/vu.c)
 target_compile_options(test_vu PRIVATE -std=gnu11 -msse2 -mfpmath=sse -ffp-contract=off)
 target_link_libraries(test_vu PRIVATE m)
 add_test(NAME vu COMMAND test_vu)
+# the same against the plain C (non-SSE) native paths, as an arm64 build would compile them
+add_executable(test_vu_portable tests/test_vu.c src/ps2/vu.c)
+target_compile_definitions(test_vu_portable PRIVATE RECVX_VU_PORTABLE)
+target_compile_options(test_vu_portable PRIVATE -std=gnu11 -msse2 -mfpmath=sse -ffp-contract=off)
+target_link_libraries(test_vu_portable PRIVATE m)
+add_test(NAME vu_portable COMMAND test_vu_portable)
 
 # decodes every movie on the disc (needs RECVX_ISO; skipped otherwise)
 add_executable(test_movies tests/test_movies.c src/movie/mpeg2.c src/movie/pss.c)
@@ -217,6 +223,12 @@ add_executable(test_bindings tests/test_bindings.c src/input/bindings.c)
 target_compile_options(test_bindings PRIVATE $<$<COMPILE_LANGUAGE:C>:-std=gnu11>)
 target_link_libraries(test_bindings PRIVATE SDL3::SDL3)
 add_test(NAME bindings COMMAND test_bindings)
+
+# modern controls' direction math (pc/src/input/modern.c): camera + stick -> angle, the cut hold
+add_executable(test_modern tests/test_modern.c src/input/modern.c)
+target_compile_options(test_modern PRIVATE -std=gnu11)
+target_link_libraries(test_modern PRIVATE m)
+add_test(NAME modern COMMAND test_modern)
 
 # every recvx.ini key has a row in the settings table (F1 and OPTION > ENHANCED SETTINGS) or is listed
 add_test(NAME settings COMMAND ${CMAKE_COMMAND} -DSRC=${CMAKE_CURRENT_SOURCE_DIR} -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_settings.cmake)

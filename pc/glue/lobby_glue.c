@@ -165,11 +165,13 @@ static void mp_word(float cx, float y, unsigned int col, unsigned int shadow, fl
    own 4-row layout but 16 higher, 5 rows closer together */
 static float title_row_y(int i, int n) { return n >= 5 ? 234.0f + 30.0f * i : 256.0f + 32.0f * i; }
 
+int pc_battle_unlocked(void);   /* host.c: the GAMEPLAY setting */
+
 void pc_title_menu_init(void)
 {
     ADV_WORK* ap = &AdvWork;
     int n;
-    if (getenv("RECVX_TEST_EXTRA") && !ap->ExtraFlag) {   /* test aid: the menu as after a cleared game (BATTLE GAME) */
+    if (pc_battle_unlocked() && !ap->ExtraFlag) {   /* setting: BATTLE GAME as after a cleared game; the system data's clear flag (ssd_flg 1) stays as it is */
         ap->ExtraFlag = 1;
         ap->CursorMax[0] = 4;
         ap->ModeCommandId[0] = 0; ap->ModeCommandId[1] = 1; ap->ModeCommandId[2] = 3; ap->ModeCommandId[3] = 2;
@@ -253,31 +255,47 @@ void pc_title_mouse(int level, int flag)
 /* Two models: ours (slot 0) and the partner's (slot 1), each a player part file loaded with
    bhReadPlayerData into buffers of its own (as coop_glue.c does for the partner in game) and,
    for an enemy/NPC model, the display actor of the same slot (actor_glue.c) posed from it. The
-   actor slots are free at the title (co-op uses them only in game). */
+   actor slots are free at the title (co-op uses them only in game). The bodies have no hands: in
+   game they are the weapon's pieces linked to hand nodes 9 and 13 (sys->obwp[0..1]), unarmed those
+   of weapon file 0 (bhReadWeaponData). Here the pieces of the character the model is (appear_voice:
+   the cast their own, other men Chris's, women Claire's), on a display actor where its hands are
+   (actor_pose moves the hand nodes there) and it has none of its own (the story cast). */
 typedef struct Preview {
     BH_PWORK w;
-    O_WRK obj[3];                       /* [2]: Claire's hair / Wesker's piece, as sys->obwp[2] */
-    int chr, file;                      /* "You appear as" shown; part file - 10 loaded */
+    O_WRK obj[3];                       /* [0], [1]: right/left hand, [2]: Claire's hair / Wesker's piece, as sys->obwp[0..2] */
+    int chr, file, hands;               /* "You appear as" shown; part file - 10 loaded; whose hands (-1 none) */
     int tex_gone;
     int fail_chr, fails;                /* a choice whose part file could not be read: tried again after a pause */
     unsigned int fail_at;
     unsigned char exw[128], hdw[128];
 } Preview;
-static Preview pv[2] = { { .chr = -1, .file = -1, .fail_chr = -1 }, { .chr = -1, .file = -1, .fail_chr = -1 } };
+static Preview pv[2] = { { .chr = -1, .file = -1, .hands = -1, .fail_chr = -1 }, { .chr = -1, .file = -1, .hands = -1, .fail_chr = -1 } };
 static struct {
     unsigned char mdl[131072], bmt[393216], mth[12288], zmt[8192], etc[32768];
+    unsigned char wr[32768], wl[32768], wmt[65536];   /* the hands (sys->wrmdlp, wlmdlp, plwmtp) */
     unsigned char hair0[0x4000], hair3[0x1000];
 } pvb[2] __attribute__((aligned(64)));
 static unsigned char pv_file[1 << 21] __attribute__((aligned(64)));
 
+static void pv_hands_drop(Preview* p)
+{
+    int i;
+    for (i = 0; i < 2; i++) {
+        ML_WORK* m = p->obj[i].mlwP;
+        if (!p->tex_gone && m && m->texP && (m->flg & 0x200)) njReleaseTexture(m->texP);
+        memset(&p->obj[i], 0, sizeof(p->obj[i]));
+    }
+    p->hands = -1;
+}
+
 static void pv_release(Preview* p, int k)
 {
     int i;
-    if (!p->tex_gone) {
+    if (!p->tex_gone)
         for (i = 0; i < p->w.mdl_n; i++)
             if (p->w.mdl[i].texP) njReleaseTexture(p->w.mdl[i].texP);
-        if (p->w.mdl_n) bhGarbageTexture(NULL, 0);
-    }
+    pv_hands_drop(p);
+    if (!p->tex_gone && p->w.mdl_n) bhGarbageTexture(NULL, 0);
     actor_set(k, -1);
     memset(&p->w, 0, sizeof(p->w));
     memset(p->obj, 0, sizeof(p->obj));
@@ -290,6 +308,19 @@ static void pv_failed(Preview* p, int chr)
     p->fails = chr == p->fail_chr ? p->fails + 1 : 1;
     p->fail_chr = chr;
     p->fail_at = net_ms();
+}
+
+/* the hand pieces of player character c (weapon file 0's, as the game loads them unarmed) on slot k's model */
+static void pv_hands(Preview* p, int k, int c)
+{
+    int i;
+    if (c == p->hands) return;
+    pv_hands_drop(p);
+    bhGarbageTexture(NULL, 0);
+    for (i = 0; i < 2; i++) p->obj[i].mlwP = p->obj[i].mdl;   /* (the loader releases this one's textures: none) */
+    if (!afs_read(sys->sys_partid, c * 30 + 20, pv_file, sizeof(pv_file))) { host_log("lobby: cannot read weapon file %d\n", c * 30 + 20); return; }
+    player_weapon_read(&p->w, p->obj, 0, pv_file, pvb[k].wr, pvb[k].wl, pvb[k].wmt);   /* (actor_glue.c) */
+    p->hands = c;
 }
 
 /* "You appear as" chr (g_coop.chr) for preview slot k; `played`: the character "as played" means */
@@ -323,6 +354,7 @@ static void pv_set(int k, int chr, int played)
     p->fails = 0;
     if (actor_set(k, chr >= COOP_CHR_ACTOR ? chr - COOP_CHR_ACTOR : -1)) p->obj[2].flg = 0;   /* no hair on another model */
     else player_hair(p->obj, &p->w, file & 3, pvb[k].hair0, pvb[k].hair3);   /* Claire's hair simulates in work of its own */
+    pv_hands(p, k, appear_voice(chr) >= 0 ? appear_voice(chr) : file & 3);
     host_log("lobby: preview %d shows %s\n", k, chr >= COOP_CHR_ACTOR ? actor_models[chr - COOP_CHR_ACTOR].name : "a player model");
 }
 
@@ -330,6 +362,7 @@ static void pv_pose(int k, float x, int ay)
 {
     Preview* p = &pv[k];
     O_WRK* op = &p->obj[2];
+    int i;
     if (p->file < 0) return;
     p->w.px = x; p->w.py = 0; p->w.pz = 0;
     p->w.ax = p->w.az = 0; p->w.ay = ay;
@@ -340,17 +373,20 @@ static void pv_pose(int k, float x, int ay)
         if (op->id == 1211) bhObjClpn(op);
         bhCalcModel((BH_PWORK*)op);
     }
-    if (actor_shown(k)) actor_pose(k, &p->w);
+    if (actor_shown(k)) actor_pose(k, &p->w);   /* (moves hand nodes 9 and 13 to the model's hands) */
+    for (i = 0; i < 2; i++)
+        if ((p->obj[i].flg & 0x1) && p->obj[i].mlwP && p->obj[i].mlwP->objP) bhCalcModel((BH_PWORK*)&p->obj[i]);
 }
 
 static void pv_draw(int k)
 {
     Preview* p = &pv[k];
-    O_WRK* op = &p->obj[2];
+    O_WRK* op;
     if (p->file < 0) return;
-    if (actor_shown(k)) { actor_draw(k); return; }
-    bhPutModel(&p->w);
-    if ((op->flg & 0x1) && op->mlwP && op->mlwP->objP) bhPutModel((BH_PWORK*)op);
+    if (actor_shown(k)) actor_draw(k);
+    else bhPutModel(&p->w);
+    for (op = p->obj; op < p->obj + 3; op++)   /* hands (on a display actor where it has none), hair (not there) */
+        if ((op->flg & 0x1) && op->mlwP && op->mlwP->objP && (!actor_shown(k) || actor_hand_free(k, op->lkono))) bhPutModel((BH_PWORK*)op);
 }
 
 /* the model shown in slot k (the display actor, or the player model) */

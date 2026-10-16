@@ -20,6 +20,7 @@
 #include "../ps2_platform.h"
 #include "../render/gl_loader.h"
 #include "../host/xr.h"
+#include "../movie/movie.h"
 #include <SDL3/SDL.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -151,7 +152,7 @@ static void vr_stat_vertex_p(const GlVertex* o, char path)
 static void vr_stat_vertex(const GlVertex* o) { vr_stat_vertex_p(o, 'N'); }
 static GLint u_rt_size, u_rt_margin, u_tme, u_tfx, u_tcc, u_fst, u_texsize, u_fge, u_fogcol, u_ate, u_atst, u_aref,
              u_tex, u_tex_alpha_scale, u_texofs, u_premul, u_zscale, u_clamp_mode, u_clamp_vals, u_afail_pass, u_rt16, u_dbg;
-static GLint up_tex, up_rect;
+static GLint up_tex, up_rect, up_pic;
 
 static const char* vs_src =
     "#version 330 core\n"
@@ -272,10 +273,29 @@ static const char* present_vs =
     "  v_uv = vec2(mix(u_rect.x, u_rect.z, c.x), mix(u_rect.y, u_rect.w, c.y));\n"
     "  gl_Position = vec4(c.x * 2.0 - 1.0, 1.0 - c.y * 2.0, 0.0, 1.0);\n"
     "}\n";
+/* u_pic: picture calibration (brightness offset, contrast, 1 / gamma, on); off at the neutral
+   values, so the image is the same as without it. gs_picture is the same on the CPU. */
 static const char* present_fs =
     "#version 330 core\n"
-    "in vec2 v_uv; uniform sampler2D u_tex; out vec4 o;\n"
-    "void main(){ o = vec4(clamp(texture(u_tex, v_uv).rgb, 0.0, 1.0), 1.0); }\n";
+    "in vec2 v_uv; uniform sampler2D u_tex; uniform vec4 u_pic; out vec4 o;\n"
+    "void main(){\n"
+    "  vec3 c = clamp(texture(u_tex, v_uv).rgb, 0.0, 1.0);\n"
+    "  if (u_pic.w != 0.0) c = clamp((pow(c, vec3(u_pic.z)) - 0.5) * u_pic.y + 0.5 + u_pic.x, 0.0, 1.0);\n"
+    "  o = vec4(c, 1.0);\n"
+    "}\n";
+
+static int picture(float* b, float* k, float* ig)
+{
+    *b = g_config.brightness / 200.0f; *k = g_config.contrast / 100.0f; *ig = 10.0f / (g_config.gamma > 0 ? g_config.gamma : 10);
+    return g_config.brightness != 0 || g_config.contrast != 100 || g_config.gamma != 10;
+}
+float gs_picture(float c)
+{
+    float b, k, ig;
+    if (!picture(&b, &k, &ig)) return c;
+    c = (SDL_powf(c, ig) - 0.5f) * k + 0.5f + b;
+    return c < 0 ? 0 : c > 1 ? 1 : c;
+}
 
 static GLuint compile(const char* vs, const char* fs)
 {
@@ -318,6 +338,7 @@ void gs_renderer_init(void)
     present_prog = compile(present_vs, present_fs);
     up_tex = glGetUniformLocation(present_prog, "u_tex");
     up_rect = glGetUniformLocation(present_prog, "u_rect");
+    up_pic = glGetUniformLocation(present_prog, "u_pic");
 
     glGenVertexArrays(1, &vao);
     glGenVertexArrays(1, &svao);
@@ -683,9 +704,13 @@ static uint32_t clut_hash(uint64_t tex0)
     return h;
 }
 
+static uint32_t mv_tbp = UINT32_MAX;   /* gs_movie_bind */
+static GLuint mv_rgb;
+
 static GLuint tex_get(uint64_t tex0, uint64_t texa, int* out_w, int* out_h, float* ascale)
 {
     *ascale = 255.0f;
+    if ((tex0 & 0x3FFF) == mv_tbp && mv_rgb) { *out_w = *out_h = 512; return mv_rgb; }   /* the movie frame */
     {   /* native texture bound to this slot (textures.c) */
         unsigned int nt;
         int r = ntex_lookup(tex0, texa, &nt, out_w, out_h);
@@ -1232,37 +1257,33 @@ void gs_flush(void)
     {
         uint64_t sc = st->ctx.scissor;
         int x0 = sc & 0x7FF, x1 = (sc >> 16) & 0x7FF, y0 = (sc >> 32) & 0x7FF, y1 = (sc >> 48) & 0x7FF;
-        int bx0 = x0, by0 = y0, bx1 = x1, by1 = y1;
-        if (x1 >= (int)fbw * 64 && vcount > 0) {
-            /* the scissor is wider than the target (a small render-to-texture image, e.g. the weapon
-               room's monitor, FBP 476 FBW 4 under a 640 x 480 scissor): the drawn area is what the
-               vertices cover, so a CLUT written in the pages below it does not make the image stale */
-            float mx0 = 1e9f, my0 = 1e9f, mx1 = -1e9f, my1 = -1e9f;
-            int ok = 1;
-            for (int k = 0; k < vcount && ok; k++) {
-                float w = vbuf[k].w, x, y;
-                if (!(w > 0.0f)) { ok = 0; break; }   /* (behind the eye: keep the scissor) */
-                x = vbuf[k].x / w; y = vbuf[k].y / w;
-                if (x < mx0) mx0 = x;
-                if (x > mx1) mx1 = x;
-                if (y < my0) my0 = y;
-                if (y > my1) my1 = y;
+        if (!cur_rt->has_box || x0 < cur_rt->bx0 || y0 < cur_rt->by0 || x1 > cur_rt->bx1 || y1 > cur_rt->by1) {
+            /* the drawn area: the scissor, cut to the vertices of a 2D batch. A copy into a small
+               target under a full-screen scissor (PS2_Render_Tex_Sub: 320x240 into FBP 476) must
+               not claim the pages below it, where a CLUT upload would mark it stale. Native 3D
+               (homogeneous positions) and static runs keep the scissor. */
+            int b0 = x0, b1 = x1, c0 = y0, c1 = y1;
+            if (!nsruns) {
+                float mx0 = 1e9f, mx1 = -1e9f, my0 = 1e9f, my1 = -1e9f;
+                int k;
+                for (k = 0; k < vcount && vbuf[k].w == 1.0f; k++) {
+                    mx0 = fminf(mx0, vbuf[k].x); mx1 = fmaxf(mx1, vbuf[k].x);
+                    my0 = fminf(my0, vbuf[k].y); my1 = fmaxf(my1, vbuf[k].y);
+                }
+                if (k == vcount) {
+                    if (mx0 > b0) b0 = (int)floorf(mx0);
+                    if (mx1 < b1) b1 = (int)ceilf(mx1);
+                    if (my0 > c0) c0 = (int)floorf(my0);
+                    if (my1 < c1) c1 = (int)ceilf(my1);
+                }
             }
-            if (ok) {
-                if (mx0 > (float)bx0) bx0 = (int)floorf(mx0);
-                if (my0 > (float)by0) by0 = (int)floorf(my0);
-                if (mx1 < (float)bx1) bx1 = (int)ceilf(mx1);
-                if (my1 < (float)by1) by1 = (int)ceilf(my1);
-                if (bx1 > (int)fbw * 64 - 1) bx1 = (int)fbw * 64 - 1;
-                if (bx0 > bx1 || by0 > by1) { bx0 = x0; by0 = y0; bx1 = x1; by1 = y1; }
+            if (!cur_rt->has_box) { cur_rt->has_box = 1; cur_rt->bx0 = b0; cur_rt->by0 = c0; cur_rt->bx1 = b1; cur_rt->by1 = c1; }
+            else {
+                if (b0 < cur_rt->bx0) cur_rt->bx0 = b0;
+                if (c0 < cur_rt->by0) cur_rt->by0 = c0;
+                if (b1 > cur_rt->bx1) cur_rt->bx1 = b1;
+                if (c1 > cur_rt->by1) cur_rt->by1 = c1;
             }
-        }
-        if (!cur_rt->has_box) { cur_rt->has_box = 1; cur_rt->bx0 = bx0; cur_rt->by0 = by0; cur_rt->bx1 = bx1; cur_rt->by1 = by1; }
-        else {
-            if (bx0 < cur_rt->bx0) cur_rt->bx0 = bx0;
-            if (by0 < cur_rt->by0) cur_rt->by0 = by0;
-            if (bx1 > cur_rt->bx1) cur_rt->bx1 = bx1;
-            if (by1 > cur_rt->by1) cur_rt->by1 = by1;
         }
         if (g_margin_x && x0 == 0 && x1 >= (int)fbw * 64 - 1) { x0 = -g_margin_x; x1 += g_margin_x; }   /* full width -> widened view */
         glEnable(GL_SCISSOR_TEST);
@@ -1320,7 +1341,7 @@ void gs_flush(void)
         uint64_t tex0 = st->ctx.tex0;
         uint32_t tbp = tex0 & 0x3FFF, tpsm = (tex0 >> 20) & 0x3F;
         uint32_t tw = 1u << ((tex0 >> 26) & 0xF), th = 1u << ((tex0 >> 30) & 0xF);
-        float ox, oy;
+        float ox = 0, oy = 0;
         RenderTarget* srt;
         int is16 = 0;
         dbg_tex0 = tex0;
@@ -1334,7 +1355,7 @@ void gs_flush(void)
                 ox = m->ox; oy = m->oy; is16 = m->is16;
                 replay_memo = m;
             } else {
-                srt = rt_for_texture(tbp, tpsm, &ox, &oy, &is16);
+                srt = tbp == mv_tbp ? NULL : rt_for_texture(tbp, tpsm, &ox, &oy, &is16);
                 if (m && !gs_replaying) { m->rt = srt && srt != cur_rt ? (int)(srt - rts) : -1; m->fbp = srt ? srt->fbp : 0; m->fbw = srt ? srt->fbw : 0; m->ox = ox; m->oy = oy; m->is16 = is16; record_memo = m; }
             }
         }
@@ -1710,6 +1731,11 @@ static void draw_display(GLuint tex, int rt_vw, int rt_vh)
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         glUniform1i(up_tex, 0);
         {
+            float b, k, ig;
+            int on = picture(&b, &k, &ig);
+            glUniform4f(up_pic, b, k, ig, on ? 1.0f : 0.0f);
+        }
+        {
             float x0 = g_margin_x && dw > 640.0f ? 0.0f : (float)g_margin_x;
             glUniform4f(up_rect, x0 / rt_vw, 0.0f, (x0 + dw) / rt_vw, dh / rt_vh);
         }
@@ -1879,12 +1905,15 @@ void gs_rt_to_mem(uint32_t bp, uint32_t bw, uint32_t psm, uint32_t x, uint32_t y
 
 /* StoreRenderTex on the GPU (RECVX_NATIVE_RTEX): GS pixels (0,0)-(w,h) of a render target
    copied at render resolution (margin and scale as in gs_rt_to_mem) into a new texture, 0 if
-   there is no such target (transparent black) */
-unsigned int gs_capture_rt(uint32_t fbp, uint32_t fbw, uint32_t w, uint32_t h)
+   there is no such target (transparent black). wide (hor+): GS x w/2 -+ w/2 * gs_hor_scale(),
+   the view the game drew with its widened clip volume, into a texture as many times wider
+   (the full-screen render texture, drawn back over the widened view) */
+unsigned int gs_capture_rt(uint32_t fbp, uint32_t fbw, uint32_t w, uint32_t h, int wide)
 {
     RenderTarget* rt = rt_find(fbp, fbw ? fbw : 1);
     GLuint tex = 0, fbo = 0;
-    int cw = 0, ch = 0, pw = (int)(w * g_scale), ph = (int)(h * g_scale);
+    float gw = wide && g_margin_x ? w * gs_hor_scale() : (float)w;   /* GS pixels captured across */
+    int cw = 0, ch = 0, pw = (int)(gw * g_scale), ph = (int)(h * g_scale);
     gs_flush();
     rt_touch(rt);
     ensure_target(&tex, &fbo, &cw, &ch, pw, ph);
@@ -1893,13 +1922,107 @@ unsigned int gs_capture_rt(uint32_t fbp, uint32_t fbw, uint32_t w, uint32_t h)
     glClearColor(0, 0, 0, 0);
     glClear(GL_COLOR_BUFFER_BIT);
     if (rt) {
-        int sx = (int)(g_margin_x * g_scale), sw = pw < rt->pw - sx ? pw : rt->pw - sx, sh = ph < rt->ph ? ph : rt->ph;
+        int sx = (int)((g_margin_x + (w - gw) / 2) * g_scale), sw = pw < rt->pw - sx ? pw : rt->pw - sx, sh = ph < rt->ph ? ph : rt->ph;
         glBindFramebuffer(GL_READ_FRAMEBUFFER, rt->fbo);
         glBlitFramebuffer(sx, 0, sx + sw, sh, 0, 0, sw, sh, GL_COLOR_BUFFER_BIT, GL_NEAREST);
     }
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     glDeleteFramebuffers(1, &fbo); fb_forget();
     return tex;
+}
+
+/* ---------------- movies (pc/src/movie) ---------------- */
+
+static const char* movie_vs =
+    "#version 330 core\n"
+    "void main(){\n"
+    "  vec2 c = vec2((gl_VertexID & 1) != 0 ? 1.0 : 0.0, (gl_VertexID & 2) != 0 ? 1.0 : 0.0);\n"
+    "  gl_Position = vec4(c * 2.0 - 1.0, 0.0, 1.0);\n"
+    "}\n";
+/* YCbCr (ITU-R BT.601, video range) -> RGB, one fragment per image pixel (row 0 = the top
+   row, as uploaded). 4:2:0 chroma as MPEG-2 places it: on the even luma columns, between
+   two luma rows; interpolated. Alpha 0x80, as the IPU's output. */
+static const char* movie_fs =
+    "#version 330 core\n"
+    "uniform sampler2D u_y, u_cb, u_cr; out vec4 o;\n"
+    "void main(){\n"
+    "  vec2 p = gl_FragCoord.xy;\n"
+    "  vec2 c = vec2(p.x * 0.5 + 0.25, p.y * 0.5) / vec2(textureSize(u_cb, 0));\n"
+    "  float y = (texelFetch(u_y, ivec2(p), 0).r - 16.0 / 255.0) * (255.0 / 219.0);\n"
+    "  float cb = (texture(u_cb, c).r - 128.0 / 255.0) * (255.0 / 224.0), cr = (texture(u_cr, c).r - 128.0 / 255.0) * (255.0 / 224.0);\n"
+    "  o = vec4(clamp(vec3(y + 1.402 * cr, y - 0.344136 * cb - 0.714136 * cr, y + 1.772 * cb), 0.0, 1.0), 128.0 / 255.0);\n"
+    "}\n";
+
+/* Textures at TBP tbp are movie frame index from now until the next executed frame: the
+   frame's planes are uploaded once and converted into mv_rgb (512 x 512, the TEX0 size the
+   game's sprite uses, image at the top left). Replays bind the same frame again. */
+void gs_movie_bind(uint32_t tbp, int index)
+{
+    static GLuint prog_yuv, planes[3], fbo;
+    static int pw, ph;
+    static uint32_t shown;
+    uint32_t serial;
+    int w, h, stride;
+    const uint8_t* yuv;
+    gs_flush();   /* draws before this sample what was bound before */
+    mv_tbp = tbp;
+    if (!prog_yuv) {
+        prog_yuv = compile(movie_vs, movie_fs);
+        glUseProgram(prog_yuv);
+        glUniform1i(glGetUniformLocation(prog_yuv, "u_y"), 1);
+        glUniform1i(glGetUniformLocation(prog_yuv, "u_cb"), 2);
+        glUniform1i(glGetUniformLocation(prog_yuv, "u_cr"), 3);
+        glGenTextures(3, planes);
+        glGenTextures(1, &mv_rgb);
+        glBindTexture(GL_TEXTURE_2D, mv_rgb);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 512, 512, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+        glGenFramebuffers(1, &fbo);
+        glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, mv_rgb, 0);
+    }
+    yuv = movie_lock_frame(index, &serial, &w, &h, &stride);
+    if (yuv && serial == shown) { movie_unlock_frame(); return; }
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    fb_forget();
+    glDisable(GL_SCISSOR_TEST);
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_BLEND);
+    clip_distances(0);
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    if (!yuv || w > 512 || h > 512) {   /* nothing decoded: black */
+        if (yuv) movie_unlock_frame();
+        glClearColor(0, 0, 0, 128.0f / 255.0f);
+        glClear(GL_COLOR_BUFFER_BIT);
+        shown = 0;
+        return;
+    }
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    for (int i = 0; i < 3; i++) {
+        int cw = i ? w / 2 : w, ch = i ? h / 2 : h;
+        const uint8_t* src = yuv + (i ? (size_t)stride * h + (size_t)(i - 1) * (stride / 2) * (h / 2) : 0);
+        glActiveTexture(GL_TEXTURE0 + 1 + i);
+        glBindTexture(GL_TEXTURE_2D, planes[i]);
+        glPixelStorei(GL_UNPACK_ROW_LENGTH, i ? stride / 2 : stride);
+        if (w != pw || h != ph) {
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, cw, ch, 0, GL_RED, GL_UNSIGNED_BYTE, src);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        } else {
+            glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, cw, ch, GL_RED, GL_UNSIGNED_BYTE, src);
+        }
+    }
+    movie_unlock_frame();
+    glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+    pw = w; ph = h; shown = serial;
+    glViewport(0, 0, w, h);
+    glUseProgram(prog_yuv);
+    glBindVertexArray(present_vao);
+    glDrawArrays(0x0005 /* GL_TRIANGLE_STRIP */, 0, 4);
+    glActiveTexture(GL_TEXTURE0);
+    glBindVertexArray(vao);
 }
 
 /* ---------------- presentation (render thread) ---------------- */
@@ -1914,6 +2037,7 @@ void gs_frame_begin(void)
     if (ndoomed) { glDeleteTextures((GLsizei)ndoomed, doomed); ndoomed = 0; }
     trep_frame_begin();   /* HD replacements get their mipmaps (texreplace.c) */
     nreloads = 0;
+    mv_tbp = UINT32_MAX;   /* a movie frame binds it again (EV_MOVIE) */
     snapshot_valid = 0;   /* no replays of the previous frame while this one is half executed (download) */
     memset(first, 0, sizeof(first));
     gs_set_scale(gs_wanted_scale());

@@ -67,18 +67,20 @@ static float gain_of(int vol_cdb)
 static SDL_AudioStream* movie_stream;
 static float movie_gain = 1.0f;
 
-void audio_movie_open(int rate)
+int audio_movie_open(int rate)
 {
     SDL_AudioSpec src = { SDL_AUDIO_S16, 2, rate }, dst = { SDL_AUDIO_S16, 2, 48000 };
     SDL_AudioStream* s;
-    if (!dev) return;
+    if (!dev) return 0;
     s = SDL_CreateAudioStream(&src, &dst);
     SDL_LockMutex(lock);
     movie_stream = s;
     if (s) SDL_SetAudioStreamGain(s, movie_gain * g_config.music_volume / 100.0f);
     SDL_UnlockMutex(lock);
+    return s != NULL;
 }
 void audio_movie_put(const int16_t* s, size_t frames) { if (movie_stream) SDL_PutAudioStreamData(movie_stream, s, (int)(frames * 4)); }
+int audio_movie_queued(void) { return movie_stream ? SDL_GetAudioStreamQueued(movie_stream) : 0; }
 void audio_movie_pause(int paused)
 {
     if (!movie_stream) return;

@@ -556,7 +556,8 @@ int bind_event(const void* e)
    '_' for a space) from that presented frame on, as key state and key events; @x:y clicks the
    left mouse button at window pixel x/y (as events: the overlay).
    RECVX_VPAD="<frame>:<input>+<input>,...": a virtual SDL gamepad (RECVX_VPAD_TYPE xbox, ps5 or
-   generic; default xbox) holding gamepad inputs in the ini spelling (south, dpup, +lefttrigger). */
+   generic; default xbox) holding gamepad inputs in the ini spelling (south, dpup, +lefttrigger),
+   or an axis at a value from -1 to 1 (leftx=0.5, lefty=-1: the left stick half right, all up). */
 static void push_key(int sc, int down)
 {
     SDL_Event e;
@@ -652,7 +653,12 @@ static void vpad_frame(uint64_t now)
             int n = (int)strcspn(body, "+,"), c;
             if (*body == '+' || *body == '-') n = 1 + (int)strcspn(body + 1, "+,");   /* +lefttrigger */
             snprintf(name, sizeof(name), "%.*s", n, body);
-            c = strcmp(name, "-") ? ini_code(BIND_PAD, name) : 0;
+            char* eq = strchr(name, '=');
+            if (eq) *eq = 0;   /* leftx=0.5: an axis at a value (-1..1) */
+            c = eq ? 0 : strcmp(name, "-") ? ini_code(BIND_PAD, name) : 0;
+            if (eq && SDL_GetGamepadAxisFromString(name) != SDL_GAMEPAD_AXIS_INVALID)
+                SDL_SetJoystickVirtualAxis(joy, SDL_GetGamepadAxisFromString(name), (Sint16)SDL_clamp(SDL_atof(eq + 1) * 32767.0, -32768, 32767));
+            else if (eq) host_log("RECVX_VPAD: unknown axis \"%s\"\n", name);
             if (c > 0 && c < BIND_AXIS) SDL_SetJoystickVirtualButton(joy, c - 1, true);
             else if (c >= BIND_AXIS) SDL_SetJoystickVirtualAxis(joy, (c - BIND_AXIS) / 2, (c - BIND_AXIS) & 1 ? -32768 : 32767);
             else if (c < 0) host_log("RECVX_VPAD: unknown input \"%s\"\n", name);

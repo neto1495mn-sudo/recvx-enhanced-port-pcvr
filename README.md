@@ -27,6 +27,8 @@ native paths replace the expensive parts. The game reads your own disc image in 
   saved partner inventories, rejoin after a crash. Includes a small C rendezvous/relay server.
 - **Third-person mode** (optional): over-the-shoulder camera with mouse/keyboard controls, free
   aim and two camera styles.
+- **Modern controls** (optional) for the fixed cameras: the stick walks where it points on screen,
+  as in the RE HD remasters, and keeps its direction through camera cuts.
 - **Model swaps**: play as other characters and creatures, with matching voices and cutscene
   doubles.
 - **Enemy options**: extra enemies, rearranged placements, a seeded randomizer, and an enemy

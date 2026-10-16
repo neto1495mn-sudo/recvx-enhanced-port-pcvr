@@ -81,7 +81,7 @@ Windows `-mno-ms-bitfields`.
 |---|---|
 | main (`main()`, `render_loop`) | SDL window and events, OpenGL, GS emulation and presentation, the F1/F2/F3 overlay, binding capture, lobby text input and clipboard, the setting appliers (window, vsync, volumes) and **every `recvx.ini` write** |
 | game (`game_thread`) | the decomp and `pc/glue` (ENHANCED SETTINGS menu, lobby, co-op incl. its UDP socket polled once per frame, cheats applied at the frame hand-off), disc reads, memory card, creating and destroying audio streams |
-| SDL audio | ADX decoding in the stream callbacks (own file handle per voice), the sound-effect synth mix |
+| SDL audio | ADX decoding in the stream callbacks (own file handle per voice), the sound driver's 240 Hz tick, its queued commands and the synth mix |
 | portmap | UPnP/NAT-PMP while hosting (`net/portmap.c`) |
 | co-op arrival times (Windows) | waits on the co-op socket and notes when data arrived (`net_rx_us`) |
 | log (Linux, `--log`) | copies stdout/stderr into the log file |
@@ -98,7 +98,9 @@ How state crosses threads:
   the last change and at exit. Nobody else calls `config_save`.
 - **Commands** from the overlay to the game are request words (`g_cheat.request`,
   `g_coop.request`, `g_coop.trade_req`), taken by the game thread at its frame.
-- **Audio**: one lock in `audio.c` covers a stream's publication, gain and removal.
+- **Audio**: one lock in `audio.c` covers a stream's publication, gain and removal. The sound
+  driver (`snd_iop.c`, `snd_synth.c`) has its own lock over the driver state, the banks and the
+  command queue the game thread fills and the mixer empties.
 - **Co-op status** strings are written by the game thread and read by the overlay without a
   lock; every string keeps a terminating 0, so a read may show a half-updated line but stays
   bounded.
@@ -166,7 +168,11 @@ headless.
   distortion, the stage-7 small screen, `Ps2TextureMalloc` textures). The game thread records a
   capture event instead; the render thread blits the render-target area into a texture that
   becomes a native texture definition, and the TIM2 only receives a 16-byte marker. A stale marker
-  falls back to a plain upload.
+  falls back to a plain upload. In widescreen the full-screen distortion captures the widened view
+  (`pc_rtex_wide`) and draws it back over the whole view. The other small screen (the Palace
+  monitor, `PS2_Render_Tex_Sub`) is a GS copy into FBP 476 sampled as a texture; a target's drawn
+  area is its scissor cut to the vertices of 2D batches, so a CLUT upload in the pages below that
+  copy does not make it stale.
 - Still emulated: the GS register/state model, GS memory (render-to-texture, CLUTs, non-native
   textures), render targets, VIF/DMA for the remaining packets.
 
@@ -185,10 +191,28 @@ shows in-between images at the display rate:
 - At each display refresh the executed frame's whole GS stream is **replayed** with matched
   vertices blended in homogeneous space (x*w, y*w, w = 1/Q; S/T/Q rescaled so textures keep their
   perspective). For a display rate n times the game's (60/120/240 Hz) t = k/n; otherwise
-  t = time since arrival / frame period. Untagged output (2D, particles, screen filters) is shown
-  as is. Frames are never blended across a room change or a camera cut (`cam.ncut`). A mesh is
-  blended if at least half its vertices moved less than 128 px; single vertices moving more than
-  512 px are not.
+  t = time since arrival / frame period. Untagged output (2D, screen filters) is shown as is. A
+  mesh is blended if at least half its vertices moved less than 128 px; single vertices moving
+  more than 512 px are not.
+- **Cuts**: a frame that changed scene or camera is shown at once, without in-between images
+  (the previous frame's images end at that frame itself), so no image mixes two cameras. The
+  frame's scene is taken when its first mesh is drawn (`view_glue.c pc_frame_view`), because
+  `bhCheckCut` changes the cut after drawing: stage, room and, unless the third-person camera is
+  on, the cut (`ncut`, `camver`), the event/fixed camera mode with its event camera, and first
+  person. In addition the eye and view direction of `cam.mtx` are compared (`stream.c view_cut`):
+  a move of more than 10 units or a turn of more than 30 degrees in one game frame is a cut (event
+  cameras can switch a frame before their number does; the game's own smooth pans between cuts
+  stay below 5 units and 6 degrees). The third-person camera is not compared: it turns fast under
+  the mouse but never jumps.
+- **Effects** (`effect.c` 3D lists: fire, the lighter flame, muzzle flashes, smoke, sparks, blood)
+  are tagged per effect (`pc_effect_tag`): the tag is the effect's `eff[]` slot and that slot's
+  life (it starts again when the slot holds another effect or was not drawn in the previous
+  frame), and its polygons are numbered. Effect polygons drawn later from the ordering table get
+  the tag after their vertices (`Ps2AddOT` writes it to GS register 0x7E, `STREAM_TAG_REG`). So an
+  effect pairs only with itself; its position (and size on screen) is blended like a mesh's,
+  its animation frame (texture coordinates) and colour are the current frame's. Effects use the
+  128 px limit and do not count towards the "most meshes matched" test. 2D effects, lines and
+  effects with their own draw function (`ef_fnc`) stay as they are.
 - **Frame blend**: `PS2_swap` mixes each new frame 75% over the previous display image (a
   motion trail). Replays start from the display image as the frame found it, so the trail stays
   correct. With frame blend off the swap copies the frame instead (as during movies).
@@ -211,6 +235,11 @@ apart. An in-between replay is skipped when the next game frame is already queue
 rate limit (`fps_limit`: 30/60/90/120/144) caps presents per second below the display refresh
 (`render.c present_hz`); the game itself stays at 30.
 
+Picture calibration (`brightness`, `contrast`, `gamma`) is applied in the present shader
+(`gs_gl.c draw_display`, uniform `u_pic`), so executed frames, in-between images and movies get it
+and the overlay drawn afterwards does not. At the neutral values the shader skips it and the
+output is bit-identical; `gs_picture` is the same formula on the CPU (F1's test pattern).
+
 `glGetError` is read only every 64th executed frame (reading it after every flush made the
 render thread wait for the driver's GL thread).
 
@@ -223,13 +252,65 @@ hand-scheduled around them. The programs are compiled statically: `vu_step()` (o
 pair) is inlined into a switch with one case per micro address (`vu_static.inc`), so the C
 compiler folds every decoded field into straight-line code. Both paths share `vu_step()`.
 
-Two hot spots of chunk-model drawing have hand-written C with the same arithmetic and resulting
-VU state: `VU0_CALCPOINT` without point lights (`vu.c calcpoint_fast`, SSE2) and the strip clip
-test of `njCnkCsUvh/Uvn` (`vu_strip_clip`). `RECVX_VU_CHECK=1` runs every call both ways and
-compares the whole VU state; `RECVX_VU_INTERP=1` selects the interpreter; `pc/tests/test_vu.c`
-compares them on random states including overflow and denormal inputs.
-
 Inline EE/VU0 assembly in the decomp is translated to C by `pc/tools/asm2c.py`.
+
+The VU0 time is almost all `VU0_CALCPOINT` (one vertex of a chunk model per call, 97-99% of
+the microcode time in every scene) and the macro-mode ops of the translated asm (skinning,
+matrices, `Ps2AddPrim3DMod`). These run as native code with the same operations in the same
+order, the same clamping (`vu_clampf`: Inf/NaN -> +-FLT_MAX, denormals -> +-0), flags and
+resulting VU state:
+
+- `VU0_CALCPOINT` (`vu.c calcpoint_fast`): every light setup, directional and point lights. The
+  program has no loops and its stalls only delay, so its timing is resolved statically: which
+  DIV/RSQRT result each `MULq` reads (and Q at the end), which FMAC's MAC flags each `FMAND`
+  reads, the CLIP flags at `FCGET`. Work whose result the program overwrites is skipped.
+- Whole vertex runs (`vu0_calcpoint_n`, called by `njCnkCvVnPs2` through a `TARGET_PC` hook in
+  the decomp): four vertices per vector, one per lane, with the same operations per vertex;
+  only the last vertex runs through `calcpoint_fast`, which leaves the VU state of the
+  per-vertex calls (vi11 and the clip flags are folded over the run). On x86 this kernel is
+  also compiled for AVX and chosen at run time (`RECVX_VU_AVX=0`: SSE2).
+- Macro mode: `vu_upper` (`vu0.h`) is inline; at the asm2c call sites all its arguments are
+  constants, so each COP2 op folds to a few vector instructions. The strip clip test of
+  `njCnkCsUvh/Uvn` (`vu_strip_clip`) is the same ops in one loop.
+- The four-lane layer (`vu_simd.h`) is SSE2, or plain C with the same results
+  (`RECVX_VU_PORTABLE`, any non-x86 build).
+
+The other VU0 programs (`CLIP_VIEW_VOLUME_ALL`, `CALC_COLOR`, `CALCPOINT_INIT/END`, ...) take
+about 0.1 ms a frame and stay on the static path, as do the VU1 programs (unused while the
+native 3D paths are on).
+
+Exactness: `RECVX_VU_CHECK=1` runs every microprogram call and every CALCPOINT run both ways
+and compares the whole VU state (and the run's outputs); `RECVX_VU_INTERP=1` runs all
+microprograms (CALCPOINT runs too) through the interpreter. `pc/tests/test_vu.c` (ctest `vu`,
+`vu_portable`) compares CALCPOINT, the runs and every macro op (op, field mask, broadcast,
+overlapping registers) against the interpreter on random states with overflow, denormal,
+zero, -0, Inf and NaN inputs, in SSE2, AVX and plain C. With two NaN operands of ADD or MUL,
+which NaN (and so which clamped sign) survives depends on the compiler's operand order, in the
+interpreter too; the PS2 has no NaN, and the tests use negative NaNs.
+
+### Cost per frame
+
+Game-thread time per game frame (`--profile`: logic + VU0 + VU1 + GIF recording, mean of game
+frames 400-1500 of a headless run; the two builds alternately on an otherwise idle Ryzen 7
+9800X3D, Linux, 32-bit build; run to run within about 20%). Before: the build without the
+native VU0 paths (CALCPOINT native only without point lights).
+
+| Scene | Before | After |
+|---|---|---|
+| `RM_0000`, new game, cutscene skipped | 6.0 ms (VU0 4.9) | 1.1 ms |
+| `RM_0000`, the opening cutscene | 2.7 ms (VU0 1.9) | 0.6 ms |
+| `RM_0060`, walking and shooting zombies (as `layout_check.sh`) | 4.5 ms (VU0 3.2) | 1.0 ms |
+| `RM_0060`, standing while a zombie comes | 7.6 ms (VU0 5.9) | 1.3 ms |
+| `RM_0030` (outdoors, rain) | 5.8 ms (VU0 4.3) | 1.1 ms |
+| Title menu | 0.06 ms (no VU0) | 0.06 ms |
+| RE4 village, whole map (`RM_1310` mod, ~200k vertices a frame) | 23.3 ms | 9.6 ms |
+
+Retail rooms have point lights, so CALCPOINT ran through the static interpreter (~0.8 us a
+vertex); every macro op was a call with register copies. The village has none: its CALCPOINT
+was already native, at ~75 ns a vertex, now ~16 ns. The largest game-thread costs now: CALCPOINT
+runs, `pc_native_strip`, `vu_strip_clip`, the other VU0 programs (~0.1 ms) and, in the
+village, collision. The render thread (GS emulation, replays: `r_exec`, `r_interp`) is separate:
+1.5 ms a game frame in a retail room, 7.7 ms in the village.
 
 ## Audio and movies
 
@@ -241,9 +322,46 @@ Inline EE/VU0 assembly in the decomp is translated to C by `pc/tools/asm2c.py`.
   driver is emulated at the SIF RPC level. The TQ request layer follows the retail
   `TSNDDRV.IRX`; HD/BD banks are played on a model of Sony's hardware synthesizer on SPU2 voices,
   with SPU2 reverb presets read from the disc. SQ MIDI sequences (ambient, door, event sounds)
-  run on a sequencer with the loop conventions of `MODMIDI.IRX`.
-- **Movies** (`movie/`): a PSS demuxer, an MPEG-2 decoder and the PCM soundtrack. Frames are
-  delivered in the IPU's output format and drawn by the game's own upload and sprite code.
+  run on a sequencer with the loop conventions of `MODMIDI.IRX`, on the EE's 10 MIDI ports
+  (ports 0 and 1 carry the room's background ambience; the system sounds - typewriter, item box,
+  computers, doors - rotate over ports 2, 8 and 9). MIDI bank 1 is the door's (`DOOR_xxx.SPQ`,
+  loaded only with the door animation), 2 the common system sequences, 3 the room's ambience.
+  - **Timing**: on the PS2 the driver runs on the IOP beside the game; the EE sends one command
+    batch per frame (`sdSysServer`) and the IOP's 240 Hz timer ticks the TQ slots and the MIDI
+    ports in between. Here the tick runs in the SDL audio callback, every 200 output samples, and
+    the RPC handler queues the sound commands in order, stamped with the time they were sent. A
+    mixed buffer stands for the time since the previous one, so each command runs at its share of
+    the buffer: commands keep their spacing (one game frame) and the ticks fall between them, as
+    on the PS2. Bank data commands (HD/BD/SQ uploads) run at once on the game thread, after what
+    was queued before them, since the EE reuses the staging buffer and polls the checksum. The
+    status block (`se_info`, `midi_info`) is filled from the driver state when the EE reads it
+    (`sceSifGetOtherData`). Without an audio device the commands run at once and the ticks follow
+    the vblank count.
+  - Why: the computers print a letter per frame, each a system MIDI sound that the next letter's
+    `sdMidiPlay` stops (`SdrBgmStop` of the previous port). When the ticks ran only at the next
+    RPC, a sequence's first note was keyed on and stopped in the same instant and never sounded;
+    short notes of other sequences were lost the same way.
+- **Movies** (`movie/`, `pc/glue/movie_glue.c`): the disc's FMVs are PSS files (MPEG-2 program
+  stream: MPEG-2 video, 320 pixels wide, progressive 29.97 fps, and 16-bit PCM in private
+  stream 1), decoded by our own demuxer and MPEG-2 decoder (`pss.c`, `mpeg2.c`). The game's own
+  movie code (Sofdec wrapper `mwwrap.c`, `ps2_sfd_mw.c`) runs unchanged: status PREP -> PLAYING
+  -> PLAYEND, skip, pause, fades.
+  - A **movie thread** (`player.c`) reads the file through its own handle, keeps half a second
+    of sound queued on the output device ahead of what plays, and decodes into a ring of 8 YUV
+    frames. Neither the game thread nor the render thread decodes.
+  - The **game thread** (`readMpeg`) picks the frame for each game frame: one per two vblanks
+    (the game runs at 29.97 Hz during movies, the movies' own rate), so the cadence is even; when
+    the sound's position (samples handed to the device minus those still queued) is a whole
+    frame or more away, the frame number follows it. The movie ends with its last video frame,
+    as on the PS2.
+  - The game's sprite (`vbrank_draw`, as on the PS2) draws the frame, so size, position and
+    the screen fades drawn over it are the game's. Before it, `stream_movie` puts the frame
+    number into the GS stream; the **render thread** (`gs_gl.c gs_movie_bind`) uploads the
+    three planes once per new frame and converts them on the GPU (BT.601 video range, MPEG-2
+    chroma siting, interpolated chroma) into the texture the sprite samples. The PS2 path's
+    upload of the IPU's macroblock output into GS memory (`setImageTag`) is gone.
+  - Movie frames have no tagged 3D, so the in-between path never blends or replays them: each
+    display refresh shows the latest executed frame.
 
 ## Input
 
@@ -269,6 +387,19 @@ Inline EE/VU0 assembly in the decomp is translated to C by `pc/tools/asm2c.py`.
   own. It waits until the player is back to a neutral state (not aiming, reloading, grabbed, in a
   menu, event or door), and on release restores the previous weapon (or the same item in another
   slot) once the knife is lowered. Nothing is restored if the weapon was changed meanwhile.
+- **Modern controls for the fixed cameras** (`fixed_cam_controls`; `pc/glue/modern_glue.c`, the
+  math in `input/modern.c`, ctest `modern`): `pad.c` keeps the frame's screen direction (left
+  stick past a 25% dead zone, else the d-pad rows). `modern_pad` (`bhSetPad`, before the quick
+  knife) replaces the direction bits by forward (`0x1`, plus run `0x400` when the stick is pushed
+  70%) or, more than 100 degrees off, a turn bit; `modern_player` (`bhControlPlayer`, after the
+  mode handler) turns `plp->ay` towards the target, 40% of the way per game frame, at most 30
+  degrees. The target is the direction on the ground of the view matrix's right axis (`cam.mtx`
+  column 0, so cameras with roll work) combined with the stick. While the direction is held across
+  a cut (`cam.ncut`, `cam.camver`) the old cut's axis stays until the direction turns by more than
+  35 degrees or is let go. Untouched: aiming (`mode1` 1), the quick-turn row (back only), the game's
+  own turns (`flg 0x100000`), third person, menus, events and doors; special moves (`mode2` 12 and
+  above 13: stairs, steps, pushing) only get forward, when the direction is within 90 degrees of
+  the facing. Only `plp == &ply`, so in co-op only the local player; nothing is sent.
 - **Mouse in menus** (`pc/glue/menu_glue.c`, hook at the end of `bhSetPad`;
   `input/menu_mouse.c` on the main thread): the mouse drives the screens' own cursor state, so
   keyboard and gamepad work unchanged. Window positions map to the game's 640x480 2D space through
@@ -317,6 +448,7 @@ third-person key binding).
 | `SET_GAME_ONLY` | only while a game runs |
 | `SET_ACTION` (+ `.apply`) | a command, not a value; the native menu runs it when it closes |
 | `SET_NOW` | an action the native menu runs at once |
+| `SET_CALIB` | picture calibration: while the row is chosen, both menus show the grey-step test pattern (`settings_calib`) |
 
 ## Save system
 
@@ -356,6 +488,11 @@ where the rows come from and who does the I/O:
 | `mcDispFileNumber` | numbers past 99 are drawn narrower, ending where two digits end |
 | `ExecuteSysLoadScreen` / `ExecuteSysSaveScreen` | `pc_sysload_native` / `pc_syssave_native`: `system.dat` read at boot, merged (`SysSaveHikaku`) and written by OPTION and the ranking, in one frame without the card screens |
 
+**Sounds**: the native screens keep the card screens' own sound calls (cursor, confirm, cancel,
+the typed-in row's keys and bell after a save); the card-only steps they skip (slot choice, card
+check, the system file's "save?" question) have no screen and play nothing, as no button is
+pressed there.
+
 With the memory card these hooks call the original code; `pc/tools/layout_check.sh` with
 `INI="save_system = 1"` and a scripted card save and load give byte-identical frames to the build
 before the native system.
@@ -389,6 +526,10 @@ ITEMS choice, `RECVX_TEST_SAVE`, the host's partner records (`coop-partners-nn.b
   contraction, but bit-exactness with the EE FPU is not guaranteed.
 - Uninitialized locals are zero (`-ftrivial-auto-var-init=zero`), a deterministic stand-in for
   MWCC's stale registers ([dev/uninitialized-locals.txt](dev/uninitialized-locals.txt)).
+- MWCC compiles a signed division by a power of two as an arithmetic shift (rounding down; C
+  rounds toward zero). Where it matters this is written as the shift under `TARGET_PC`:
+  `sdfunc.c SE_BANK_NO`, the bank of a sound number (negative numbers are the system MIDI
+  sounds: typewriter, item box, computers).
 - Functions that were empty in the retail build stay empty (for example `ADXT_Pause`).
 - `ps2_sg_sd.c Volume_Control`: retail's MIDI fade up writes the current volume into the fade's
   target and returns a stale register; the PC returns the current volume and leaves the target
@@ -425,10 +566,12 @@ Retail bugs fixed because they made frames depend on the layout:
 | `ps2_NaGraphics3D.c Ps2SetPlane` | copies a pointer parameter plus 12 stale stack bytes as the plane's point; the near-plane cone of `njDrawLine3D` (particle lines, search light, laser sight) went through stack addresses read as floats | the point is the camera point (0, 0, -dist) the planes are meant to pass through |
 
 **Real time by design** (as on the PS2, which runs these off the display and sound hardware):
-movies play by vblank count (`RECVX_SKIP_MOVIES` counts game frames instead, so test runs
-repeat), ADX streams report their position from the audio stream, the play time counts vblanks,
+movies play by vblank count, pulled to the sound's position (`RECVX_SKIP_MOVIES` counts game
+frames instead, so test runs repeat), ADX streams report their position from the audio stream, the play time counts vblanks,
 and an in-between image's t follows the clock unless `RECVX_INTERP_T` fixes it. A run that waits
-on these can shift by frames.
+on these can shift by frames. The sound driver ticks with the audio output, so the sound status
+the EE reads (which sounds still play) follows it too: from run to run a sound trace can differ in
+the channel an enemy sound gets and in how many volume/pan updates are sent; the frames do not.
 
 Not covered: other stale or out-of-range reads that the scenarios do not reach. `rand()` is only
 called by the game thread.
@@ -440,8 +583,8 @@ called by the game thread.
   frame chain).
 - `--profile[=file]` writes one CSV line per game frame: total frame time and exclusive time in
   game logic, VU0, VU1, GS emulation + GL submission, interpolation, presentation and idle wait.
-  F1 -> Performance shows the same live. The native `CALCPOINT` is not timed separately and counts
-  as game logic.
+  F1 -> Performance shows the same live. The native `CALCPOINT` (single calls and runs) is not
+  timed separately and counts as game logic; VU0 is the other microprograms.
 - `--profile-samples=file` (Linux, same as `RECVX_PROFILE=file`) samples each thread at 1 kHz of
   its own CPU time; `pc/tools/profile.py build/pc/recvx file [top] [r|g]` summarises by function,
   optionally for the render (`r`) or game (`g`) thread only. `file.maps` lets it name libraries.
@@ -471,6 +614,7 @@ and game frames for game-state aids, as noted. Co-op test aids (`RECVX_COOP_*`,
 | `RECVX_FAST_DEMO=1` | start the attract demo right away |
 | `RECVX_SKIP_MOVIES=1` | movies end after 30 game frames without decoding (repeatable test runs) |
 | `RECVX_SKIP_CINE=n` | skip every cutscene after n game frames, as its skip button |
+| `RECVX_MOVIE=n` | play `MV_n.PSS` in place of every movie (e.g. the intro at start-up with `skip_intro = 0`) |
 
 ### Scripted input
 
@@ -478,7 +622,7 @@ and game frames for game-state aids, as noted. Co-op test aids (`RECVX_COOP_*`,
 |---|---|
 | `RECVX_INPUT="frame:buttons,..."` | scripted pad input by presented frame, e.g. `200:start,205:-` |
 | `RECVX_KEYS="f:key+key,f:-,f:@x:y"` | hold keyboard keys (SDL names, `_` for a space) from presented frame f, sent as key events; `@x:y` clicks at a window pixel |
-| `RECVX_VPAD="f:input+input,..."`, `RECVX_VPAD_TYPE=xbox\|ps5\|generic` | a virtual SDL gamepad holding inputs (ini spelling) from frame f |
+| `RECVX_VPAD="f:input+input,..."`, `RECVX_VPAD_TYPE=xbox\|ps5\|generic` | a virtual SDL gamepad holding inputs (ini spelling) from frame f; `axis=value` holds an axis at -1..1 (`leftx=0.5+lefty=-0.5`: the left stick half up-right) |
 | `RECVX_MENU_MOUSE="f:x:y[:act],..."` | scripted mouse in menus (window pixels; act `l`/`r` click, `L`/`U` left down/up, `w`/`s` wheel) |
 | `RECVX_TPS_MOUSE="frame:dx:dy,..."` | scripted third-person mouse motion |
 | `RECVX_UNFOCUS="f:1,f:0"` | hide the window at frame f (focus loss), `0` shows it again |
@@ -493,6 +637,7 @@ and game frames for game-state aids, as noted. Co-op test aids (`RECVX_COOP_*`,
 | `RECVX_EQUIP="f:item:count[;f:item:count]"` | equip a weapon at game frame f (again later after `;`) |
 | `RECVX_HP="f:hp,..."`, `RECVX_RETRY="f,..."` | set health / set a retry point (Continue resumes in that room) at game frame f |
 | `RECVX_TEST_TYPEWRITER="f,..."` | open the typewriter's save screen at game frame f (as its ink ribbon question's "yes"; no ribbon needed) |
+| `RECVX_TEST_COMPUTER="f:n,..."` | open computer terminal n at game frame f, as the room scripts' `EvtComSet n` (1 self-destruct lock, 2 security lock, 3 Albinoid file, 4-6 3D scanner, 7 password; rooms 9/31, 1/2, 3/12, 0/9, 1/9) |
 | `RECVX_FLAGS="set:bit,..."` | set story flags at the first game frame (1 `ev_flg`, 2 `ky_flg`, 3 `ed_flg`, 7 `it_flg`, 8 `mp_flg`) |
 | `RECVX_INF_AMMO=1`, `RECVX_INF_HEALTH=1` | infinite ammo / health cheats on |
 | `RECVX_NOCLIP="f:mode,..."` | noclip mode 0/1/2 from game frame f, logs position every 15 frames |
@@ -503,6 +648,7 @@ and game frames for game-state aids, as noted. Co-op test aids (`RECVX_COOP_*`,
 | `RECVX_ENEMY_EXTRA=0..3`, `RECVX_ENEMY_PLACE=0/1`, `RECVX_ENEMY_RANDOM=0/1`, `RECVX_ENEMY_SEED=n` | enemy options over the settings |
 | `RECVX_ENEMY_TRACE=dist` | one line per step of every enemy within dist units of a player |
 | `RECVX_KNIFE_TRACE=1`, `RECVX_KNIFE_DROP=1` | quick knife: log its state; drawing the knife empties the previous weapon's slot |
+| `RECVX_POSE_TRACE=file` | one line per game frame: the player's state (modes, weapon, motion, frame, `at_flg`, `ay`, `wax`) and every node of the body as drawn ("You appear as" included) in its base matrix's frame; twitches show as nodes moving back and forth (`pc/glue/pose_trace.c`) |
 | `RECVX_STRESS_SETTINGS=1` | volumes change every frame (settings/audio thread test) |
 
 ### Rendering
@@ -523,10 +669,12 @@ and game frames for game-state aids, as noted. Co-op test aids (`RECVX_COOP_*`,
 | `RECVX_REPLAY_RTSTART=0` | in-between images start from the executed frame's display image (old behaviour) |
 | `RECVX_DISPLAY_HZ=n` | assume an n Hz display (e.g. 1000 with vsync off: present as fast as possible) |
 | `RECVX_TRACE_PRESENT=file` | one line per present: frame, t, start time, swap duration |
+| `RECVX_MOVIE_TRACE=file` | one line per game frame of a movie: time, vblanks, frame shown, game-thread time, sound position and queue, sound minus picture (ms); at the end decode times and frames shown before they were decoded |
 | `RECVX_GPU_TIME=1` | every 2 s: frames and in-between images per second, render-thread CPU and GPU time |
 | `RECVX_TRACE_NTEX=1` | log native texture binds, misses and render-texture captures |
 | `RECVX_TRACE_DMA=1` | log GIF DMA chain tags |
-| `RECVX_VU_CHECK=1`, `RECVX_VU_INTERP=1` | compare static VU code with the interpreter on every call / use the interpreter |
+| `RECVX_VU_CHECK=1`, `RECVX_VU_INTERP=1` | compare the static and native VU code with the interpreter on every call / use the interpreter |
+| `RECVX_VU_AVX=0` | the CALCPOINT run kernel in SSE2 instead of AVX |
 | `RECVX_DUMP_CALCPOINT=n`, `RECVX_DUMP_VU1=n` | dump VU0/VU1 state at the n-th call |
 | `RECVX_EFF_TRACE=1` | log live effects each frame |
 | `RECVX_TPS_TRACE=1/2`, `RECVX_TPS_AIM_AT=f`, `RECVX_TPS_ORBIT=deg`, `RECVX_ATMOS_TRACE=1` | third person: log free aim (`=2`: aim at the locked enemy, `f` along its hit capsule); turn the view about the player; log light and fog ([THIRDPERSON.md](THIRDPERSON.md)) |
@@ -536,10 +684,12 @@ and game frames for game-state aids, as noted. Co-op test aids (`RECVX_COOP_*`,
 | Variable | Effect |
 |---|---|
 | `RECVX_TRACE_TASKS=1` | game task (`sys->tk_flg`) changes |
-| `RECVX_TRACE_SND=1` | sound driver commands and key-ons |
+| `RECVX_TRACE_SND=1` | sound driver commands, key-ons, dropped requests (bank not loaded, no such program or block), stolen voices and notes released before they sounded (key-ons print from the audio thread) |
 | `RECVX_TRACE_MC=1` | memory card commands and results |
 | `RECVX_PAD_TRACE=1` | DS2 buttons of the pad report when they change |
+| `RECVX_MODERN_TRACE=1` | modern controls: each frame a direction is translated, the direction, cut (and whether the previous cut is held), target and facing angle, the player's place on screen and the camera |
 | `RECVX_MENU_TRACE=1` | menu clicks with the menu state |
+| `RECVX_ITEM_TRACE=1` | the bag (equipped slot, lighter slot, slots) and the metal detector's security boxes (`sys->itm[192]`, `[224]`) whenever a word changes, with the box screen's cursors, by presented frame; in 0/9 also the detector's floor zone (`sys->flr_idx`), its "metal carried" flag (`rm_flg` bit 2) and whether it went off (`ev_flg` bit 53) |
 | `RECVX_PROFILE=file` | sampling profiler (as `--profile-samples`) |
 
 ## Tools

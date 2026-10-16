@@ -79,6 +79,7 @@ typedef struct {
     int phase;                        /* 0 attack 1 decay 2 sustain 3 release */
     int32_t level, wait;
     uint32_t age;
+    int heard;                        /* the mixer has played a sample of it (RECVX_TRACE_SND: released before it sounded) */
 } Voice;
 
 /* TQ slot (tqreq_tbl entry) */
@@ -170,7 +171,10 @@ static int next_sample(Voice* v, int16_t* out)
 static void key_on(const SndBlob* hd, const SndBlob* bd, MidiCh* m, int note, int vel)
 {
     uint32_t prog = hd_entry(hd, HD_PROG, m->prog);
-    if (!prog || !bd->size) return;
+    if (!prog || !bd->size) {
+        if (trace_snd()) printf("tsnd: key-on prog %d note %d dropped (%s)\n", m->prog, note, prog ? "no samples loaded" : "no such program");
+        return;
+    }
     for (int s = 0; s < rd8(hd, prog + 4); s++) {
         uint32_t split = prog + rd32(hd, prog) + s * rd8(hd, prog + 5);
         uint32_t sset;
@@ -187,6 +191,7 @@ static void key_on(const SndBlob* hd, const SndBlob* bd, MidiCh* m, int note, in
             if (!v) {   /* steal the oldest */
                 v = &voice[0];
                 for (int i = 1; i < VOICES; i++) if (voice[i].age < v->age) v = &voice[i];
+                if (trace_snd()) printf("tsnd: all %d voices busy, the oldest (prog %d) stopped\n", VOICES, v->chan ? v->chan->prog : -1);
             }
             memset(v, 0, sizeof(*v));
             v->on = 1; v->chan = m; v->note = note; v->bd = bd;
@@ -218,7 +223,10 @@ static void key_on(const SndBlob* hd, const SndBlob* bd, MidiCh* m, int note, in
 static void key_off(const MidiCh* m, int note)
 {
     for (int i = 0; i < VOICES; i++)
-        if (voice[i].on && voice[i].chan == m && (note < 0 || voice[i].note == note) && voice[i].phase != 3) voice[i].phase = 3, voice[i].wait = 0;
+        if (voice[i].on && voice[i].chan == m && (note < 0 || voice[i].note == note) && voice[i].phase != 3) {
+            if (!voice[i].heard && trace_snd()) printf("tsnd: key-off prog %d note %d before it sounded\n", m->prog, voice[i].note);
+            voice[i].phase = 3, voice[i].wait = 0;
+        }
 }
 
 /* ---------------------------------------------------------------- SPU2 reverb */
@@ -310,57 +318,114 @@ static void set_reverb(int core, int mode, int depth)
     r->depth = (int16_t)depth / 32768.0f;
 }
 
+/* n samples of every voice into acc (dry) and fx[core] (reverb send), interleaved stereo */
+static void render(float* acc, float* fx0, float* fx1, int n)
+{
+    for (int i = 0; i < VOICES; i++) {
+        Voice* v = &voice[i];
+        MidiCh* m;
+        float gl, gr, g, *fx;
+        uint32_t step;
+        int pan;
+        if (!v->on) continue;
+        m = v->chan;
+        fx = v->core ? fx1 : fx0;
+        {
+            int b = m->bend - 0x2000;
+            double semis = (b >= 0 ? b * v->bend_hi : b * v->bend_lo) / (8192.0 * 128.0);
+            double p = v->base_pitch * pow(2.0, semis / 12.0) * 4096.0;
+            step = p > 0x3FFF ? 0x3FFF : (uint32_t)p;
+        }
+        pan = mono ? 64 : m->pan + v->pan;
+        if (pan < 0) pan = 0; else if (pan > 127) pan = 127;
+        g = master * user_volume * v->vol * m->vol / 127.0f;
+        gl = g * (pan <= 64 ? 1.0f : (127 - pan) / 63.0f);
+        gr = g * (pan >= 64 ? 1.0f : pan / 64.0f);
+        for (int k = 0; k < n; k++) {
+            float smp = v->s0 + (v->s1 - v->s0) * (v->frac / 4096.0f), env;
+            if (!adsr_tick(v)) { v->on = 0; break; }
+            v->heard = 1;
+            env = v->level / 32768.0f;
+            if (v->dry) { acc[k * 2] += smp * env * gl; acc[k * 2 + 1] += smp * env * gr; }
+            if (v->wet) { fx[k * 2] += smp * env * gl; fx[k * 2 + 1] += smp * env * gr; }
+            for (v->frac += step; v->frac >= 4096; v->frac -= 4096) {
+                v->s0 = v->s1;
+                if (!next_sample(v, &v->s1)) { v->on = 0; break; }
+            }
+            if (!v->on) break;
+        }
+    }
+}
+
+/* ---------------------------------------------------------------- command queue (game thread -> mixer) */
+/*
+ * On the PS2 the driver runs on the IOP beside the game: commands arrive whenever the EE sends
+ * them and a 240 Hz timer ticks the TQ slots and the MIDI ports in between. Here the tick runs in
+ * the mixer, every 200 output samples, and the game thread queues the driver commands (in order,
+ * stamped with the time they were sent). A mixed buffer stands for the time since the previous
+ * one: each queued command runs at its share of the buffer, so commands keep their spacing and a
+ * sequence started in one frame plays its first ticks before the next frame's commands stop it.
+ * Without an audio device the commands run at once and the ticks follow the vblank count
+ * (snd_synth_update).
+ */
+#define QLEN 1024
+static struct { uint64_t t; uint8_t len, c[8]; } q[QLEN];
+static unsigned q_r, q_w;            /* (lock) */
+static uint64_t mix_prev_ns;         /* when the previous buffer was mixed */
+static int tick_wait;                /* samples to the next driver tick */
+static void driver_tick(void);
+
+void snd_synth_flush(void)
+{
+    for (; q_r != q_w; q_r++) snd_synth_command(q[q_r % QLEN].c, q[q_r % QLEN].len);
+}
+
+void snd_synth_post(const uint8_t* c, int len)
+{
+    if (!stream) { snd_synth_command(c, len); return; }
+    if (q_w - q_r == QLEN) snd_synth_flush();   /* the mixer is not pulling: run them now */
+    q[q_w % QLEN].t = SDL_GetTicksNS();
+    q[q_w % QLEN].len = (uint8_t)len;
+    memcpy(q[q_w % QLEN].c, c, (size_t)len);
+    q_w++;
+}
+
 static void SDLCALL mix(void* ud, SDL_AudioStream* s, int additional, int total)
 {
     float acc[512 * 2], fx[2][512 * 2];
     int16_t out[512 * 2];
+    int frames = additional / 4 > 0 ? additional / 4 : 1;
+    uint64_t now = SDL_GetTicksNS(), from = now - (uint64_t)frames * 1000000000u / OUT_RATE;
     (void)ud; (void)total;
-    while (additional > 0) {
-        int n = additional / 4 < 512 ? additional / 4 : 512;
-        if (n <= 0) n = 1;
+    if (mix_prev_ns && mix_prev_ns < now && now - mix_prev_ns < 1000000000u) from = mix_prev_ns;
+    mix_prev_ns = now;
+    for (int done = 0; done < frames; ) {
+        int n = frames - done < 512 ? frames - done : 512;
         memset(acc, 0, sizeof(float) * n * 2);
         memset(fx, 0, sizeof(fx));
         SDL_LockMutex(lock);
-        for (int i = 0; i < VOICES; i++) {
-            Voice* v = &voice[i];
-            MidiCh* m;
-            float gl, gr, g;
-            uint32_t step;
-            int pan;
-            if (!v->on) continue;
-            m = v->chan;
-            {
-                int b = m->bend - 0x2000;
-                double semis = (b >= 0 ? b * v->bend_hi : b * v->bend_lo) / (8192.0 * 128.0);
-                double p = v->base_pitch * pow(2.0, semis / 12.0) * 4096.0;
-                step = p > 0x3FFF ? 0x3FFF : (uint32_t)p;
+        for (int k = 0; k < n; ) {
+            int seg = n - k;
+            for (; q_r != q_w && q[q_r % QLEN].t < now; q_r++) {   /* commands due at this sample */
+                uint64_t t = q[q_r % QLEN].t;
+                int at = t > from ? (int)((t - from) * (uint64_t)frames / (now - from)) - done - k : 0;
+                if (at > 0) { if (at < seg) seg = at; break; }
+                snd_synth_command(q[q_r % QLEN].c, q[q_r % QLEN].len);
             }
-            pan = mono ? 64 : m->pan + v->pan;
-            if (pan < 0) pan = 0; else if (pan > 127) pan = 127;
-            g = master * user_volume * v->vol * m->vol / 127.0f;
-            gl = g * (pan <= 64 ? 1.0f : (127 - pan) / 63.0f);
-            gr = g * (pan >= 64 ? 1.0f : pan / 64.0f);
-            for (int k = 0; k < n; k++) {
-                float smp = v->s0 + (v->s1 - v->s0) * (v->frac / 4096.0f), env;
-                if (!adsr_tick(v)) { v->on = 0; break; }
-                env = v->level / 32768.0f;
-                if (v->dry) { acc[k * 2] += smp * env * gl; acc[k * 2 + 1] += smp * env * gr; }
-                if (v->wet) { fx[v->core][k * 2] += smp * env * gl; fx[v->core][k * 2 + 1] += smp * env * gr; }
-                for (v->frac += step; v->frac >= 4096; v->frac -= 4096) {
-                    v->s0 = v->s1;
-                    if (!next_sample(v, &v->s1)) { v->on = 0; break; }
-                }
-                if (!v->on) break;
-            }
+            if (tick_wait <= 0) { driver_tick(); tick_wait = OUT_RATE / 240; }
+            if (seg > tick_wait) seg = tick_wait;
+            render(acc + k * 2, fx[0] + k * 2, fx[1] + k * 2, seg);
+            k += seg;
+            tick_wait -= seg;
         }
         for (int c = 0; c < 2; c++) if (rev[c].mode) reverb_run(&rev[c], fx[c], acc, n);
         SDL_UnlockMutex(lock);
+        done += n;
         for (int k = 0; k < n * 2; k++) {
             float f = acc[k];
             out[k] = (int16_t)(f > 32767 ? 32767 : f < -32768 ? -32768 : f);
         }
         SDL_PutAudioStreamData(s, out, n * 4);
-        additional -= n * 4;
     }
 }
 
@@ -464,7 +529,7 @@ static void tq_tick(void)
  * CC6 = id, CC38 = count marks its end (count 0 = forever; TSNDDRV's repeat callback always
  * allows repeating). Up to 8 loop ids per port.
  */
-#define MIDI_PORTS 8
+#define MIDI_PORTS 10   /* the EE's 10 MIDI handles (ps2_sg_sd.c __midi_value); its system slot rotates over ports 2, 8 and 9 */
 typedef struct {
     int playing, bank;
     const SndBlob* sq;
@@ -608,13 +673,13 @@ static void port_play(int port, int bank, int vol, int block)
     MidiPort* p;
     const SndBlob* sq;
     uint32_t chunk, max, ofs, blk;
-    if (port >= MIDI_PORTS || bank >= 4) return;
+    if (port >= MIDI_PORTS || bank >= 4) goto drop;
     sq = &g_snd_banks.sq[bank];
     chunk = rd32(sq, 0x24);                                  /* Sequ header: midiChunkAddr */
     max = rd32(sq, chunk + 12);
-    if (chunk == 0xFFFFFFFFu || max == 0xFFFFFFFFu || (uint32_t)block > max || !g_snd_banks.midi_hd[bank].size) return;
+    if (chunk == 0xFFFFFFFFu || max == 0xFFFFFFFFu || (uint32_t)block > max || !g_snd_banks.midi_hd[bank].size) goto drop;
     ofs = rd32(sq, chunk + 16 + block * 4);
-    if (ofs == 0xFFFFFFFFu) return;
+    if (ofs == 0xFFFFFFFFu) goto drop;
     port_stop(port);
     p = &mport[port];
     blk = chunk + ofs;
@@ -634,25 +699,35 @@ static void port_play(int port, int bank, int vol, int block)
     p->playing = 1;
     p->wait = read_delta(p);
     midi_bits |= 1u << port;
+    return;
+drop:
+    if (trace_snd()) printf("tsnd: MIDI port %d bank %d block %d dropped (no such port, bank or block)\n", port, bank, block);
 }
 
-/* run the driver's 240 Hz tick up to the current vblank (59.94 Hz -> 4.004 ticks) */
+/* the driver's 240 Hz tick */
+static void driver_tick(void)
+{
+    tq_tick();
+    for (int i = 0; i < MIDI_PORTS; i++) port_tick(i);
+}
+
+/* no audio device: run the ticks up to the current vblank (59.94 Hz -> 4.004 ticks) */
 void snd_synth_update(void)
 {
     uint64_t due = ps2_vblank_count() * 4004 / 1000;
+    if (stream) return;   /* the mixer ticks (mix) */
     if (due - ticks_done > 240) ticks_done = due - 240;
-    while (ticks_done < due) {
-        tq_tick();
-        for (int i = 0; i < MIDI_PORTS; i++) port_tick(i);
-        ticks_done++;
-    }
+    for (; ticks_done < due; ticks_done++) driver_tick();
 }
 
 static void tq_request(int port, int tq, int ch, int vol, int pan, int pitch, int xb)
 {
     TqSlot* t;
     if (port == 1 && !xb && tq >= SND_PARTNER_TQ && g_snd_banks.arms2_hd.size) xb = XB_PARTNER;
-    if (port >= SE_PORTS || ch >= 16 || !slot_hd(port, xb)->size) return;
+    if (port >= SE_PORTS || ch >= 16 || !slot_hd(port, xb)->size) {
+        if (trace_snd()) printf("tsnd: SE port %d ch %d prog %d dropped (bank not loaded)\n", port, ch, tq);
+        return;
+    }
     t = &slot[port][ch];
     t->xb = (uint8_t)xb;
     t->count = tq_length(slot_hd(port, xb), xb == XB_PARTNER ? tq - SND_PARTNER_TQ : tq);
@@ -700,6 +775,7 @@ void snd_partner_arms(const void* hd, uint32_t hd_size, const void* bd, uint32_t
 {
     SndBlob *h = &g_snd_banks.arms2_hd, *b = &g_snd_banks.arms2_bd;
     snd_synth_lock();
+    snd_synth_flush();   /* queued requests play from the bank they were sent for */
     for (int i = 0; i < VOICES; i++) if (voice[i].bd == b) voice[i].on = 0;   /* playing the old bank */
     for (int ch = 0; ch < 16; ch++) if (slot[1][ch].xb == XB_PARTNER) { slot[1][ch].flags = 0; slot[1][ch].xb = 0; active_bits[1] &= ~(1u << ch); }
     if (!hd || !blob_set(h, hd, hd_size) || !blob_set(b, bd, bd_size)) h->size = b->size = 0;
@@ -708,6 +784,7 @@ void snd_partner_arms(const void* hd, uint32_t hd_size, const void* bd, uint32_t
 
 void snd_synth_xbanks_stop(void)
 {
+    snd_synth_flush();
     for (int i = 0; i < VOICES; i++)
         if (voice[i].on && voice[i].bd >= g_snd_banks.xbd && voice[i].bd < g_snd_banks.xbd + 31) voice[i].on = 0;
     for (int p = 0; p < SE_PORTS; p++)
@@ -747,11 +824,13 @@ void snd_synth_command(const uint8_t* c, int len)
         return;
     }
     case 0x4B: master = ((c[1] << 8) | c[2]) / 16383.0f; return;
-    case 0x2F: return;   /* status put: se_info/midi_info are written after every RPC */
-    case 0x20: port_play(c[1] & 7, c[2], c[3], c[4]); return;   /* SdrBgmReq: port, bank, vol, block */
-    case 0x21: if ((c[1] & 7) < MIDI_PORTS) port_stop(c[1] & 7); return;
+    case 0x2F: return;   /* status put: se_info/midi_info are written when the EE reads them (snd_iop_status) */
+    case 0x20: port_play(c[1], c[2], c[3], c[4]); return;   /* SdrBgmReq: port, bank, vol, block */
+    case 0x21: if (c[1] < MIDI_PORTS) port_stop(c[1]); return;
     case 0x27: {   /* SdrBgmChg: port, vol, pan, pitch bend (LSB, MSB) */
-        MidiPort* p = &mport[c[1] & 7];
+        MidiPort* p;
+        if (c[1] >= MIDI_PORTS) return;
+        p = &mport[c[1]];
         p->vol = c[4] & 0x7F; p->pan = c[5] & 0x7F; p->pitch = (uint16_t)((c[6] & 0x7F) | ((c[7] & 0x7F) << 7));
         for (int ch = 0; ch < 16; ch++) port_apply(p, ch);
         return;

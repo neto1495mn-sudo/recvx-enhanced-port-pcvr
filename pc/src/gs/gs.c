@@ -150,6 +150,7 @@ static void vertex_kick(uint32_t x, uint32_t y, uint32_t z, uint32_t f, int draw
 void gs_write_reg(int reg, uint64_t v)
 {
     if (reg == NATIVE_MARKER_REG) { native_marker(v); return; }   /* native 3D in GS packet order */
+    if (reg == STREAM_TAG_REG) { stream_tag_last((uint32_t)v, (uint32_t)(v >> 32)); return; }
     stream_reg(reg, v);
 }
 void gs_upload_image(const uint8_t* src, uint32_t bytes) { stream_image(src, bytes); }

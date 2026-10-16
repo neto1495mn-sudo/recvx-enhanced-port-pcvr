@@ -115,17 +115,28 @@ renderer, skipped intro and door animations. Turn these off for a presentation c
 | Display-rate frames | `interpolate` | "Enhanced mode": in-between frames blended from the last two game frames, up to the display's refresh rate. The game logic stays at its original 30 FPS, so gameplay is unchanged. **On**; off is "vanilla" |
 | Frame blend (trail) | `frame_blend` | the PS2's motion trail (each frame mixed over the previous one). Auto, **Off**, On; Auto is on in vanilla and off with display-rate frames |
 | Cutscene bars, Camera vignette, Screen effects | `cinema_bars`, `screen_filter`, `screen_effects` | Original (4:3), **Stretch to width**, Off: how these full-screen layers behave in widescreen |
+| Brightness | `brightness` | -50 to +50, **0**: lifts or lowers the dark end of the picture |
+| Contrast | `contrast` | 50% to 150%, **100%**: spreads or narrows the tones around mid-grey |
+| Gamma | `gamma` | 0.5 to 2.0, **1.0** (in the ini in tenths, 5 to 20): higher brightens the mid-tones, black and white stay |
+| Reset picture calibration | | brightness, contrast and gamma back to neutral |
 | **Renderer** | | |
 | Native 3D renderer | `native_3d` | **on**: 3D models projected and clipped by the GPU instead of the emulated VU1/GS path |
 | Native textures | `native_tex` | **on**: textures uploaded once instead of on every switch |
 | Cull off-screen models | `model_cull` | **on** (as on the PS2); off stops models popping at the screen edges |
+
+Brightness, contrast and gamma change the game's picture (menus and movies included), not the F1
+overlay; at the neutral values the picture is exactly the original. While one of them is chosen,
+both menus show a test pattern: a black strip and a white strip with five grey squares each (in F1
+in the setting's tooltip). Turn Brightness until the left square on the black strip is barely
+visible, and Contrast until the right square on the white strip is barely visible.
 
 ### Gameplay
 
 | Setting | ini key | Effect |
 |---|---|---|
 | Skip intro | `skip_intro` | on: boot straight into the title menu (next start) |
-| Skip door animations | `skip_doors` | on: room transitions use the game's load screen instead of the door/stairs/ladder animation |
+| Skip door animations | `skip_doors` | on: room transitions use the game's load screen instead of the door/stairs/ladder animation (and its sounds) |
+| Battle Game unlocked | `battle_unlocked` | **on**: the title menu offers BATTLE GAME without a finished playthrough (Claire to start with; the other characters unlock as in the original). Saves and system data are not changed; off: only after a cleared game, as the original |
 | Quick knife | `quick_knife` | on: hold the quick-knife key to draw the combat knife without opening the inventory; release to get the previous weapon back |
 | **Saves** | | |
 | Save system | `save_system` | **Native files** (0): every save a file in `save/saves`, no limit, no memory card screens; Memory card (original) (1): see [Saves](#saves) |
@@ -139,8 +150,9 @@ renderer, skipped intro and door animations. Turn these off for a presentation c
 
 Input source and Gamepad (see [Input source](#input-source-per-window)), **Mouse in menus**
 (`menu_mouse`, **on**: point and click in the inventory, item box, map, files, OPTION and these
-menus; right click goes back; drag to rotate and wheel to zoom when examining an item), then the
-bindings ([Rebinding](#rebinding)).
+menus; right click goes back; drag to rotate and wheel to zoom when examining an item), **Fixed
+camera controls** (`fixed_cam_controls`: **Classic (tank)** 0, Modern (camera-relative) 1; see
+[Modern controls](#modern-controls-fixed-cameras)), then the bindings ([Rebinding](#rebinding)).
 
 ### Third person
 
@@ -192,6 +204,30 @@ The game's own key types (OPTION -> KEY CONFIG) still decide what each PS2 butto
 
 Third person (keyboard and mouse): W/S/A/D move and turn, Shift run, E action, Q cancel,
 Tab inventory, M map, right mouse aim, left mouse fire.
+
+### Modern controls (fixed cameras)
+
+F1 -> Controls or ENHANCED SETTINGS -> CONTROLS: **Fixed camera controls** = Modern
+(camera-relative), ini `fixed_cam_controls = 1`. Off (Classic, tank controls) by default. Like the
+alternate controls of the Resident Evil HD remasters:
+
+- The **left stick** or the **d-pad** (arrow keys on the keyboard) points where the character
+  walks on screen; it turns there quickly (180 degrees in about 0.3 s) and walks. Pushed far
+  (70%) the stick runs; the run button runs as before (on the keyboard and d-pad, which have no
+  half push). Pointing more than 100 degrees away from where the character faces turns it on the
+  spot first.
+- **Camera cuts**: while the direction is held through a cut, it keeps meaning what it meant in
+  the previous camera, so the character keeps going the same way. The new camera takes over when
+  the direction turns by more than 35 degrees or is let go.
+- **Aiming** works as in Classic: holding the aim button stops, the stick or d-pad turns and aims
+  up / down, the game's auto-aim and the quick knife are unchanged. Letting go of aim returns to
+  modern movement.
+- **Quick turn**: bind the "Quick turn" row (unbound by default; it holds back, then run). While
+  it is held the stick does not walk.
+- Stairs, steps and ladders still start with the action button; while climbing or pushing a box
+  the direction only counts as "forward" when it points roughly where the character faces.
+- Third person keeps its own controls; this option only applies to the fixed cameras. In co-op
+  it changes only your own player.
 
 Hotkeys:
 

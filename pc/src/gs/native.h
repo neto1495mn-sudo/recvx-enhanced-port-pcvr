@@ -23,6 +23,10 @@ void native_strip(unsigned int prim, const NativeVertex* v, int n);
    emitted exactly where the GS would have drawn it. mesh/strip: identity for interpolation
    (0: draw within the current mesh tag). */
 #define NATIVE_MARKER_REG 0x7F
+/* GS register write that follows an ordering-table entry drawn by the GS path inside an effect
+   (ps2_dummy.c Ps2AddOT): the primitive group just drawn is the effect's (low 32 bits: its
+   tag, high: the polygon's number in it), for frame interpolation (stream_tag_last) */
+#define STREAM_TAG_REG 0x7E
 uint32_t native_defer(unsigned int prim, const NativeVertex* v, int n, uint32_t mesh, uint32_t strip);
 void     native_marker(uint64_t v);
 /* Points, lines and sprites (and anything else the GS would draw from its registers): the

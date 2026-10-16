@@ -32,10 +32,14 @@ typedef struct {
     int  screen_filter;      /* camera filter (vignette): 0 original 4:3, 1 stretched to the view, 2 off */
     int  cinema_bars;        /* cutscene letterbox bars: same modes */
     int  screen_effects;     /* full-screen effect overlays (noise/scanline layers): same modes */
+    int  brightness;         /* picture calibration in the present pass (gs_gl.c draw_display): -50..50, 0 neutral */
+    int  contrast;           /* 50..150 %, 100 neutral */
+    int  gamma;              /* tenths, 5..20, 10 neutral */
     int  skip_doors;
     int  quick_knife;        /* holding the quick-knife key draws the knife (pc/glue/knife_glue.c) */
     int  model_cull;         /* skip actors/objects whose test points are off-screen (as the PS2) */
     int  skip_intro;         /* boot straight into the title menu */
+    int  battle_unlocked;    /* the title menu offers BATTLE GAME without a cleared game (pc/glue/lobby_glue.c) */
     int  no_ink_ribbon;      /* typewriters save without an ink ribbon and use none (in co-op the host's; pc_no_ink_ribbon) */
     int  save_system;        /* 0 native save files (<save_dir>/saves, default), 1 the memory card (<save_dir>/card0) */
     int  native_3d;
@@ -55,6 +59,7 @@ void overlay_point(int flags, float x, float y);   /* render thread, before over
 float gs_wanted_scale(void);
 void  gs_set_scale(float scale);
 void  gs_update_widescreen(void);   /* apply g_config.aspect / window aspect (between frames) */
+float gs_picture(float c);          /* a 0..1 grey through brightness/contrast/gamma, as the present shader */
 void host_pump_events(void);
 void host_present(void);
 void host_fatal(const char* fmt, ...);

@@ -10,6 +10,7 @@
 #include "cheat.h"
 #include "menu_mouse.h"
 #include "bindings.h"
+#include "modern.h"
 #include "enemies.h"
 #include "lobby.h"
 #include "savestore.h"
@@ -55,6 +56,10 @@ static const char* scale_name(int v, char* b, int n)
     return b;
 }
 static const char* tenths(int v, char* b, int n) { snprintf(b, n, "%d.%d", v / 10, v % 10); return b; }
+/* picture calibration (applied in gs_gl.c draw_display); the test pattern both menus show
+   while a SET_CALIB row is chosen: squares on a black and on a white strip, the faint ones at the ends */
+const unsigned char settings_calib[2][CALIB_STEPS] = { { 5, 10, 16, 24, 32 }, { 223, 231, 239, 245, 250 } };
+static void picture_reset(void) { g_config.brightness = 0; g_config.contrast = 100; g_config.gamma = 10; settings_save_later(); }
 /* "You appear as": positions in the menus' list (actors.c, without event doubles) */
 static int chr_get(void) { return appear_pos(g_coop.chr); }
 static void chr_set(int v) { g_coop.chr = appear_at(v); }
@@ -98,6 +103,7 @@ static const char* const loots[] = { "Shared", "Individual" };
 static const char* const conns[] = { "Automatic", "Direct (P2P)", "Via server" };
 static const char* const atmos_names[] = { "Per cut (original)", "Smooth" };
 static const char* const free_cam_names[] = { "B (behind character)", "A (free)" };
+static const char* const fixed_cam_names[] = { "Classic (tank)", "Modern (camera-relative)" };
 static const char* const noclips[] = { "Off", "Through walls", "Walls + fly" };
 static const char* const sources[] = { "Auto", "Keyboard/mouse only", "Gamepad only" };
 static const char* const extras[] = { "Off", "Up to 1 per room", "Up to 2 per room", "Up to 3 per room" };
@@ -116,12 +122,22 @@ const Setting g_settings[] = {
     { SP_DISPLAY, "Cutscene bars", V(g_config.cinema_bars), 0, 2, 1, modes3, .help = "Original keeps them 4:3 in widescreen; fades always fill the screen." },
     { SP_DISPLAY, "Camera vignette", V(g_config.screen_filter), 0, 2, 1, modes3, .help = "Original keeps it 4:3 in widescreen." },
     { SP_DISPLAY, "Screen effects", V(g_config.screen_effects), 0, 2, 1, modes3, .help = "Full-screen effect layers. Original keeps them 4:3 in widescreen." },
+    { SP_DISPLAY, "Brightness", V(g_config.brightness), -50, 50, 1, .fmt = "%+d", .flags = SET_CALIB,
+      .help = "Lifts or lowers the dark end of the game's picture. Black strip: the left square should be barely visible." },
+    { SP_DISPLAY, "Contrast", V(g_config.contrast), 50, 150, 1, .fmt = "%d%%", .flags = SET_CALIB,
+      .help = "Spreads or narrows the tones around mid-grey. White strip: the right square should be barely visible." },
+    { SP_DISPLAY, "Gamma", V(g_config.gamma), 5, 20, 1, .name = tenths, .flags = SET_CALIB,
+      .help = "Higher brightens the mid-tones, lower darkens them; black and white stay." },
+    { SP_DISPLAY, "Reset picture calibration", NULL, .flags = SET_ACTION | SET_NOW, .apply = picture_reset,
+      .help = "Brightness, contrast and gamma back to neutral: the original picture." },
     { SP_DISPLAY, "Native 3D renderer", V(g_config.native_3d), 0, 1, 1, .help = "3D models projected and clipped by the GPU instead of the emulated VU1 and GS.", .group = "RENDERER" },
     { SP_DISPLAY, "Native textures", V(g_config.native_tex), 0, 1, 1, .help = "Textures uploaded once and bound afterwards instead of re-uploaded on every switch." },
     { SP_DISPLAY, "Cull off-screen models", V(g_config.model_cull), 0, 1, 1, .help = "As on the PS2. Off: models no longer pop at the screen edges. Third person never culls." },
 
     { SP_GAMEPLAY, "Skip intro", V(g_config.skip_intro), 0, 1, 1, .flags = SET_RESTART, .help = "Boot straight into the title menu: no warning screen, logos or intro movie.", .group = "GENERAL" },
     { SP_GAMEPLAY, "Skip door animations", V(g_config.skip_doors), 0, 1, 1, .help = "Room transitions use the game's load screen instead of the door, stairs or ladder animation." },
+    { SP_GAMEPLAY, "Battle Game unlocked", V(g_config.battle_unlocked), 0, 1, 1,
+      .help = "The title menu offers BATTLE GAME without a finished playthrough. Saves and records stay as they are; off: only after a cleared game, as the original." },
     { SP_GAMEPLAY, "Quick knife", V(g_config.quick_knife), 0, 1, 1,
       .help = "Hold the quick-knife key (Space, right trigger; see CONTROLS) to draw the knife without the inventory; release it for the weapon before." },
     { SP_GAMEPLAY, "Save system", V(g_config.save_system), 0, 1, 1, save_systems,
@@ -143,6 +159,9 @@ const Setting g_settings[] = {
       .help = "Any: the first one connected. 1-4: the gamepad the system numbers so (Xbox: its slot / light, PlayStation and "
               "Switch pads show it on their player lights); give each window its own number for local co-op." },
     { SP_CONTROLS, "Mouse in menus", V(g_menu_mouse.on), 0, 1, 1, .help = "Inventory, item box, map, files and these menus: point, left click selects, right click goes back." },
+    { SP_CONTROLS, "Fixed camera controls", V(g_modern_on), 0, 1, 1, fixed_cam_names,
+      .help = "Modern: the left stick or the d-pad (arrow keys) walks where it points on screen, pushed far or with run it runs; "
+              "aiming and the quick turn as Classic. Not in third person." },
 
     { SP_TPS, "Over-the-shoulder camera", V(g_tps.on), 0, 1, 1, .help = "Third person: mouse/keyboard controls and free aim. Events, doors and menus keep the original camera.", .group = "CAMERA" },
     { SP_TPS, "Mouse/keyboard camera", V(g_tps.free_cam), 0, 1, 1, free_cam_names,

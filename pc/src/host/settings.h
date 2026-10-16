@@ -19,7 +19,10 @@ enum {
     SET_ACTION = 4,       /* a command (apply runs it), no value */
     SET_GAME_ONLY = 8,    /* only while a game runs (not at the title) */
     SET_NOW = 16,         /* action: the native menu runs it at once, not when it closes */
+    SET_CALIB = 32,       /* picture calibration: the menus show settings_calib while it is chosen */
 };
+enum { CALIB_STEPS = 5 };
+extern const unsigned char settings_calib[2][CALIB_STEPS];   /* grey levels of the squares: [0] on black, [1] on white */
 
 typedef struct Setting {
     int page;                         /* SP_* */

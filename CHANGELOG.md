@@ -1,5 +1,180 @@
 # Changelog
 
+## 0.4.0 (2026-10-16)
+
+### Gameplay
+
+- **Battle Game from the start**: BATTLE GAME is in the title menu without a finished
+  playthrough (GAMEPLAY setting "Battle Game unlocked", on by default). It only changes what the
+  menu offers: your saves and system data are not touched, and turned off the menu is as in the
+  original again. Finishing a Battle Game saves its records but does not count as finishing
+  the story. Its characters unlock as before: Claire from the start, Chris after finishing the
+  story once, the others under the original's conditions.
+
+### Renderer
+
+- **Menu frames: no more dark lines**: the status screen, files, map and item screens showed thin
+  dark lines between the pieces of their frames and backgrounds, most visible at higher internal
+  resolutions (for example around the text box under the menu). The last pixels of each piece
+  reached past its picture into the neighbouring one in the texture; each piece now samples only
+  its own picture, as on the PS2. Fixed thanks to fmil95 (decompilation team), who found
+  and tracked down the problem.
+- **Steve in the gas room** (Palace): the monitor close-up when freeing Steve showed the game in a
+  tiny window; it now shows the full view, and the gas effect fills the whole screen in
+  widescreen. The memory card screen's save counts had the same kind of bug.
+
+### Fixes
+
+- **Alexia's tentacles** use their intended attack timing again: a decompilation bug read the wrong shape table. Fix by fmil95 (decompilation team).
+- **Metal detector with "No ink ribbons needed"** (prison): with the setting on (or the co-op
+  host's INK RIBBONS *Not needed*), the detector went off even with every metal item put in the
+  trays. The setting made every check for an ink ribbon succeed, and the detector checks for ink
+  ribbons too, since they count as metal there. The setting now only applies to the typewriters;
+  the detector goes off for ink ribbons you actually carry, as in the original. Test aid:
+  `RECVX_ITEM_TRACE=1` also logs the detector's state in that room.
+
+## 0.3.1 (2026-10-16)
+
+### Renderer
+
+- **Camera cuts at high frame rates**: the in-between images no longer blend across a camera
+  cut. The game changes the cut after drawing a frame, so the renderer took the cut one
+  frame late and swept the camera from the old view to the new one, through walls and past room
+  parts hidden for one of the two cameras. The cut is now taken from the frame as drawn, event
+  cameras and camera jumps (a cutscene cut, a door animation's camera) count as cuts too, and
+  the new view is shown at once. As a side effect the frame just before a cut is now smoothed too.
+- **Effects follow what they are attached to**: the lighter's flame, muzzle flashes, smoke,
+  sparks, fire and blood are placed in the in-between images like the 3D models, so the flame
+  stays on Claire's lighter instead of jumping at the game's own rate. Their animation still steps
+  at the game's rate. `RECVX_INTERP_STATS` also counts matched effect vertices and logs camera
+  jumps.
+
+### Picture calibration
+
+- **Brightness, Contrast and Gamma** in DISPLAY / PICTURE (F1 and ENHANCED SETTINGS), with
+  "Reset picture calibration". They adjust the game's picture, menus and movies included, but not
+  the F1 overlay, and change it live. At the neutral values the picture is exactly as before.
+- While one of them is chosen, both menus show a small test pattern of grey squares on a black and
+  a white strip, to set the dark and light ends.
+
+### You appear as
+
+- **Models keep their own proportions when animated**: each model is moved by its own skeleton,
+  with Claire's or Chris's joint rotations carried over relative to each one's rest pose, instead of
+  fixed joint positions. Long or extra-jointed limbs now bend at the right joints: the Bandersnatch
+  holds the weapon in its claw instead of mid-arm, Monster Steve moves his arms from the shoulders
+  instead of the collarbones and holds the weapon in his hand instead of at the elbow.
+- **Feet on the floor**: a taller or shorter model crouches and bobs in proportion, and a foot of
+  another shape no longer lifts the body.
+- **Aiming up with tall models** in third person: the camera's height, shoulder offset and distance
+  follow the model's height, so it is no longer inside a Tyrant or Monster Steve while aiming; the
+  aim pose is solved on the weapon as it is drawn, so its barrel points at the crosshair for every
+  model and pitch. The shots are
+  unchanged: they always went where the crosshair is.
+- A weapon or gloved hand the model has no hand for (Nosferatu's right, the Bandersnatch's left)
+  is no longer drawn floating in the air.
+- The character played without another model is unchanged. Test aids: `RECVX_RETARGET=0` keeps
+  the previous animation of models, `RECVX_RIG_DUMP=1` logs their skeletons and feet
+  ([ACTORS.md](docs/ACTORS.md#retargeting)).
+
+### Audio
+
+- **Computer terminals click for every letter**: the Palace's security lock, the 3D scanner, the
+  Albinoid file, the password and self-destruct terminals. Each letter the screen prints starts a
+  short sound that the next letter stops one frame later. The emulated sound driver only moved on
+  when the game sent its next sounds, so a letter's sound was started and stopped at the same
+  moment and never heard: only the last letter of a line clicked. The driver now runs on the
+  sound output's own clock, as the PS2's sound processor does beside the game: its timer ticks
+  between the game's frames, and the game's sound commands are played in order at the time they
+  were sent. Every letter clicks, evenly spaced.
+- Other sounds lost the same way play too: a system sound cut by another one in the next frame,
+  and very short notes of the rooms' background sound sequences. Sound effects and sequences also
+  start without waiting for the game's next frame.
+- Test aids: `RECVX_TEST_COMPUTER="frame:n"` opens computer terminal n; `RECVX_TRACE_SND` also
+  logs notes released before they sounded.
+
+### Fixes
+
+- Third person: the knife no longer slashes upwards at an enemy standing right in front; it slashes level at anything not below the player (aiming down at crawlers still works).
+- **No more twitching when aiming or using the knife as another model** in third person: with
+  "You appear as" another model, or Claire's or Chris's model on the other character with
+  gender-matched animations, the upper body jerked back and forth when a weapon was raised,
+  fired or the knife swung. The aim on the weapon as drawn is now only adjusted while the aim pose
+  holds still, smoothly, and not for the knife. The character played without another model was
+  never affected. Test aid: `RECVX_POSE_TRACE=file` logs the player's body as drawn, per frame.
+- **Hands in the lobby's model preview**: the characters in the MULTIPLAYER lobby had no hands.
+  They now wear the hand pieces the game gives an unarmed player, on the same wrist joints: each
+  player character its own; the story cast's models, which have none, Chris's (men) or Claire's
+  (women). Zombies and creatures keep their own hands. The look in game is unchanged.
+- **Movies play smoothly and in sync with their sound**: the intro, the opening, the in-game
+  movies and the ending. Reading and decoding a movie now happen on a thread of their own
+  instead of in the game's frames, the sound is kept queued ahead so it no longer runs dry
+  (gaps, and silence over the last frames of a movie), the picture follows the sound's clock
+  instead of running on its own, and the short freeze at the start of every movie is gone. Each
+  frame is uploaded once and converted to RGB on the GPU, with smoother colour edges; it is no
+  longer passed through the emulated GS memory. Skipping, pausing and the fades over a movie
+  work as before. Test aids: `RECVX_MOVIE=n` plays movie n in place of every movie,
+  `RECVX_MOVIE_TRACE=file` logs the frame timing and the sound's offset.
+
+## 0.3.0 (2026-10-16)
+
+### Controls
+
+- **Modern controls for the fixed cameras** (option, off by default): CONTROLS -> "Fixed camera
+  controls: Classic (tank) / Modern (camera-relative)" in F1 and ENHANCED SETTINGS, ini
+  `fixed_cam_controls`. As the alternate controls of the RE HD remasters, the left stick or the
+  d-pad (arrow keys) walks where it points on screen, turning quickly and smoothly;
+  the stick pushed far or the run button runs. Through a camera cut the held direction keeps
+  the previous camera's meaning until it is clearly changed or let go, so the character does
+  not walk back and forth at cut boundaries. Aiming, the quick-turn row,
+  stairs, doors and items work as before; third person keeps its own controls; in co-op only
+  your own player ([USER_GUIDE.md](docs/USER_GUIDE.md#modern-controls-fixed-cameras)).
+- Test aids: `RECVX_VPAD` holds axes at a value (`leftx=0.5`), `RECVX_MODERN_TRACE=1` logs the
+  modern controls; ctest `modern` covers the direction math and the cut hold.
+
+### Performance
+
+- **VU0 runs as native code**: much less CPU time per frame on the game thread. The vertex
+  program `VU0_CALCPOINT` ran through the VU interpreter whenever a point light was on (most
+  rooms); it is now native for every light setup and computes whole vertex runs four vertices at
+  a time, using AVX when the CPU supports it and SSE2 otherwise (`RECVX_VU_AVX=0` forces SSE2).
+  The macro-mode VU0 operations of the translated EE assembly (skinning, matrices) are inlined.
+  Results are bit-exact with the interpreter: frames are byte-identical, `RECVX_VU_INTERP=1`
+  still forces the interpreter, `RECVX_VU_CHECK=1` compares every call in game, and ctest
+  `vu`/`vu_portable` compare the native code with the interpreter on random and edge-case inputs.
+
+### Renderer
+
+- Font: no more seams around the letters of messages, item names and "Now Loading..." at higher
+  internal resolutions. The glyph quads' texture coordinates reached a quarter texel into the
+  neighbouring glyph of the font texture; they now sit half a texel inside the glyph's cell on
+  every edge. Fix by fmil95 (decompilation team).
+
+### Audio
+
+- **Missing system sounds**: the typewriter's keys and bell while a save is typed in, the item
+  box lid, the computer terminals' beeps and typed text (and other sounds the game plays as
+  system MIDI, such as some effects and enemy events) were silent in every save mode. The game
+  takes a sound's bank from its number divided by 256; the PS2 compiler rounds that down (an
+  arithmetic shift), C rounds toward zero, so these numbers (bit 31 set) asked for bank 3, which
+  holds the room's ambience, instead of bank 2.
+- The emulated sound driver has the game's 10 MIDI ports: the system sounds rotate over ports
+  2, 8 and 9, and 8 and 9 were played on ports 0 and 1, where they stopped the room's background
+  ambience (with door animations on, the door and stairs sounds did).
+- `RECVX_TRACE_SND` also logs requests the driver drops (bank not loaded, no such program or
+  block) and voices stolen when all 48 are busy.
+
+### Fixes
+
+- **Metal detector security boxes** (prison, 0/9): taking an item out of the box onto the lighter
+  ("STANDARD") slot no longer makes it vanish. As on PS2, the item goes into the bag (or "There's
+  no space to put the item in.") and the lighter, if it was there, goes into the box; storing
+  the lighter with a full bag no longer overwrites the last item, and the lighter can be taken
+  out onto any slot again. The item box exchange (`ItemBoxChange`) was an inexact decompilation; it now does
+  what the PS2 code does in every case, which also keeps the equipped weapon right when two-slot
+  weapons move in or out of any item box and fills a partial ammo stack when ammo is taken out
+  onto an empty slot. Test aid: `RECVX_ITEM_TRACE=1` logs the bag and both security boxes.
+
 ## 0.2.0 (2026-10-14)
 
 ### Third person

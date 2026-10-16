@@ -414,7 +414,7 @@ Models not in the catalogue:
   unmapped. The source skeleton is mapped the same way. Every tick, per mapped node: model world
   rotation = rest correction x source world rotation; positions come from the model's own bone
   offsets, the root from the source's (feet on the floor). Unmapped nodes follow their parent
-  rigidly.
+  rigidly. Details: "Retargeting" below.
 * **Joint blending**: the meshes are skinned (`npCalcSkin` blends a vertex near a joint between
   the node's matrix and that matrix with the node's angles undone), so each node's angles are set
   to its local rotation (world x parent world^T, decomposed as `njRotateXYZ` builds it).
@@ -422,7 +422,12 @@ Models not in the catalogue:
   spiders, Cerberus, albinoids, fish, Spotter, ant).
 * **Without co-op**: `game.c` calls `coop_control_remote` while `appear_on` (an appearance other
   than the character played is chosen or still shown); with "As played" nothing runs.
-* **Lobby preview**: `actor_set`, `actor_pose_alone`, `actor_draw` work outside a room.
+* **Lobby preview**: `actor_set`, `actor_pose`, `actor_draw` work outside a room. The
+  hands are the unarmed pieces (weapon file `chr * 30 + 20`, `player_weapon_read`) on nodes 9/13 of
+  the preview's player model, as `sys->obwp[0..1]`; the character is `appear_voice` (the cast its
+  own, other men Chris, women Claire; else the file shown). On a display actor they are drawn only
+  where `actor_hand_free`: the hand is mapped and the model has no mesh there of its own (no geometry
+  and no skinned vertices on that node: the story cast; zombies and creatures have theirs).
 * **Game over**: `njReleaseTextureAll` unloads the display actors; `coop_textures_released`
   clears the "player in control" state, so the appearance returns only once the player is back.
 
@@ -457,6 +462,55 @@ their file, `appear_part_anim`):
   co-op partner (`ply2`) works the same from its model and motion file (`rx.mfile`).
 * Not covered: the lobby preview and cutscene doubles keep their source's motions; positions stay
   the real player's; a switch between the matched set and a fallback does not blend.
+
+### Retargeting
+
+Each model keeps its own skeleton: bone lengths, rest pose and proportions are its own, only the
+joint rotations come from the source (`actor_glue.c rig_build`, `retarget`).
+
+* **Rest poses**: computed once at load from the model's node tree (`rig_build`: parents and
+  model-space rest positions; all bind angles are 0, so every rest orientation is the identity, as
+  the player's). The source's rest pose is its current node offsets (the player files' bones).
+* **Rotations**: per mapped joint, the model's rotation is the source's rotation relative to its rest
+  pose, turned by a rest correction: the rotation taking the model's rest bone (towards the next
+  mapped joint of the chain) onto the source's. In local terms: model local = C(node) x source local x
+  C(parent)^-1, so a model whose arm rests at another angle (an arm lower or more forward, a hunched
+  spine) bends at the same joints by the same amounts without being pulled to Claire's bone lengths.
+  A chain end (hand, toe) takes its parent bone's correction. Node angles are written back as
+  `njRotateXYZ` builds them, so the skin blends joints (`npCalcSkin`).
+* **Limb roles**: an arm runs from its first node sideways from the chest to the hand: the last node,
+  or the first with two or more children whose subtree is short against the arm (fingers, claws; a
+  spike on the Tyrant's forearm is passed). Clavicle, shoulder and elbow are the nodes nearest to where
+  the player has them along the arm (3%, 35% and 68% of its length from the chest), in order, so a
+  long arm (the Bandersnatch's six joints) has its hand at its claw and an arm without clavicle
+  (Hunter) maps from the shoulder. A leg of more than four joints (Monster Steve) keeps hip, toe and
+  ankle at its ends and the knee at mid-leg. Joints between mapped ones follow their parent rigidly.
+* **Root and feet**: the root's height over the floor is scaled by the hips' heights (crouching,
+  kneeling, the walk's bob), and the body is then moved up or down so that its lowest ankle or toe is
+  as far over its rest height as the source's (in proportion; at most 3 units): feet of another shape
+  (a Hunter's long foot, Monster Steve's claw) stay on the floor. Only the height: room motions move
+  cutscene doubles across the room with the root.
+* **Post-passes**: the two-handed grip IK and the lighter IK (below), the face mask's jaw, tongue and
+  eyes, the cutscene doubles' hand pieces, as before.
+* **A missing hand**: what the game links to a source hand the model does not have (Nosferatu's right
+  hand, the Bandersnatch's left) is shrunk to a point instead of floating where the source's hand is.
+* **Free aim** ([THIRDPERSON.md](THIRDPERSON.md) "Free-aim pose"): the bend is solved on the weapon as
+  drawn (`actor_aim_hand`; only while the aim pose stands still, eased, not for the knife), and the third-person camera's height, shoulder offset and distance scale
+  with the model's head height over the character's (`actor_cam_scale`, 0.8 .. 1.8): the camera is no
+  longer inside a Tyrant or Monster Steve.
+* **Previous retargeting**: `RECVX_RETARGET=0` (environment, read at start) keeps the earlier mapping
+  (fixed chain positions, clavicle by length), the unscaled root and the aim taken from the unbent
+  hand; frames are then identical to the previous version's. The character played without a
+  model never goes through this code.
+* Test aid `RECVX_RIG_DUMP=1`: logs each model's rest skeleton, the source's map and skeleton, and per
+  tick the source's and the model's lowest foot over the floor.
+
+Why aiming up looked broken before: the free-aim bend took its pitch from the hand of the unbent pose
+and turned the upper body about the chest, which swings a hand far from the chest (a tall model's)
+off the line (a drawn barrel up to 11 degrees off a near target); the camera stayed at Claire's
+height, inside tall models; the old map took Monster Steve's clavicle for his upper arm (his weapon
+at his elbow, his feet 4 units over the floor) and the Bandersnatch's mid-arm for its hand; the
+weapon of a hand the model lacks floated at the invisible source's hand.
 
 ### Hands, joints, lighter and aim
 
@@ -557,8 +611,12 @@ partner's), taken from the same 31 extra-bank numbers as the spawner's enemy ban
 ### Limits
 
 * Skinned areas near joints whose rest orientation differs (zombie shoulders in T vs arms down)
-  stretch a little; proportions differ (a Tyrant's long arms with Claire's arm angles); grips sit
-  at the model's wrist. Creatures do not scale.
+  stretch a little; the motions are the player's, so a body of other proportions strikes the same
+  angles (a Tyrant's long arms reach further); grips sit at the model's wrist. Creatures do not scale.
+* Per model: Nosferatu has no right hand (its weapon is not drawn) and its spine has no mapped lower
+  node; the Bandersnatch has one arm (no two-handed grip) and no head node; the Tyrant's weapon sits
+  in its claw; the hazmat man's and the zombies' torso is one bone from the hips; the camera scales by
+  the neck where no head is found (the Bandersnatch).
 * No creature sounds (footsteps stay the player's; the voice per "Voices").
 * Lip sync only for cast models and with the option; the double's hand pieces are its own.
 * A room with little texture memory left refuses the model (logged as `actor: ... not enough

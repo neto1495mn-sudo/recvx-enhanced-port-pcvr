@@ -14,7 +14,9 @@
  *    (aim pitch and all) times a rest correction that turns the model's rest bone direction onto
  *    the source's. Positions come from the model's own bone offsets; nodes without a map follow
  *    their parent rigidly (fingers, claws, face, tentacles). The weapon hands of the source are
- *    moved to the model's hands.
+ *    moved to the model's hands. Limbs are mapped by where the player's joints sit along each
+ *    chain, the root's height and the feet follow the source's in proportion (docs/ACTORS.md
+ *    "Retargeting"; RECVX_RETARGET=0: the previous mapping).
  *  - everything else: its own motion set's idle motion, looped (or its rest pose).
  * Textures go to the texture heap (shared by TIM2 index with a model the room already shows) and
  * are released when the model changes.
@@ -39,6 +41,7 @@ void njRotateXYZ(NJS_MATRIX* m, Angle angx, Angle angy, Angle angz);
 #include "../src/host/actors.h"
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 void host_log(const char* fmt, ...);
@@ -83,6 +86,9 @@ int actor_on;                           /* a display actor is shown (game.c hook
 static int dbl_tick;                    /* actor_double_tick is posing the double (its hands go to the model's) */
 static BH_PWORK* dbl_posed;             /* the double the display actor's current pose was taken from */
 static void face_init(Disguise* d, int idx);
+/* the retargeting of docs/ACTORS.md "Retargeting" (limb roles along each chain, the root's height
+   scaled, the aim solved on the drawn weapon, the camera scaled); RECVX_RETARGET=0: the previous one */
+int actor_retarget = 1;
 
 /* the player's chains: the node whose position gives a node's bone direction (-1: a chain end) */
 static const signed char dir_child[22] = { -1, 2, 3, 4, 5, -1, 7, 8, 9, -1, 11, 12, 13, -1, 15, 16, 17, -1, 19, 20, 21, -1 };
@@ -126,6 +132,64 @@ static int rig_chain(const Rig* r, int c, int axis, int sign, int* out, int max)
     return n;
 }
 
+static float rig_dist(const Rig* r, int a, int b)
+{
+    float d = 0;
+    int k;
+    for (k = 0; k < 3; k++) d += (r->rest[a][k] - r->rest[b][k]) * (r->rest[a][k] - r->rest[b][k]);
+    return sqrtf(d);
+}
+
+/* how far below node c its subtree reaches */
+static float rig_reach(const Rig* r, int c)
+{
+    float m = 0;
+    int i, p;
+    for (i = c + 1; i < r->n; i++) {   /* (pre-order: the subtree follows c) */
+        for (p = r->par[i]; p >= 0 && p != c; p = r->par[p]);
+        if (p == c && rig_dist(r, i, c) > m) m = rig_dist(r, i, c);
+    }
+    return m;
+}
+
+/* An arm from its first node: along the child going furthest out (rig_next), ending at the hand: a
+   node without children, or with two or more whose subtrees are short against the arm (fingers,
+   claws; a spike on a forearm is not the hand: the arm goes on past it) */
+static int rig_arm(const Rig* r, int c, int sign, int* out, int max)
+{
+    int n = 0;
+    for (; c >= 0 && n < max; c = rig_next(r, c, 0, sign)) {
+        int ch[NODES], nc, i, real = 0;
+        out[n++] = c;
+        rig_child_list(r, c, ch, &nc);
+        for (i = 0; i < nc; i++) real += rig_dist(r, ch[i], c) >= 0.05f;
+        if (real >= 2 && rig_reach(r, c) < 0.35f * rig_dist(r, c, out[0])) break;
+    }
+    return n;
+}
+
+/* Of the first `lim` nodes of chain c[0..n-1] (hanging off `from`, ending at `end`), the one nearest
+   to fraction f of the chain's length from `from` to `end`; a tie goes to the later node (past a
+   zero-length bone) */
+static int rig_role(const Rig* r, int from, const int* c, int n, int lim, float f, int end)
+{
+    float len[16], tot = 0, d;
+    int i, j, prev = from, best = -1;
+    if (n > 15) n = 15;
+    for (i = 0; i <= n; i++) {
+        int node = i < n ? c[i] : end;
+        for (d = 0, j = 0; j < 3; j++) d += (r->rest[node][j] - r->rest[prev][j]) * (r->rest[node][j] - r->rest[prev][j]);
+        len[i] = tot += sqrtf(d);
+        prev = node;
+    }
+    if (lim > n) lim = n;
+    if (lim <= 0) return -1;
+    if (tot < 1e-3f) return c[0];
+    for (i = 0; i < lim; i++)
+        if (best < 0 || fabsf(len[i] / tot - f) <= fabsf(len[best] / tot - f)) best = i;
+    return c[best];
+}
+
 /* Node roles from the rest skeleton of a chunk object array (pre-order, child/sibling): a T-pose
    with all bind angles 0 is required of a model (`bind`); a source's node offsets are its rest
    pose whatever its current angles. Returns rig->ok. */
@@ -153,7 +217,11 @@ static int rig_build(Rig* r, const NJS_CNK_OBJECT* o, int n, int bind)
         if (r->rest[ch[i]][1] > r->rest[1][1] - 0.5f) continue;
         base = r->rest[ch[i]][0] > r->rest[1][0] ? 14 : 18;   /* (the root may carry the world position) */
         if (r->map[base] >= 0) continue;
-        m = rig_chain(r, ch[i], 1, -1, c, 4);
+        m = rig_chain(r, ch[i], 1, -1, c, actor_retarget ? 8 : 4);
+        if (m > 4) {   /* more joints than hip, knee, ankle, toe (Monster Steve): the ends, and the knee at mid-leg */
+            int kk = rig_role(r, c[0], c + 1, m - 3, m - 3, 0.5f, c[m - 2]);
+            c[1] = kk; c[2] = c[m - 2]; c[3] = c[m - 1]; m = 4;
+        }
         for (k = 0; k < m; k++) r->map[base + k] = c[k];
         legs++;
     }
@@ -194,11 +262,23 @@ static int rig_build(Rig* r, const NJS_CNK_OBJECT* o, int n, int bind)
         for (i = 0; i < nc; i++) {
             float dx = r->rest[ch[i]][0] - r->rest[node][0];
             int base = dx > 0 ? 6 : 10, j = 0, e;
-            if (fabsf(dx) <= 0.15f || r->map[base + 1] >= 0 || r->map[base] >= 0) continue;
-            m = rig_chain(r, ch[i], 0, dx > 0 ? 1 : -1, c, 5);
+            if (fabsf(dx) <= 0.15f || r->map[base + 1] >= 0 || r->map[base] >= 0 || r->map[base + 3] >= 0) continue;
+            m = actor_retarget ? rig_arm(r, ch[i], dx > 0 ? 1 : -1, c, 8) : rig_chain(r, ch[i], 0, dx > 0 ? 1 : -1, c, 5);
             e = c[m - 1];
+            if (actor_retarget && m < 2) continue;   /* a stub (the Bandersnatch's other shoulder) */
             /* an "arm" that ends far above or below its root is a tentacle, a tail or a wing */
             if (fabsf(r->rest[e][1] - r->rest[ch[i]][1]) > fabsf(r->rest[e][0] - r->rest[ch[i]][0])) continue;
+            if (actor_retarget) {   /* the hand at the chain's end, the others where the player has them along it */
+                static const float frac[3] = { 0.03f, 0.35f, 0.68f };   /* clavicle, shoulder, elbow (Claire's and Chris's arms) */
+                int lim = m - 1;
+                r->map[base + 3] = e;
+                for (k = 2; k >= 0 && lim > 0; k--) {
+                    int t = rig_role(r, node, c, m - 1, lim, frac[k], e);
+                    r->map[base + k] = t;
+                    for (lim = 0; c[lim] != t; lim++);
+                }
+                continue;
+            }
             if (sqrtf(dx * dx + powf(r->rest[ch[i]][1] - r->rest[node][1], 2)) < 1.0f) r->map[base] = c[j++];   /* clavicle */
             for (k = 1; k < 4 && j < m; k++) r->map[base + k] = c[j++];
         }
@@ -323,7 +403,17 @@ static void retarget(Disguise* d, BH_PWORK* src, const Rig* sr)
     const Rig* tr = &d->rig;
     const float* dm = (const float*)d->w.mtxbuf;   /* the actor's own matrix (d->w.mtx points here) */
     const float* root = sr->map[0] >= 0 ? &sow[(int)sr->map[0]].mtx[12] : NULL;   /* the root: feet on the source's floor */
-    float rot[NODES][9];
+    float rot[NODES][9], scaled[3];
+    if (root && actor_retarget && tr->map[1] >= 0 && sr->map[1] >= 0) {
+        /* The root's height above the floor (crouching, kneeling, the walk's bob) scaled by the hips'
+           heights: a taller body's legs bend as the source's and reach as far down in proportion, so
+           its feet stay on the floor instead of floating (a shorter one's: sinking). Only the height:
+           room motions move cutscene doubles across the room with the root. */
+        float hs = sr->rest[(int)sr->map[1]][1] - sr->rest[(int)sr->map[0]][1], ht = tr->rest[(int)tr->map[1]][1] - tr->rest[(int)tr->map[0]][1];
+        memcpy(scaled, root, sizeof(scaled));
+        if (hs > 1.0f && ht > 1.0f) scaled[1] = dm[13] + (root[1] - dm[13]) * ht / hs;
+        root = scaled;
+    }
     int i, k, j, from[NODES];
     for (i = 0; i < tr->n; i++) from[i] = -1;
     for (k = 0; k < 22; k++) if (tr->map[k] >= 0 && sr->map[k] >= 0) from[(int)tr->map[k]] = k;
@@ -350,6 +440,26 @@ static void retarget(Disguise* d, BH_PWORK* src, const Rig* sr)
         else for (j = 0; j < 9; j++) rot[i][j] = dm[(j / 3) * 4 + j % 3];
     }
     place(m, tr, rot, dm, root);
+    if (root == scaled) {   /* The feet as the source's: its lowest ankle or toe as far over the floor (in
+        proportion) beyond its rest height as the model's beyond the model's. Feet of another shape (a
+        Hunter's long foot, Monster Steve's claw) lift the leg differently when the source's toe bends. */
+        float fs = 1e9f, ft = 1e9f, rs = 1e9f, rt = 1e9f, hs = sr->rest[(int)sr->map[1]][1] - sr->rest[(int)sr->map[0]][1],
+              ht = tr->rest[(int)tr->map[1]][1] - tr->rest[(int)tr->map[0]][1];
+        for (k = 16; k <= 21; k++) {
+            if (k == 18 || k == 19 || tr->map[k] < 0 || sr->map[k] < 0) continue;
+            fs = fminf(fs, sow[(int)sr->map[k]].mtx[13]);
+            rs = fminf(rs, sr->rest[(int)sr->map[k]][1] - sr->rest[(int)sr->map[0]][1]);
+            ft = fminf(ft, m->owP[(int)tr->map[k]].mtx[13]);
+            rt = fminf(rt, tr->rest[(int)tr->map[k]][1] - tr->rest[(int)tr->map[0]][1]);
+        }
+        if (ft < 1e8f && hs > 1.0f && ht > 1.0f) {
+            float shift = rt + (fs - dm[13] - rs) * ht / hs - (ft - dm[13]);
+            if (shift > 3.0f) shift = 3.0f;
+            if (shift < -3.0f) shift = -3.0f;
+            scaled[1] += shift;
+            place(m, tr, rot, dm, root);
+        }
+    }
     {   /* Both hands on the weapon (two-handed aim and grips): the source's left hand is near its
            right. A model of other proportions has its hands elsewhere (longer arms, wider shoulders),
            so its left arm is solved to keep that hand where the source has it relative to the right
@@ -492,6 +602,27 @@ void player_model_read(BH_PWORK* who, unsigned char* file, unsigned char* mdl, u
     freemem = free_b;
     sys->hd_pos = hd_b;
     sys->bmt_size = bmt_size_b;
+}
+
+/* bhReadWeaponData for `who` (weapon wpn): the hand objects objs[0..1], the weapon motions into
+   who->mnwP[100..] (plp, sys->obwp, sys->memp and the weapon buffers swapped for it and put back) */
+void player_weapon_read(BH_PWORK* who, O_WRK* objs, int wpn, unsigned char* file, unsigned char* wr, unsigned char* wl, unsigned char* wmt)
+{
+    BH_PWORK* plp_b = plp;
+    O_WRK* obwp_b = sys->obwp;
+    unsigned char *memp_b = sys->memp, *wr_b = sys->wrmdlp, *wl_b = sys->wlmdlp, *wmt_b = sys->plwmtp;
+    unsigned int wmt_size_b = sys->wmt_size;
+    plp = who;
+    who->wpnr_no = wpn;
+    sys->obwp = objs;
+    sys->memp = file;
+    sys->wrmdlp = wr; sys->wlmdlp = wl; sys->plwmtp = wmt;
+    bhReadWeaponData();
+    plp = plp_b;
+    sys->obwp = obwp_b;
+    sys->memp = memp_b;
+    sys->wrmdlp = wr_b; sys->wlmdlp = wl_b; sys->plwmtp = wmt_b;
+    sys->wmt_size = wmt_size_b;
 }
 
 /* object objs[2] linked to head node 5 of `who`, set up as bhSetPlayer does for player 1's sys->obwp[2] */
@@ -737,6 +868,15 @@ static int load(Disguise* d, int idx)
              d->w.mdl[0].obj_num, (heap - heap_free()) >> 10, d->rig.ok ? "player animations" : "own idle motion");
     if (d->rig.ok) { int k; for (k = 0; k < 22; k++) host_log(" %d", d->rig.map[k]); }
     host_log("\n");
+    if (getenv("RECVX_RIG_DUMP")) {   /* test aid: the rest skeleton (node, parent, model-space position, bind angles) */
+        Rig r;
+        const NJS_CNK_OBJECT* o = d->w.mdl[0].objP;
+        int i;
+        rig_build(&r, o, d->w.mdl[0].obj_num, 0);
+        for (i = 0; i < r.n; i++)
+            host_log("actor:  node %2d par %2d rest %7.2f %7.2f %7.2f ang %6d %6d %6d%s\n", i, r.par[i], r.rest[i][0], r.rest[i][1], r.rest[i][2],
+                     (int)o[i].ang[0], (int)o[i].ang[1], (int)o[i].ang[2], o[i].model ? " mesh" : "");
+    }
     return 1;
 }
 
@@ -942,6 +1082,8 @@ int actor_put_body(int who, BH_PWORK* src)
    so a taller model shot higher than the crosshair. */
 static struct { BH_PWORK* src; O_WORK* ow; float mtx[3][16]; } real[2];
 static float aim_ofs[3];   /* our weapon hand as drawn minus the real one, in the frame of the real chest (node 3) */
+static float aim_rot[9];   /* the drawn weapon hand's rotation in that frame (the gender-matched pose's hand turns otherwise) */
+static int aim_set;        /* aim_rot is set */
 
 static void hands_save(int who, BH_PWORK* src)
 {
@@ -963,6 +1105,10 @@ static void hands_back(int who)
             float dl[3];
             for (j = 0; j < 3; j++) dl[j] = ow[9].mtx[12 + j] - real[0].mtx[1][12 + j];
             for (j = 0; j < 3; j++) aim_ofs[j] = dl[0] * ow[3].mtx[j * 4] + dl[1] * ow[3].mtx[j * 4 + 1] + dl[2] * ow[3].mtx[j * 4 + 2];
+            for (i = 0; i < 3; i++)   /* hand rows x chest^T */
+                for (j = 0; j < 3; j++)
+                    aim_rot[i * 3 + j] = ow[9].mtx[i * 4] * ow[3].mtx[j * 4] + ow[9].mtx[i * 4 + 1] * ow[3].mtx[j * 4 + 1] + ow[9].mtx[i * 4 + 2] * ow[3].mtx[j * 4 + 2];
+            aim_set = 1;
         }
         for (i = 0; i < 3; i++) memcpy(ow[5 + 4 * i].mtx, real[who].mtx[i], sizeof(real[who].mtx[i]));
     }
@@ -972,7 +1118,7 @@ static void hands_back(int who)
 /* game.c, before bhControlPlayer */
 void actor_hands_back(void)
 {
-    if (!real[0].src) aim_ofs[0] = aim_ofs[1] = aim_ofs[2] = 0;
+    if (!real[0].src) aim_ofs[0] = aim_ofs[1] = aim_ofs[2] = 0, aim_set = 0;
     hands_back(0);
     hands_back(1);
 }
@@ -990,6 +1136,41 @@ void actor_aim_offset(const BH_PWORK* p, float* out)
     const float* r = p->mlwP->owP[3].mtx;
     int j;
     for (j = 0; j < 3; j++) out[j] = p == plp && actor_on ? aim_ofs[0] * r[j] + aim_ofs[1] * r[4 + j] + aim_ofs[2] * r[8 + j] : 0;
+}
+
+/* tps_glue.c (free aim, with the retargeting): the weapon hand as it will be drawn, for p's current
+   (bent) skeleton: hand[16] a node matrix (rows: axes, origin). 0 when no model is shown. */
+int actor_aim_hand(const BH_PWORK* p, float* hand)
+{
+    const float* r = p->mlwP->owP[3].mtx;
+    int i, j;
+    if (!actor_retarget || p != plp || !actor_on || !aim_set) return 0;
+    memset(hand, 0, 16 * sizeof(float));
+    for (i = 0; i < 3; i++)
+        for (j = 0; j < 3; j++) hand[i * 4 + j] = aim_rot[i * 3] * r[j] + aim_rot[i * 3 + 1] * r[4 + j] + aim_rot[i * 3 + 2] * r[8 + j];
+    actor_aim_offset(p, &hand[12]);
+    for (j = 0; j < 3; j++) hand[12 + j] += p->mlwP->owP[9].mtx[12 + j];
+    hand[15] = 1;
+    return 1;
+}
+
+/* tps_glue.c: the over-the-shoulder camera's height, shoulder offset and distance for our model,
+   relative to the character's (its head's height over the source's: a Tyrant's 1.4; 1 without a model
+   or with the previous retargeting) */
+float actor_cam_scale(void)
+{
+    const Disguise* d = &dg[0];
+    const NJS_CNK_OBJECT* o;
+    int k, i;
+    float hs = 0, ht, s;
+    if (!actor_retarget || d->model < 0 || !d->rig.ok || !plp || !plp->mlwP || plp->mlwP->obj_num < 6) return 1;
+    k = d->rig.map[5] >= 0 ? d->rig.map[5] : d->rig.map[4];
+    if (k < 0) return 1;
+    ht = d->rig.rest[k][1] - d->rig.rest[0][1];
+    for (o = plp->mlwP->objP, i = 1; i <= 5; i++) hs += o[i].pos[1];   /* the player's chain 1..5 (pelvis .. head) */
+    if (hs < 5 || ht < 3) return 1;
+    s = ht / hs;
+    return s < 0.8f ? 0.8f : s > 1.8f ? 1.8f : s;
 }
 
 /* ---------------------------------------------------------------- interface */
@@ -1040,7 +1221,26 @@ void actor_pose(int who, BH_PWORK* src)
                      dozen nodes): a cache keyed by the objects' address kept a stale rig when a room load put another model there */
         rig_build(&sr, drv->mlwP->objP, drv->mlwP->obj_num, 0);   /* (a cast double's face mask context has 31 nodes, 9 of them face) */
         if (sr.ok) {
+            static const void* dumped;
+            if (getenv("RECVX_RIG_DUMP") && dumped != drv->mlwP->objP) {
+                int i;
+                dumped = drv->mlwP->objP;
+                host_log("actor: source skeleton; map");
+                for (i = 0; i < 22; i++) host_log(" %d", sr.map[i]);
+                host_log("\n");
+                for (i = 0; i < sr.n; i++) host_log("actor:  node %2d par %2d rest %7.2f %7.2f %7.2f\n", i, sr.par[i], sr.rest[i][0], sr.rest[i][1], sr.rest[i][2]);
+            }
             retarget(d, drv, &sr);
+            if (getenv("RECVX_RIG_DUMP") && who == 0 && !redraw) {   /* the feet over the floor: the source's lowest ankle/toe and the model's */
+                float fs = 1e9f, ft = 1e9f;
+                int k;
+                for (k = 16; k <= 21; k++) {
+                    if (k == 18 || k == 19) continue;
+                    if (sr.map[k] >= 0) fs = fminf(fs, drv->mlwP->owP[(int)sr.map[k]].mtx[13] - (*src->mtx)[13]);
+                    if (d->rig.map[k] >= 0) ft = fminf(ft, m->owP[(int)d->rig.map[k]].mtx[13] - (*src->mtx)[13]);
+                }
+                host_log("actor: feet motion %d frame %d: source %.2f model %.2f over the floor\n", (int)drv->mtn_no, (int)(drv->frm_no >> 16), fs, ft);
+            }
             d->mapped = 1;
             if (who < 2) {   /* the source's weapon hands where the model's hands are, turned as the pose's (the copy has the source's nodes) */
                 int k;
@@ -1049,6 +1249,12 @@ void actor_pose(int who, BH_PWORK* src)
                         float* h = src->mlwP->owP[(int)sr.map[k]].mtx;
                         if (drv != src) memcpy(h, drv->mlwP->owP[(int)sr.map[k]].mtx, 12 * sizeof(float));
                         memcpy(&h[12], &m->owP[(int)d->rig.map[k]].mtx[12], 12);
+                    } else if (actor_retarget && sr.map[k] >= 0) {   /* a model without that hand (Nosferatu's right, the
+                        Bandersnatch's left): what the game links to it (a weapon, a gloved hand) shrunk to a point
+                        instead of floating where the source's hand is */
+                        float* h = src->mlwP->owP[(int)sr.map[k]].mtx;
+                        int j;
+                        for (j = 0; j < 12; j++) h[j] *= 1e-3f;
                     }
                 trace_hands(who, src);
             } else if (dbl_tick) {   /* the cutscene double: what the script links to its hands (the cast's hand
@@ -1244,10 +1450,35 @@ __attribute__((constructor)) static void actor_init(void)
     int i;
     for (i = 0; i < ACTOR_SLOTS; i++) dg[i].model = dg[i].fail = -1;
     for (i = 0; i < 2; i++) sh[i].chr = sh[i].fail = sh[i].wpn_no = sh[i].motion = -1;
+    if (getenv("RECVX_RETARGET")) actor_retarget = atoi(getenv("RECVX_RETARGET")) != 0;
 }
 
 /* the display actor's work (its model, node matrices after actor_pose), NULL when none is shown */
 BH_PWORK* actor_work(int who) { return who >= 0 && who < ACTOR_SLOTS && dg[who].model >= 0 ? &dg[who].w : NULL; }
+
+/* node n of w's model has a mesh of its own: geometry, or skinned vertices (npSkinConvert's records
+   in node order: flg, mesh mno, with flg 2 the mesh's vertex table; flg 1: vertices bound to the node) */
+static int node_has_mesh(const BH_PWORK* w, int n)
+{
+    const ML_WORK* m = w->mlwP;
+    const int* s = w->skp[m - w->mdl];
+    int i, flg = 0;
+    if (m->objP[n].model) return 1;
+    for (i = 0; s && i <= n; i++) {
+        if (m->objP[i].evalflags & 0x20000000) { flg = 0; continue; }
+        if ((flg = *s++)) { s++; if (flg & 2) s += 1 + *s; }
+    }
+    return flg & 1;
+}
+
+/* the source's hand node (9, 13) is at the model's hand (actor_pose) and the model has no hand
+   there of its own (the story cast's models; zombies and creatures have theirs) */
+int actor_hand_free(int who, int node)
+{
+    Disguise* d = &dg[who];
+    int n = d->model >= 0 && d->mapped ? d->rig.map[node] : -1;
+    return n >= 0 && !node_has_mesh(&d->w, n);
+}
 
 int actor_head(int who, float* out)
 {

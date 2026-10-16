@@ -7,9 +7,10 @@ void     audio_init(void);
 void     audio_set_mono(int mono);
 void     audio_apply_volumes(void);   /* g_config music/sfx volume */
 /* movie soundtrack (interleaved stereo s16) */
-void     audio_movie_open(int rate);
+int      audio_movie_open(int rate);         /* 0: no output */
 void     audio_movie_put(const int16_t* stereo, size_t frames);
 void     audio_movie_pause(int paused);
+int      audio_movie_queued(void);         /* bytes not yet played (input format) */
 void     audio_movie_volume(float gain);   /* the game's input volume, 0..1 */
 void     audio_movie_close(void);
 /* an ADX stream of `size` bytes at byte `base` of a file (the disc image, a mods file); a voice id or -1 */

@@ -209,6 +209,16 @@ static void scripted(unsigned int* inv)
             tw = strchr(tw, ',') ? strchr(tw, ',') + 1 : NULL;
         }
     }
+    {   /* RECVX_TEST_COMPUTER="frame:n,...": computer terminal n at that game frame (as the room scripts' EvtComSet n) */
+        static const char* ct = (const char*)-1;
+        if (ct == (const char*)-1) ct = getenv("RECVX_TEST_COMPUTER");
+        if (ct && sscanf(ct, "%d:%d%n", &f, &a, &n) == 2 && clock >= f && !(sys->cb_flg & 0x1)) {
+            sys->com_num = a;
+            sys->cb_flg |= 0x400000;
+            printf("test: computer %d in %d/%d at game frame %d\n", a, sys->stg_no, sys->rom_no, clock);
+            ct = ct[n] == ',' ? ct + n + 1 : NULL;
+        }
+    }
     {   /* RECVX_HP="frame:hp,...": our health set at that game frame (a quick game over) */
         static const char* hp = (const char*)-1;
         if (hp == (const char*)-1) hp = getenv("RECVX_HP");
@@ -236,6 +246,40 @@ static void scripted(unsigned int* inv)
     }
 }
 
+/* RECVX_ITEM_TRACE=1: the inventory (equipped index, lighter slot, slots) and the two security
+   boxes (sys->itm[192], [224]: the metal detector's trays in 0/9) whenever a word changes, with
+   the box screen's cursors (listcsr_0/listcsr_2, ips1); by presented frame, as RECVX_INPUT */
+uint64_t gs_frame_count(void);
+static void item_trace(const unsigned int* inv)
+{
+    static int on = -1;
+    static unsigned int seen[48];
+    unsigned int now[48];
+    int c;
+    if (on < 0) on = getenv("RECVX_ITEM_TRACE") != NULL;
+    if (!on) return;
+    if (sys->stg_no == 0 && sys->rom_no == 9) {   /* the detector's script: floor zone, rm_flg bit 2 (metal carried), ev_flg bit 53 (gone off) */
+        static unsigned int det = ~0u;
+        unsigned int d = sys->flr_idx << 2 | !!(sys->rm_flg & 0x20000000) << 1 | !!(sys->ev_flg[1] & 0x400);
+        if (d != det)
+            printf("detector: frame %u floor %u metal %u alarm %u\n", (unsigned)gs_frame_count(), d >> 2, d >> 1 & 1, d & 1);
+        det = d;
+    }
+    for (c = 0; c < 16; c++) { now[c] = inv[c]; now[16 + c] = sys->itm[192 + c]; now[32 + c] = sys->itm[224 + c]; }
+    if (!memcmp(now, seen, sizeof(now))) return;
+    memcpy(seen, now, sizeof(now));
+    printf("items: frame %u room %d/%d cursor %u/%u box cursor %d; equipped %u", (unsigned)gs_frame_count(), sys->stg_no, sys->rom_no,
+           swork.listcsr_0, swork.listcsr_2, (int)swork.ips1, now[0]);
+    for (c = 1; c < 48; c++) {
+        if (!(c & 15)) printf("\n  box %d:", c == 16 ? 192 : 224);
+        else if (c == 1) printf("\n  inventory:");
+        if (now[c] >> 16) printf(" [%d] %s(%u) %u", c & 15, g_cheat.names[(now[c] >> 16) & 0xFF], (now[c] >> 16) & 0xFF, now[c] & 0xFFFF);
+        else if (now[c]) printf(" [%d] junk %#x", c & 15, now[c]);
+        else if (c < 16) printf(" [%d] -", c);
+    }
+    printf("\n");
+}
+
 void cheat_frame(void)
 {
     unsigned int* inv;
@@ -246,6 +290,7 @@ void cheat_frame(void)
     max_hp = sys->gm_mode == 2 ? 320 : 160;
     slots = (sys->gm_flg & 0x8000000) ? 10 : 8;
     if (sys->mes_ip) read_names();
+    item_trace(inv);
     if (sys->tk_flg && (sys->sp_flg & 0x2)) scripted(inv);   /* in game */
 
     g_cheat.hp = plp->hp;

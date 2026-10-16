@@ -69,6 +69,7 @@ struct BH_PWORK;
 void actor_pose(int who, struct BH_PWORK* src);   /* after src's bhSetMotion and bhCalcModel */
 void actor_draw(int who);               /* bhPutModel: the caller sets camera matrix, lights, textures state */
 struct BH_PWORK* actor_work(int who);   /* its work (model, node matrices), NULL when none is shown */
+int  actor_hand_free(int who, int node);   /* 1: the source's hand node (9, 13) is at the model's hand, which has no mesh of its own */
 int  actor_head(int who, float* out);   /* world position of its head node (else its highest node); 0 when none is shown */
 void actor_doubles(int idx);            /* at the hand-off: the appearance for the cutscene doubles */
 void actor_double_tick(void);           /* every tick before the objects follow their links: the double's pose, hands, face */
@@ -95,10 +96,14 @@ const unsigned char* actor_fx_tex(int room, int fx);   /* room file `room`'s tex
    file data `file` into the given buffers (plp, sys->memp, the player buffers and freemem swapped for
    it and put back). player_hair: Claire's hair or Wesker's piece objs[2] on `who`'s head node for
    character chr (as bhSetPlayer sets up sys->obwp[2]; none for the others); exp0/exp3: the hair
-   simulation's work (NULL: bhObjClpn takes the room heap, for our own player only). */
+   simulation's work (NULL: bhObjClpn takes the room heap, for our own player only).
+   player_weapon_read: bhReadWeaponData for `who` (wpnr_no = wpn) from weapon file data `file`: the hand
+   objects objs[0..1] (as sys->obwp[0..1]; their mlwP must point at a model, whose textures it
+   releases), models into wr/wl (32 KB each), motions into wmt (64 KB) and who->mnwP[100..]. */
 struct O_WRK;
 int  afs_read(int part, int file, void* buf, int cap);
 void player_model_read(struct BH_PWORK* who, unsigned char* file, unsigned char* mdl, unsigned char* bmt, unsigned char* mth, unsigned char* zmt);
+void player_weapon_read(struct BH_PWORK* who, struct O_WRK* objs, int wpn, unsigned char* file, unsigned char* wr, unsigned char* wl, unsigned char* wmt);
 void player_hair(struct O_WRK* objs, struct BH_PWORK* who, int chr, unsigned char* exp0, unsigned char* exp3);
 void actor_tex_free(int* entries, int* heap);      /* free texture entries and heap bytes (after compacting) */
 

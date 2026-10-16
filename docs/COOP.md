@@ -1078,7 +1078,6 @@ Environment variables for headless and scripted runs. Frames are co-op frames un
 | `RECVX_TEST_JOIN="n,..."` / `RECVX_TEST_STOP="n,..."` | F3 Join / Disconnect at the n-th frame hand-off. |
 | `RECVX_TEST_TITLE=n` | Back to the title from a game (as game over "No"). |
 | `RECVX_TEST_SAVE="gameframe:slot,..."` | Write the game in progress as a save (with the partners file). |
-| `RECVX_TEST_EXTRA=1` | Title menu as after a cleared game (5 rows). |
 | `RECVX_LOBBY_KEYS="frame:text,..."` | Type into the edited lobby field (`\|` Enter, `` ` `` Escape, `<` Backspace). |
 | `RECVX_SHOW_OVERLAY=3` | Open the F3 window at start. |
 | `RECVX_DUMP_OVERLAY=1` | With `RECVX_DUMP_FRAMES`: also dump the window with the overlay (name tags, windows). |

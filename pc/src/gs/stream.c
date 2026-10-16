@@ -13,9 +13,10 @@
  * The engine tags every 3D mesh it draws (njCnkDrawModelLocal -> stream_tag), so a mesh
  * instance's groups correspond exactly, vertex for vertex, to the same mesh's groups in the
  * previous frame; among instances of one mesh (several enemies of a type) the one that moved
- * least is taken. The frame can then be replayed with matched vertex positions blended
- * towards the previous frame (stream_replay). Untagged output (2D, particles) is shown as is,
- * and frames of different scenes or camera cuts are never blended.
+ * least is taken. The 3D effects (fire, muzzle flashes, sparks, blood) are tagged per effect
+ * (pc_effect_tag), their polygons numbered. The frame can then be replayed with matched vertex
+ * positions blended towards the previous frame (stream_replay). Untagged output (2D) is shown as
+ * is, and frames of different scenes, camera cuts or camera jumps are never blended (view_cut).
  */
 #include "gs.h"
 #include "stream.h"
@@ -30,7 +31,7 @@
 
 #define NOEV 0xFFFFFFFFu
 #define NATIVE_KEY (1ull << 63)   /* Group.key0 of a native 3D strip (v0 = its event) */
-enum { EV_REG, EV_IMAGE, EV_DISP, EV_DOWNLOAD, EV_TAG, EV_STRIP, EV_NATIVE, EV_TEXDEF, EV_TEXDEF_END, EV_TEXBIND, EV_TEXFORGET, EV_RAW, EV_RTEX };
+enum { EV_REG, EV_IMAGE, EV_DISP, EV_DOWNLOAD, EV_TAG, EV_STRIP, EV_NATIVE, EV_TEXDEF, EV_TEXDEF_END, EV_TEXBIND, EV_TEXFORGET, EV_RAW, EV_RTEX, EV_MOVIE, EV_TAGLAST };
 typedef struct { uint8_t kind, reg; uint32_t len; uint64_t v; } Ev;
 typedef struct { uint64_t key0; uint32_t v0, nv, strip, ord, sp; } Group;   /* sp: native strip's first Frame.spos */
 typedef struct { uint32_t mesh, g0, ng; } Inst;   /* a tagged mesh draw: groups g0.. */
@@ -39,7 +40,8 @@ struct Frame {
     Ev* ev; size_t nev, cev;
     uint8_t* pool; size_t npool, cpool;
     int partial, continuation;
-    uint32_t scene;
+    uint64_t scene;                          /* pc_frame_view: stage, room, cut */
+    float view[6];                           /* ... and the camera's eye and view direction */
     float pt[3]; int pt_flags;               /* stream_point */
     VrView vr;                               /* stream_vr_view */
     /* filled by the render thread when executed */
@@ -71,7 +73,7 @@ uint32_t gs_tex_epoch;
 static int tex_event(const Ev* e)
 {
     switch (e->kind) {
-    case EV_IMAGE: case EV_TEXBIND: case EV_TEXDEF_END: case EV_TEXFORGET: case EV_DOWNLOAD: case EV_RTEX: return 1;
+    case EV_IMAGE: case EV_TEXBIND: case EV_TEXDEF_END: case EV_TEXFORGET: case EV_DOWNLOAD: case EV_RTEX: case EV_MOVIE: return 1;
     case EV_REG:   /* TEX0, TEX2, TEXCLUT, TEXA, transfers */
         return e->reg == 0x06 || e->reg == 0x07 || e->reg == 0x16 || e->reg == 0x17 || e->reg == 0x1c ||
                e->reg == 0x3b || (e->reg >= 0x50 && e->reg <= 0x54);
@@ -148,11 +150,14 @@ void stream_tex_bind(uint32_t id, uint32_t tbp, uint32_t cbp)
     push_ev(EV_TEXBIND, 0, 0, id | ((uint64_t)(tbp & 0x3FFF) << 32) | ((uint64_t)(cbp & 0x3FFF) << 46));
 }
 void stream_strip(uint32_t strip) { push_ev(EV_STRIP, 0, 0, strip); }
+void stream_tag_last(uint32_t mesh, uint32_t strip) { push_ev(EV_TAGLAST, 0, strip, mesh); }
+/* movie frame `index` (pc/src/movie) is the texture at TBP tbp for the draws that follow */
+void stream_movie(uint32_t tbp, int index) { push_ev(EV_MOVIE, 0, (uint32_t)index, tbp & 0x3FFF); }
 /* StoreRenderTex on the GPU: the render target FBP/FBW, x 0..w-1, y 0..h-1, becomes
    definition id (a captured texture, bound like any other); no download, no sync point */
-void stream_rtex_capture(uint32_t id, uint32_t fbp, uint32_t fbw, uint32_t w, uint32_t h)
+void stream_rtex_capture(uint32_t id, uint32_t fbp, uint32_t fbw, uint32_t w, uint32_t h, int wide)
 {
-    push_ev(EV_RTEX, 0, w | (h << 16), id | ((uint64_t)(fbp & 0x1FF) << 32) | ((uint64_t)(fbw & 0x3F) << 48));
+    push_ev(EV_RTEX, 0, w | (h << 16), id | ((uint64_t)(fbp & 0x1FF) << 32) | ((uint64_t)(fbw & 0x3F) << 48) | ((uint64_t)(wide != 0) << 56));
 }
 
 /* a + (b - a) * k for every attribute (all linear in view space) */
@@ -332,8 +337,8 @@ void stream_submit(void)
 {
     extern int gs_take_view_change(void);
     extern void pc_view_changed(void);
-    extern uint32_t pc_scene_id(void);
-    recording()->scene = pc_scene_id();
+    extern uint64_t pc_frame_view(float view[6]);
+    recording()->scene = pc_frame_view(rec->view);
     memcpy(rec->pt, point, sizeof(point));
     rec->pt_flags = point_flags;
     point_flags = 0;
@@ -480,11 +485,24 @@ void stream_exec(Frame* f)
                 inst = (long)f->nin++;
             }
             break;
+        case EV_TAGLAST:   /* the group just drawn is an instance of its own (an effect polygon drawn from the ordering table) */
+            if (f->ng && !f->new_group) {
+                if (inst >= 0 && f->in[inst].ng && f->in[inst].g0 + f->in[inst].ng == f->ng) f->in[inst].ng--;
+                GROW(f->in, f->nin, f->cin, 1);
+                f->in[f->nin++] = (Inst){ (uint32_t)e->v, (uint32_t)f->ng - 1, 1 };
+                f->g[f->ng - 1].strip = e->len; f->g[f->ng - 1].ord = 0;
+            }
+            inst = -1;
+            f->new_group = 1;
+            break;
+        case EV_MOVIE:
+            gs_movie_bind((uint32_t)e->v, (int)e->len);
+            break;
         case EV_DISP:
             gs.disp_fbp = (uint32_t)(e->v & 0xFFFF); gs.disp_fbw = (uint32_t)((e->v >> 16) & 0xFFFF); gs.disp_psm = (uint32_t)(e->v >> 32);
             break;
         case EV_RTEX:
-            ntex_define_capture((uint32_t)e->v, gs_capture_rt((uint32_t)(e->v >> 32) & 0x1FF, (uint32_t)(e->v >> 48) & 0x3F, e->len & 0xFFFF, e->len >> 16),
+            ntex_define_capture((uint32_t)e->v, gs_capture_rt((uint32_t)(e->v >> 32) & 0x1FF, (uint32_t)(e->v >> 48) & 0x3F, e->len & 0xFFFF, e->len >> 16, (int)(e->v >> 56) & 1),
                                 (int)(e->len & 0xFFFF), (int)(e->len >> 16));
             break;
         case EV_DOWNLOAD:
@@ -607,7 +625,7 @@ static long inst_pair(const Frame* p, const Inst* a, const Frame* c, const Inst*
                     if (pa == NO_POS || pb == NO_POS) { total--; n--; continue; }   /* no screen position: not judged */
                     d = moved(pa, pb);
                     sum += d < 2 * JUMP ? d : 2 * JUMP;
-                    near += d <= ((g->key0 & NATIVE_KEY) ? NATIVE_JUMP : JUMP);
+                    near += d <= ((g->key0 & NATIVE_KEY) && !(b->mesh & 1) ? NATIVE_JUMP : JUMP);   /* effects: JUMP (a slot reused within a frame) */
                 }
                 n += g->nv;
             }
@@ -638,17 +656,41 @@ static int interp_stats(void)
     return st;
 }
 
+/* The fixed or event camera jumped although the scene id stayed (an event camera switched
+   before its number did, a teleport within a cut): the eye moved more than VIEW_MOVE units or
+   the view turned more than 30 degrees in one game frame. Camera motion stays below (the
+   game's smooth pans between cuts up to ~5 units and 6 degrees a frame, cuts from 20 units or
+   from 11 degrees with 58 units). The third-person camera is not compared (pc_frame_view:
+   no view): it turns fast under the mouse but never jumps. */
+#define VIEW_MOVE 10.0f
+#define VIEW_TURN 0.8660f   /* cos 30 degrees */
+static int view_cut(const Frame* p, const Frame* c)
+{
+    float d2 = 0.0f, dot = 0.0f, la = 0.0f, lb = 0.0f;
+    for (int k = 0; k < 3; k++) {
+        float d = c->view[k] - p->view[k];
+        d2 += d * d;
+        dot += p->view[3 + k] * c->view[3 + k];
+        la += p->view[3 + k] * p->view[3 + k]; lb += c->view[3 + k] * c->view[3 + k];
+    }
+    if (la < 0.5f || lb < 0.5f) return 0;   /* no camera yet */
+    if (d2 <= VIEW_MOVE * VIEW_MOVE && dot >= VIEW_TURN) return 0;
+    if (interp_stats()) printf("interp: view jump %.1f units, %.0f degrees\n", SDL_sqrtf(d2), SDL_acosf(dot > 1.0f ? 1.0f : dot) * 57.29578f);
+    return 1;
+}
+
 /* match frame c against p; 1 if in-between frames make sense */
 int stream_match(const Frame* p, const Frame* c)
 {
     static uint32_t* order; static uint8_t* used; static size_t cap_order;
-    size_t tagged = 0, matched = 0, no_inst = 0, unpaired = 0;
+    size_t tagged[2] = { 0, 0 }, matched[2] = { 0, 0 }, no_inst = 0, unpaired = 0;   /* [1]: effects (odd tags, pc_effect_tag) */
     matched_for = NULL;
     if (!p || !c || c->continuation || p->partial || (!c->nvx && !c->nin)) return 0;
     if (p->scene != c->scene) {
-        if (interp_stats()) printf("interp: scene %08x -> %08x\n", p->scene, c->scene);
+        if (interp_stats()) printf("interp: scene %010llx -> %010llx\n", (unsigned long long)p->scene, (unsigned long long)c->scene);
         return 0;
     }
+    if (view_cut(p, c)) return 0;
     frame_spos(p);
     frame_spos(c);
     if (c->nvx > cap_prev) {
@@ -674,9 +716,10 @@ int stream_match(const Frame* p, const Frame* c)
         const Inst* b = &c->in[i];
         size_t lo = 0, hi = p->nin, best = (size_t)-1;
         long best_d = 2 * JUMP + 1;
+        int fx = b->mesh & 1;
         if (!b->ng) continue;
         if (b->ng > cap_pair) { cap_pair = b->ng * 2; pair = xrealloc(pair, cap_pair * sizeof(*pair)); }
-        for (uint32_t k = 0; k < b->ng; k++) tagged += c->g[b->g0 + k].nv;
+        for (uint32_t k = 0; k < b->ng; k++) tagged[fx] += c->g[b->g0 + k].nv;
         while (lo < hi) {   /* first instance of this mesh in p */
             size_t m = (lo + hi) / 2;
             if (p->in[order[m]].mesh < b->mesh) lo = m + 1; else hi = m;
@@ -698,7 +741,7 @@ int stream_match(const Frame* p, const Frame* c)
                 h = &p->g[pair[k]];
                 if (g->key0 & NATIVE_KEY) {   /* native strip: blended vertex for vertex in replay, unless it stands still */
                     if (!nv_same_pos(native_verts(p, h->v0), native_verts(c, g->v0), g->nv)) nat_prev[g->v0] = (int32_t)h->v0;
-                    matched += g->nv;
+                    matched[fx] += g->nv;
                     continue;
                 }
                 for (uint32_t v = 0; v < g->nv; v++) {
@@ -706,15 +749,15 @@ int stream_match(const Frame* p, const Frame* c)
                     prev_q[g->v0 + v] = vtx_q(p, h->v0 + v);
                     has_prev[g->v0 + v] = moved(prev_xyz[g->v0 + v], vtx(c, g->v0 + v)) <= VJUMP;
                 }
-                matched += g->nv;
+                matched[fx] += g->nv;
             }
         }
     }
     {
-        if (interp_stats()) printf("interp: meshes %zu/%zu, vertices %zu/%zu tagged matched, %zu total; unmatched: %zu no instance, %zu unpaired groups\n", c->nin, p->nin, matched, tagged, c->nvx, no_inst, unpaired);
+        if (interp_stats()) printf("interp: meshes %zu/%zu, vertices %zu/%zu tagged matched, effects %zu/%zu, %zu total; unmatched: %zu no instance, %zu unpaired groups\n", c->nin, p->nin, matched[0], tagged[0], matched[1], tagged[1], c->nvx, no_inst, unpaired);
     }
     /* most meshes lost or jumping although the camera did not cut: a scene change */
-    if (!matched || matched * 2 < tagged) return 0;
+    if (!matched[0] || matched[0] * 2 < tagged[0]) return 0;
     matched_for = c;
     nat_prev_frame = p;
     return 1;
@@ -818,6 +861,7 @@ void stream_replay(const Frame* r, float t)
         if (e->kind == EV_TEXDEF_END) { in_def = 0; continue; }
         if (in_def) continue;
         if (e->kind == EV_TEXBIND) { ntex_bind((uint32_t)e->v, (uint32_t)(e->v >> 32) & 0x3FFF, (uint32_t)(e->v >> 46) & 0x3FFF); continue; }
+        if (e->kind == EV_MOVIE) { gs_movie_bind((uint32_t)e->v, (int)e->len); continue; }
         if (e->kind == EV_RTEX) continue;    /* draws bind the executed frame's capture (replay resources) */
         if (e->kind == EV_IMAGE) continue;   /* a replay writes no GS memory: its textures and render-target
                                                   reloads are the executed frame's (gs_gl.c, replay resources) */

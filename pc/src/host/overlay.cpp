@@ -80,6 +80,23 @@ int overlay_event(const void* e)
 /* the rows of a page of the shared table (settings.c): all of them, or on the pages that have
    their own windows (CO-OP: F3, EXTRAS: F2) the ones flagged SET_F1. Values are applied by
    settings_poll (next pumped frame) and recvx.ini written once they stop changing. true = changed */
+/* the picture calibration test pattern (settings_calib), in the colours the game's picture gets
+   (the overlay itself is drawn without the calibration) */
+static void calib_pattern(void)
+{
+    float sq = ImGui::GetFontSize() * 1.5f, gap = sq * 0.5f, w = CALIB_STEPS * (sq + gap) + gap;
+    ImVec2 p = ImGui::GetCursorScreenPos();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    auto grey = [](int v) { int g = (int)(gs_picture(v / 255.0f) * 255.0f + 0.5f); return IM_COL32(g, g, g, 255); };
+    for (int k = 0; k < 2; k++) {
+        float x = p.x + k * (w + gap);
+        dl->AddRectFilled(ImVec2(x, p.y), ImVec2(x + w, p.y + sq + 2 * gap), grey(k ? 255 : 0));
+        for (int i = 0; i < CALIB_STEPS; i++)
+            dl->AddRectFilled(ImVec2(x + gap + i * (sq + gap), p.y + gap), ImVec2(x + gap + i * (sq + gap) + sq, p.y + gap + sq), grey(settings_calib[k][i]));
+    }
+    ImGui::Dummy(ImVec2(2 * w + gap, sq + 2 * gap));
+}
+
 static bool settings_imgui(int page, bool all = true)
 {
     bool changed = false;
@@ -120,8 +137,12 @@ static bool settings_imgui(int page, bool all = true)
             }
         }
         ImGui::EndDisabled();
-        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled) && (s->help || lock))
-            ImGui::SetTooltip("%s%s%s", lock ? lock : "", lock && s->help ? "\n" : "", s->help ? s->help : "");
+        if ((ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled) || ((s->flags & SET_CALIB) && ImGui::IsItemActive())) && (s->help || lock)) {
+            ImGui::BeginTooltip();
+            ImGui::Text("%s%s%s", lock ? lock : "", lock && s->help ? "\n" : "", s->help ? s->help : "");
+            if (s->flags & SET_CALIB) calib_pattern();
+            ImGui::EndTooltip();
+        }
     }
     return changed;
 }

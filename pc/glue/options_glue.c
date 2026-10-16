@@ -369,6 +369,14 @@ static void draw_row(int i, int sel)
         if (!lock) { pc_ui_arrow(X_VALUE - 6, y + 9, -1, col); pc_ui_arrow(X_VALUE + 12 + w + 8, y + 9, 1, col); }
         text_fit(X_VALUE + 6, y, val, SC_ROW, 210, col);
     }
+    if (sel && s && (s->flags & SET_CALIB)) {   /* the test pattern, right on the row: drawn into the picture, so calibrated with it */
+        float x = 466;
+        for (int k = 0; k < 2; k++, x += 5 * 12 + 4 + 6) {
+            pc_ui_rect(x, y - 1, x + 5 * 12 + 4, y + ROW_H - 6, k ? 0xFFFFFFFF : 0xFF000000, Z_HI + 0.02f);
+            for (int j = 0; j < CALIB_STEPS; j++)
+                pc_ui_rect(x + 4 + j * 12, y + 3, x + 12 + j * 12, y + ROW_H - 10, 0xFF000000u | settings_calib[k][j] * 0x010101u, Z_HI + 0.03f);
+        }
+    }
 }
 
 static void draw_help(void)

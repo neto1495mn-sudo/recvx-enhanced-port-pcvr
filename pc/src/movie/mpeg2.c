@@ -240,7 +240,7 @@ struct Mpeg2 {
     int last_mb_type, last_mv[2][2];
     Mpeg2FrameFn on_frame;
     void* user;
-    unsigned slice_errors, pictures;
+    unsigned slice_errors, pictures, emitted;
     float idct_c[8][8];
 };
 
@@ -281,6 +281,7 @@ static void alloc_frames(Mpeg2* d)
 static void emit(Mpeg2* d, int idx)
 {
     Mpeg2Frame f = { d->buf[idx].y, d->buf[idx].cb, d->buf[idx].cr, d->width, d->height, d->mbw * 16, d->mbw * 8 };
+    d->emitted++;
     if (d->on_frame) d->on_frame(&f, d->user);
 }
 
@@ -571,10 +572,12 @@ static void select_target(Mpeg2* d)
     else d->cur = d->bwd;
 }
 
-size_t mpeg2_decode(Mpeg2* d, const uint8_t* data, size_t len, int eof)
+static size_t decode(Mpeg2* d, const uint8_t* data, size_t len, int eof, int one)
 {
     size_t pos = 0;
+    unsigned emitted = d->emitted;
     for (;;) {
+        if (one && d->emitted != emitted) return pos;
         size_t sc = pos, next;
         while (sc + 3 < len && !(data[sc] == 0 && data[sc + 1] == 0 && data[sc + 2] == 1)) sc++;
         if (sc + 3 >= len) return eof ? len : pos;
@@ -611,3 +614,6 @@ size_t mpeg2_decode(Mpeg2* d, const uint8_t* data, size_t len, int eof)
         }
     }
 }
+
+size_t mpeg2_decode(Mpeg2* d, const uint8_t* data, size_t len, int eof) { return decode(d, data, len, eof, 0); }
+size_t mpeg2_decode_frame(Mpeg2* d, const uint8_t* data, size_t len, int eof) { return decode(d, data, len, eof, 1); }
