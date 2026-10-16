@@ -161,6 +161,7 @@ void  pc_title_menu_init(void);                  /* Adv_BioCvTitle mode 0: the M
 void  pc_title_plates(int cursor, int n, float fade, int flag);   /* DisplayGameModePlate */
 void  pc_title_mouse(int level, int flag);       /* CheckButton: hover moves the cursor, a click confirms */
 void  pc_title_mouse_active(int on);             /* a title menu or the lobby is up: the OS cursor is shown */
+int   pc_quickload_take(void);                   /* F10: the title loads save 15 (test aid) */
 int   pc_lobby(void);                            /* Adv_BioCvTitle mode 30: 1 back, 2 new game, 3 load the chosen save */
 void  pc_lobby_close(void);                      /* the title ends */
 void  pc_lobby_load_save(void);                  /* bhSysCallFirstmovie return code 8 */

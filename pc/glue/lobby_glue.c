@@ -444,6 +444,15 @@ typedef struct SaveInfo { int valid, ply_id, stg, rom, gm_mode, count; } SaveInf
 static SaveInfo* saves;   /* by slot (lobby.h: the card's 0..14 or native save number - 1) */
 static int n_saves;
 static unsigned char save_buf[LOBBY_SAVE_BYTES];   /* the host's chosen save, read when the game starts */
+static int quickload;   /* F10 pressed: the title loads save 15 (test aid, with F9's save anywhere) */
+int pc_quickload_take(void)
+{
+    if (!quickload) return 0;
+    quickload = 0;
+    if (!lobby_read_save(14, save_buf)) { host_log("quickload: save 15 cannot be read\n"); return 0; }
+    host_log("quickload: loading save 15\n");
+    return 1;
+}
 
 /* read when the lobby opens (and when a chosen save cannot be read): no save is written at the title */
 static void scan_saves(void)
@@ -1299,10 +1308,33 @@ void lobby_frame(void)
         bhReturnTitle();
         title = NULL;
     }
+    {   /* F9: the game in progress written now to save 15, as RECVX_TEST_SAVE does (a test aid: a save anywhere) */
+        static int was;
+        extern const _Bool* SDL_GetKeyboardState(int* numkeys);   /* (SDL3; this file does not include SDL) */
+        const _Bool* ks = SDL_GetKeyboardState(NULL);
+        int down = ks && ks[66 /* SDL_SCANCODE_F9 */];
+        int now = down && !was && sys && plp && (sys->tk_flg & 0x80) && !(sys->ss_flg & 0x400000);
+        was = down;
+        if (now) { slot = 14; goto write_save; }
+    }
+    {   /* F10: back to the title, which then loads save 15 (pc_quickload_take, adv.c) */
+        static int was;
+        extern const _Bool* SDL_GetKeyboardState(int* numkeys);
+        const _Bool* ks = SDL_GetKeyboardState(NULL);
+        int down = ks && ks[67 /* SDL_SCANCODE_F10 */];
+        if (down && !was && !quickload) {
+            quickload = 1;
+            host_log("quickload: F10\n");
+            if (sys && (sys->tk_flg & 0x80)) bhReturnTitle();
+        }
+        was = down;
+    }
     if (env == (const char*)-1) env = getenv("RECVX_TEST_SAVE");
     if (!env || !sys || !plp || !(sys->tk_flg & 0x80) || (sys->ss_flg & 0x400000)) return;
     if (sys->gfrm_ct != prev) { prev = sys->gfrm_ct; clock++; }
     if (sscanf(env, "%d:%d", &f, &slot) != 2 || clock < f) return;
+    env = strchr(env, ',') ? strchr(env, ',') + 1 : NULL;   /* "f:slot,f:slot,..." */
+write_save:
     memcpy(keep, &sys->version, n);
     sys->version = 10;
     sys->flr_no = plp->flr_no;
@@ -1315,7 +1347,6 @@ void lobby_frame(void)
     host_log("test: %s save file %d (stage %d room %d, items %08x %08x %08x)\n", lobby_write_save(slot, &sys->version, n) ? "wrote" : "cannot write",
              slot + 1, sys->stg_no, sys->rom_no, sys->itm[sys->ply_id * 16 + 2], sys->itm[sys->ply_id * 16 + 3], sys->itm[sys->ply_id * 16 + 4]);
     memcpy(&sys->version, keep, n);
-    env = strchr(env, ',') ? strchr(env, ',') + 1 : NULL;   /* "f:slot,f:slot,..." */
 }
 
 /* the lobby's drawing helpers for the ENHANCED SETTINGS pages of the OPTION menu (pc/glue/options_glue.c) */

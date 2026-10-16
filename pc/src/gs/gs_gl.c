@@ -1232,12 +1232,37 @@ void gs_flush(void)
     {
         uint64_t sc = st->ctx.scissor;
         int x0 = sc & 0x7FF, x1 = (sc >> 16) & 0x7FF, y0 = (sc >> 32) & 0x7FF, y1 = (sc >> 48) & 0x7FF;
-        if (!cur_rt->has_box) { cur_rt->has_box = 1; cur_rt->bx0 = x0; cur_rt->by0 = y0; cur_rt->bx1 = x1; cur_rt->by1 = y1; }
+        int bx0 = x0, by0 = y0, bx1 = x1, by1 = y1;
+        if (x1 >= (int)fbw * 64 && vcount > 0) {
+            /* the scissor is wider than the target (a small render-to-texture image, e.g. the weapon
+               room's monitor, FBP 476 FBW 4 under a 640 x 480 scissor): the drawn area is what the
+               vertices cover, so a CLUT written in the pages below it does not make the image stale */
+            float mx0 = 1e9f, my0 = 1e9f, mx1 = -1e9f, my1 = -1e9f;
+            int ok = 1;
+            for (int k = 0; k < vcount && ok; k++) {
+                float w = vbuf[k].w, x, y;
+                if (!(w > 0.0f)) { ok = 0; break; }   /* (behind the eye: keep the scissor) */
+                x = vbuf[k].x / w; y = vbuf[k].y / w;
+                if (x < mx0) mx0 = x;
+                if (x > mx1) mx1 = x;
+                if (y < my0) my0 = y;
+                if (y > my1) my1 = y;
+            }
+            if (ok) {
+                if (mx0 > (float)bx0) bx0 = (int)floorf(mx0);
+                if (my0 > (float)by0) by0 = (int)floorf(my0);
+                if (mx1 < (float)bx1) bx1 = (int)ceilf(mx1);
+                if (my1 < (float)by1) by1 = (int)ceilf(my1);
+                if (bx1 > (int)fbw * 64 - 1) bx1 = (int)fbw * 64 - 1;
+                if (bx0 > bx1 || by0 > by1) { bx0 = x0; by0 = y0; bx1 = x1; by1 = y1; }
+            }
+        }
+        if (!cur_rt->has_box) { cur_rt->has_box = 1; cur_rt->bx0 = bx0; cur_rt->by0 = by0; cur_rt->bx1 = bx1; cur_rt->by1 = by1; }
         else {
-            if (x0 < cur_rt->bx0) cur_rt->bx0 = x0;
-            if (y0 < cur_rt->by0) cur_rt->by0 = y0;
-            if (x1 > cur_rt->bx1) cur_rt->bx1 = x1;
-            if (y1 > cur_rt->by1) cur_rt->by1 = y1;
+            if (bx0 < cur_rt->bx0) cur_rt->bx0 = bx0;
+            if (by0 < cur_rt->by0) cur_rt->by0 = by0;
+            if (bx1 > cur_rt->bx1) cur_rt->bx1 = bx1;
+            if (by1 > cur_rt->by1) cur_rt->by1 = by1;
         }
         if (g_margin_x && x0 == 0 && x1 >= (int)fbw * 64 - 1) { x0 = -g_margin_x; x1 += g_margin_x; }   /* full width -> widened view */
         glEnable(GL_SCISSOR_TEST);
