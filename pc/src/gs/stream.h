@@ -38,6 +38,10 @@ int      stream_match(const Frame* prev, const Frame* cur);
 void     stream_replay(const Frame* f, float t);
 /* VR: replay the executed frame exactly as executed (no interpolation, no match needed) */
 void     stream_replay_exact(const Frame* f);
+/* VR: the frame with only the characters' native strips (g_native_tag) blended at t, their
+   previous positions mapped by T (homogeneous GS position, previous camera -> this one) */
+void     stream_replay_chars(const Frame* f, float t, const float T[16]);
+const Frame* stream_prev_frame(const Frame* f);   /* the frame f is matched with (NULL: none) */
 const VrView* stream_frame_vr(const Frame* f);   /* the frame's VR camera (valid = 0: none) */
 /* cur's stream_point at t (in-between frames): blended from prev's as the 3D is, while both are
    in front of the camera; prev NULL or t >= 1: cur's. Returns cur's flags (0: no point). */

@@ -1,7 +1,7 @@
 /* User settings: <save_dir>/recvx.ini, "key = value" lines. */
 #include "xr.h"
 extern int g_vr_scale, g_vr_eye_height, g_vr_fov, g_vr_turn, g_vr_hand_aim, g_vr_fx_fix, g_vr_gun_min, g_vr_hand_offset, g_vr_slash_speed, g_vr_hit_tilt, g_vr_danger_fx, g_vr_eye_shape, g_vr_screen_angle, g_vr_left_mirror, g_vr_dmg_head, g_vr_dmg_body, g_vr_dmg_arm, g_vr_dmg_leg, g_vr_recoil, g_vr_haptics, g_vr_hud_dist, g_vr_hud_angle, g_vr_sight, g_vr_sight_size, g_vr_holster, g_vr_hud_y, g_vr_roomscale, g_vr_manual_reload, g_vr_prompts, g_vr_dmg_body_max, g_vr_wake_shots, g_vr_precise_hits, g_vr_barrel_pitch, g_vr_hud_dist, g_vr_hud_angle, g_vr_aim_walk;
-extern int g_tex_hd, g_tex_hd_log, g_tex_hd_mb, g_tex_hd_max, g_fast_doors, g_vr_debug_log, g_vr_door_fade, g_vr_shadows, g_vr_debug_cores;   /* gs/texreplace.c */
+extern int g_tex_hd, g_tex_hd_log, g_tex_hd_mb, g_tex_hd_max, g_fast_doors, g_vr_debug_log, g_vr_door_fade, g_vr_shadows, g_vr_debug_cores, g_vr_interpolate;   /* gs/texreplace.c */
 static int g_vr_cfg_ver;   /* ini vr_cfg_ver: the VR settings' version, to move older saved values to new defaults */   /* pc/glue/vr_glue.c */
 #include "../ps2_platform.h"
 #include "coop.h"
@@ -39,7 +39,8 @@ static const struct { const char* key; int* val; int lo, hi; } keys[] = {
     { "vr_door_fade", &g_vr_door_fade, 0, 1 },
     { "vr_shadows", &g_vr_shadows, 0, 1 },
     { "vr_debug_cores", &g_vr_debug_cores, 0, 1 },            /* glue/vr_glue.c */        /* gs/gs_gl.c: room changes fade in the headset */
-    { "vr_debug_log", &g_vr_debug_log, 0, 1 },        /* glue/vr_glue.c: the enemies' diary */
+    { "vr_debug_log", &g_vr_debug_log, 0, 1 },
+    { "vr_interpolate", &g_vr_interpolate, 0, 1 },    /* gs/gs_gl.c: the characters smoothed to the headset's rate */        /* glue/vr_glue.c: the enemies' diary */
     { "quick_knife", &g_config.quick_knife, 0, 1 },
     { "model_cull", &g_config.model_cull, 0, 1 },
     { "skip_intro", &g_config.skip_intro, 0, 1 },

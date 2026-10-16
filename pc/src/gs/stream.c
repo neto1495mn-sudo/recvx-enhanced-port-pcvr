@@ -25,6 +25,7 @@
 #include "../host/prof.h"
 #include "../ps2_platform.h"
 #include <SDL3/SDL.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -219,15 +220,18 @@ static int clip_plane(const NativeVertex* in, int n, NativeVertex* out, int plan
 /* Native 3D strips are recorded as they come (PRIM attribute bits, len = vertex count, data
    in the pool), so a strip has the same vertices in every frame and an in-between frame can
    blend them one to one; culling and clipping happen when drawn (native_draw). */
+int g_native_tag;                  /* game thread: the strips recorded now are a character's (game.c bhDrawEnemy) */
+static int native_tag_force = -1;  /* a deferred strip's own tag (native_marker) */
 void native_strip(unsigned int prim, const NativeVertex* v, int n)
 {
     Frame* f = recording();
+    uint8_t tag = (uint8_t)(native_tag_force >= 0 ? native_tag_force : g_native_tag);   /* 1 character, 2/3 right/left hand (VR) */
     uint32_t len = (uint32_t)(n * sizeof(NativeVertex));
     if (n < 3) return;
     GROW(f->pool, f->npool, f->cpool, len);
     memcpy(f->pool + f->npool, v, len);
     GROW(f->ev, f->nev, f->cev, 1);
-    f->ev[f->nev++] = (Ev){ EV_NATIVE, 0, (uint32_t)n, f->npool | ((uint64_t)prim << 32) };
+    f->ev[f->nev++] = (Ev){ EV_NATIVE, tag, (uint32_t)n, f->npool | ((uint64_t)prim << 32) };   /* (reg: the character tag) */
     f->npool += len;
 }
 
@@ -257,7 +261,7 @@ static void native_draw(unsigned int prim, const NativeVertex* v, int n, long ev
 }
 
 /* deferred native strips (game thread), valid until the frame is submitted */
-typedef struct { unsigned int prim; uint32_t first, n, mesh, strip; int raw; } Deferred;
+typedef struct { unsigned int prim; uint32_t first, n, mesh, strip; int raw, tag; } Deferred;
 static Deferred* deferred; static size_t ndef, cdef;
 static NativeVertex* defv; static size_t ndefv, cdefv;
 static NativeRawVertex* defr; static size_t ndefr, cdefr;
@@ -267,7 +271,7 @@ uint32_t native_defer_raw(unsigned int prim, const NativeRawVertex* v, int n)
     GROW(defr, ndefr, cdefr, (size_t)n);
     memcpy(defr + ndefr, v, (size_t)n * sizeof(*v));
     GROW(deferred, ndef, cdef, 1);
-    deferred[ndef] = (Deferred){ prim, (uint32_t)ndefr, (uint32_t)n, 0, 0, 1 };
+    deferred[ndef] = (Deferred){ prim, (uint32_t)ndefr, (uint32_t)n, 0, 0, 1, 0 };
     ndefr += (size_t)n;
     return (uint32_t)ndef++;
 }
@@ -277,7 +281,7 @@ uint32_t native_defer(unsigned int prim, const NativeVertex* v, int n, uint32_t 
     GROW(defv, ndefv, cdefv, (size_t)n);
     memcpy(defv + ndefv, v, (size_t)n * sizeof(*v));
     GROW(deferred, ndef, cdef, 1);
-    deferred[ndef] = (Deferred){ prim, (uint32_t)ndefv, (uint32_t)n, mesh, strip, 0 };
+    deferred[ndef] = (Deferred){ prim, (uint32_t)ndefv, (uint32_t)n, mesh, strip, 0, (uint8_t)g_native_tag };
     ndefv += (size_t)n;
     return (uint32_t)ndef++;
 }
@@ -300,7 +304,9 @@ void native_marker(uint64_t v)
     }
     if (d->mesh) stream_tag(d->mesh);
     stream_strip(d->strip);
+    native_tag_force = d->tag;
     native_strip(d->prim, defv + d->first, (int)d->n);
+    native_tag_force = -1;
     if (d->mesh) stream_tag(0);
 }
 
@@ -827,6 +833,18 @@ static Blend blend_vertex(const Frame* r, size_t vi, float t)
 }
 
 static int replay_exact;
+static int replay_chars;      /* stream_replay_chars: only the characters' strips are blended */
+static float chars_T[16];     /* ... their previous positions taken to this frame's camera first */
+int g_hand_on;               /* VR: the hand objects' strips (tag 2 right, 3 left) drawn through g_hand_M */
+float g_hand_M[2][16];
+const Frame* stream_prev_frame(const Frame* r) { return r == matched_for ? nat_prev_frame : NULL; }
+void stream_replay_chars(const Frame* r, float t, const float T[16])
+{
+    memcpy(chars_T, T, sizeof(chars_T));
+    replay_chars = 1;
+    stream_replay(r, t);
+    replay_chars = 0;
+}
 void stream_replay_exact(const Frame* r)
 {
     replay_exact = 1;
@@ -871,19 +889,55 @@ void stream_replay(const Frame* r, float t)
                this is the in-between camera and object transform) and attributes, then cull,
                clip and draw */
             const NativeVertex* cur = native_verts(r, (uint32_t)i);
-            if (!replay_exact && nat_prev[i] >= 0) {
+            if (g_hand_on && (e->reg == 2 || e->reg == 3) && e->len <= 64) {   /* VR: a hand object, moved to where its controller is now */
+                const float* M = g_hand_M[e->reg - 2];
+                NativeVertex hv[64];
+                for (int k = 0; k < (int)e->len; k++) {
+                    hv[k] = cur[k];
+                    hv[k].x = M[0] * cur[k].x + M[4] * cur[k].y + M[8] * cur[k].z + M[12] * cur[k].w;
+                    hv[k].y = M[1] * cur[k].x + M[5] * cur[k].y + M[9] * cur[k].z + M[13] * cur[k].w;
+                    hv[k].z = M[2] * cur[k].x + M[6] * cur[k].y + M[10] * cur[k].z + M[14] * cur[k].w;
+                    hv[k].w = M[3] * cur[k].x + M[7] * cur[k].y + M[11] * cur[k].z + M[15] * cur[k].w;
+                }
+                native_draw((unsigned int)(e->v >> 32), hv, (int)e->len, -1);
+                continue;
+            }
+            if (!replay_exact && nat_prev[i] >= 0 && (!replay_chars || e->reg == 1)) {
                 const NativeVertex* prv = native_verts(nat_prev_frame, (uint32_t)nat_prev[i]);
                 NativeVertex bl[64];
                 int n = e->len > 64 ? 64 : (int)e->len;
+                int ok = 1;
+                float dmax = 0.0f;
+                if (replay_chars) {   /* the previous frame's position taken to this frame's camera (chars_T), then blended */
+                    const float* M = chars_T;
+                    if (e->len > 64) ok = 0;
+                    for (int k = 0; k < n && ok; k++) {
+                        NativeVertex p = prv[k];
+                        p.x = M[0] * prv[k].x + M[4] * prv[k].y + M[8] * prv[k].z + M[12] * prv[k].w;
+                        p.y = M[1] * prv[k].x + M[5] * prv[k].y + M[9] * prv[k].z + M[13] * prv[k].w;
+                        p.z = M[2] * prv[k].x + M[6] * prv[k].y + M[10] * prv[k].z + M[14] * prv[k].w;
+                        p.w = M[3] * prv[k].x + M[7] * prv[k].y + M[11] * prv[k].z + M[15] * prv[k].w;
+                        p.near_d = cur[k].near_d; p.far_d = cur[k].far_d;
+                        if (p.w <= 0.0f || cur[k].w <= 0.0f) { ok = 0; break; }
+                        {   /* screen distance in pixels (x/w, y/w are the 640x480 screen) */
+                            float dx = fabsf(p.x / p.w - cur[k].x / cur[k].w), dy = fabsf(p.y / p.w - cur[k].y / cur[k].w);
+                            if (dx > dmax) dmax = dx;
+                            if (dy > dmax) dmax = dy;
+                        }
+                        bl[k] = nv_blend_pos(&p, &cur[k], t);
+                    }
+                    /* only the same strip a little moved: far apart on screen (a wrong pair) would draw a ghost */
+                    if (dmax > 24.0f) ok = 0;
+                } else
                 for (int k = 0; k < n; k++) bl[k] = nv_blend_pos(&prv[k], &cur[k], t);
-                native_draw((unsigned int)(e->v >> 32), bl, n, -1);
+                native_draw((unsigned int)(e->v >> 32), ok ? bl : cur, ok ? n : (int)e->len, -1);
             } else if (r != cached_for || !gs_draw_native_cached((unsigned int)(e->v >> 32), i))   /* as the executed frame */
                 native_draw((unsigned int)(e->v >> 32), cur, (int)e->len, -1);
             continue;
         }
         if (e->kind != EV_REG) continue;
         v = e->v;
-        if (!replay_exact && vi < r->nvx && has_prev[vi] && (i == r->vx[vi] || i == r->stq[vi * 2] || i == r->stq[vi * 2 + 1])) {
+        if (!replay_exact && !replay_chars && vi < r->nvx && has_prev[vi] && (i == r->vx[vi] || i == r->stq[vi * 2] || i == r->stq[vi * 2 + 1])) {
             if (bvi != vi) { bl = blend_vertex(r, vi, t); bvi = vi; }
             if (i == r->vx[vi]) v = bl.xyz;
             else if (i == r->stq[vi * 2]) { if (bl.has_st) v = bl.st; }

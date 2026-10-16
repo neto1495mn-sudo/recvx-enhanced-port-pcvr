@@ -2410,7 +2410,18 @@ static int present_vr_held(void)
     return 1;
 }
 
-static int present_vr_stereo(const struct Frame* cur)
+int g_vr_interpolate = 1;   /* ini vr_interpolate: the characters move at the headset's rate (their strips blended, stream.c) */
+/* the game's projection of a frame as a 4x4 (column-major): V (view, homogeneous) -> the
+   homogeneous GS position of its native vertices (c * Vz + k * V.xy, -zb - za * Vz, Vz) */
+static void vr_proj_matrix(float m[16], const VrView* v, float ofx, float ofy)
+{
+    memset(m, 0, 16 * sizeof(float));
+    m[0] = v->kx; m[8] = v->cx - ofx;
+    m[5] = v->ky; m[9] = v->cy - ofy;
+    m[10] = -v->za; m[14] = -v->zb;
+    m[11] = 1.0f;
+}
+static int present_vr_stereo(const struct Frame* cur, float t)
 {
     static GLuint vr_fbo;
     const VrView* v = cur ? stream_frame_vr(cur) : NULL;
@@ -2440,7 +2451,70 @@ static int present_vr_stereo(const struct Frame* cur)
         g_vr_status = why ? names[why] : NULL;
         if (why) return 0;
     }
-    vr_mat_mul(A, iW, iG);   /* V of the frame -> local (metres) */
+    {   /* vr67: walking moves the play space (W) once a game frame: in between, the play space at t
+           (still scenery and characters move with the body at the headset's rate) */
+        const struct Frame* pf = g_vr_interpolate && t < 0.999f ? stream_prev_frame(cur) : NULL;
+        const VrView* pv = pf ? stream_frame_vr(pf) : NULL;
+        float Wt[16], iWt[16], mv = 0.0f, rot = 0.0f, zs = sqrtf(v->W[0] * v->W[0] + v->W[1] * v->W[1] + v->W[2] * v->W[2]);
+        int use = 0;
+        if (pv && pv->valid) {
+            for (int k = 0; k < 3; k++) mv += (v->W[12 + k] - pv->W[12 + k]) * (v->W[12 + k] - pv->W[12 + k]);
+            mv = sqrtf(mv) / (zs > 1e-3f ? zs : 10.0f);   /* metres */
+            for (int k = 0; k < 12; k++) rot += fabsf(v->W[k] - pv->W[k]);
+            rot /= (zs > 1e-3f ? zs : 10.0f);
+            if (mv < 0.5f && rot < 0.3f) {   /* not a jump (a room change, a recentring) */
+                for (int k = 0; k < 16; k++) Wt[k] = pv->W[k] + (v->W[k] - pv->W[k]) * t;
+                if (vr_mat_invert(iWt, Wt)) use = 1;
+            }
+        }
+        vr_mat_mul(A, use ? iWt : iW, iG);   /* V of the frame -> local (metres) */
+        {   /* vr68: the hand objects follow the controllers now, not as they were when the game frame was made:
+               GS -> V -> local (as made) -> D = aim now * inverse(aim then) -> back through this image's A -> GS */
+            extern int g_hand_on;
+            extern float g_hand_M[2][16];
+            VrInput in;
+            float P0[16], iP0[16], A0[16], iA[16], B[16], C[16], D[16], Mn[16], iMt[16];
+            int have = xr_input(&in);
+            g_hand_on = 0;
+            vr_proj_matrix(P0, v, 0.0f, 0.0f);
+            if (have && vr_mat_invert(iP0, P0) && vr_mat_invert(iA, A)) {
+                vr_mat_mul(A0, iW, iG);
+                for (int h = 0; h < 2; h++) {
+                    const VrPose* now = h ? &in.aiml : &in.aim;
+                    int nv = h ? in.aiml_valid : in.aim_valid;
+                    if (v->hand_ok[h] && nv) {
+                        vr_mat_from_pose(Mn, now);
+                        vr_mat_rigid_inverse_pose(iMt, &v->hand[h]);
+                        vr_mat_mul(D, Mn, iMt);
+                        vr_mat_mul(B, A0, iP0);   /* GS -> local as made */
+                        vr_mat_mul(C, D, B);
+                        vr_mat_mul(B, iA, C);     /* -> V of this image */
+                        vr_mat_mul(g_hand_M[h], P0, B);
+                    } else {
+                        vr_mat_mul(C, A0, iP0); vr_mat_mul(B, iA, C); vr_mat_mul(g_hand_M[h], P0, B);   /* as made (A to this image's view) */
+                    }
+                }
+                g_hand_on = 1;
+            }
+        }
+    }
+    float chT[16];
+    int chars = 0;
+    if (g_vr_interpolate && t < 0.999f) {   /* in between two game frames: the characters at t */
+        const struct Frame* pf = stream_prev_frame(cur);
+        const VrView* pv = pf ? stream_frame_vr(pf) : NULL;
+        if (pv && pv->valid) {
+            float Pc[16], Pp[16], iPp[16], iGp[16], A1[16], A2[16];
+            vr_proj_matrix(Pc, v, 0.0f, 0.0f);   /* the strips carry no XYOFFSET (measured on the still scenery, vr66) */
+            vr_proj_matrix(Pp, pv, 0.0f, 0.0f);
+            if (vr_mat_invert(iPp, Pp) && vr_mat_invert(iGp, pv->G)) {   /* previous GS -> previous V -> world -> this V -> this GS */
+                vr_mat_mul(A1, iGp, iPp);
+                vr_mat_mul(A2, v->G, A1);
+                vr_mat_mul(chT, Pc, A2);
+                chars = 1;
+            }
+        }
+    }
     if (!vr_fbo) glGenFramebuffers(1, &vr_fbo);
     gs_flush();
     for (int e = 0; e < 2 && ok; e++) {
@@ -2473,7 +2547,8 @@ static int present_vr_stereo(const struct Frame* cur)
             static unsigned nlog;
             int logit = e == 0 && nlog < 40 && (frame_no % 90) == 0;
             if (logit) memset(&vr_st, 0, sizeof(vr_st)), vr_st.on = 1;
-            stream_replay_exact(cur);
+            if (chars) stream_replay_chars(cur, t, chT);
+            else stream_replay_exact(cur);
             if (logit) {
                 vr_st.on = 0; nlog++;
                 host_log("vr: frame %llu vertices: 3D %u, GS-depth (sprites/VU1) %u, flat 2D %u (screen layers kept flat %u)\n",
@@ -2520,6 +2595,15 @@ static uint64_t gs_present_vr(const struct Frame* cur, float t)
     last_ms = now_ms;
     if (dt > 0.1f) dt = 0.1f;
     door = g_vr_door_fade && vr_door_transition();
+    {   /* VR diagnosis (vr_debug_log): which picture the headset gets, logged when it changes */
+        extern int g_vr_debug_log;
+        static int last = -1;
+        int k = fr != 1 ? 0 : (door && hold_valid && xr_have_held()) ? 1 : (cur && stream_frame_vr(cur) && stream_frame_vr(cur)->valid) ? 2 : 3;
+        static const char* names[] = { "no headset frame", "room change (held picture)", "3D stereo", "cinema screen" };
+        if (g_vr_debug_log && k != last) host_log("vr-diag: headset shows %s (frame %llu%s%s)\n", names[k], (unsigned long long)frame_no,
+                                                  g_vr_status ? ", " : "", g_vr_status ? g_vr_status : "");
+        last = k;
+    }
     SDL_GetWindowSizeInPixels(g_window, &ww, &wh);
     if (fr != 1) g_vr_status = fr == 0 ? "headset asked not to render" : "headset not running";
     if (fr == 1 && door && hold_valid && xr_have_held()) {   /* room change: the last 3D picture fades out, fixed in the room */
@@ -2528,7 +2612,7 @@ static uint64_t gs_present_vr(const struct Frame* cur, float t)
         draw_display(final_vw ? img[fin].tex : 0, final_vw ? final_vw : 640, final_vw ? final_vh : 512);   /* mirror */
         overlay_render();
         if (!present_vr_held()) xr_frame_end_none();
-    } else if (fr == 1 && (vr_fade = vr_fade + dt / 0.5f > 1.0f ? 1.0f : vr_fade + dt / 0.5f, present_vr_stereo(cur))) {   /* (fading back in after one) */
+    } else if (fr == 1 && (vr_fade = vr_fade + dt / 0.5f > 1.0f ? 1.0f : vr_fade + dt / 0.5f, present_vr_stereo(cur, t))) {   /* (fading back in after one) */
         draw_display(final_vw ? img[fin].tex : 0, final_vw ? final_vw : 640, final_vw ? final_vh : 512);   /* mirror */
         overlay_render();
         xr_frame_end_stereo();

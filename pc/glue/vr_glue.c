@@ -203,7 +203,8 @@ int vr_on(void);
 static float holster_w[3];          /* the holster (world), when a gun is in hand */
 static int holster_ok;
 static float hand_pos[2][3];        /* where each hand was put this frame (world) */
-static int hand_ok[2];              /* ... and whether it was */
+static int hand_ok[2];
+static VrPose hand_aim[2];              /* ... and whether it was */
 
 /* The ammo in the boxes for the gun in hand: the inventory items the game would reload it
    from (as bhSearchBullet: ammo items whose combination list names the weapon), summed;
@@ -333,6 +334,8 @@ int vr_door_transition(void)
     return sys && ((sys->ts_flg & 0x100000) || NowLoadDisp);
 }
 
+int vr_session(void) { return xr_stereo_ready(); }   /* the headset shows the game (cutscenes included) */
+
 int g_vr_shadows = 0;   /* ini vr_shadows: the game's screen-space shadows in VR (they float) */
 int vr_hide_shadows(void) { return vr_on() && !g_vr_shadows; }
 
@@ -418,7 +421,6 @@ static void aim_walk_update(void)
    the game's own reload (bhSearchBullet) fills it. */
 static int mag_out = -1, mag_kept;       /* the inventory slot whose magazine is out, its rounds */
 static int mag_held, reloading;
-int vr_block_autoreload(void) { return g_vr_manual_reload && vr_on() && !reloading; }   /* sub1.c bhSearchBullet */
 static unsigned* gun_slot(void)
 {
     S_WORK* st = &swork;
@@ -450,6 +452,8 @@ static void reload_update(void)
         if (g_vr_haptics) xr_haptic(0, 0.4f, 40);
         vr_log("vr: magazine out (%d rounds kept)\n", mag_kept);
     }
+    if (gr && !g_was && g_vr_debug_log)   /* VR diagnosis: each left grip with a gun in hand */
+        vr_log("vr-diag: left grip: near holster %d (holster shown %d) box ammo %d rounds %d mag_out %d\n", near_holster(), holster_ok, box_ammo(), g ? (int)(*g & 0xFFFF) : -1, mag_out);
     if (gr && !g_was && near_holster() && g && box_ammo() > 0) {   /* a magazine from the holster */
         mag_held = 1;
         if (g_vr_haptics) xr_haptic(1, 0.5f, 40);
@@ -1089,6 +1093,7 @@ void vr_hand(BH_PWORK* p)
         if (!aiming && !rok[side][1][wn]) { rows_from_angles(A, ya, 0); learn(rrel[side][1][wn], A, H); rok[side][1][wn] = 1; }
         hp = side ? &in.aiml : &in.aim;
         if (!ctl || !(side ? in.aiml_valid : in.aim_valid)) { hand_log(side, 1, wn); continue; }
+        hand_aim[side] = *hp;   /* vr68: the pose this frame's hand was put with (the renderer follows the controller from it) */
         /* one hand pose for every weapon: the grip the right hand learned with the first gun it
            aimed (kept in <save>/vr_grip.txt); the left hand the same, mirrored */
         if (side == 0 && !grip_ok && rok[0][0][wn] && !knife_equipped() && !dual_equipped()) {
@@ -1180,6 +1185,7 @@ void vr_hand(BH_PWORK* p)
    hand that fired it (the game's own muzzle point gx, on the hand node, which follows the
    controller) and goes where that controller points. Everything else about the shot (damage,
    walls, enemies, effects) is the game's. */
+static unsigned diag_shots;   /* the player's shots (vr_gun_ray), for the trigger log */
 int vr_gun_ray(GA_WORK* gap)
 {
     static int last = -1;
@@ -1189,6 +1195,7 @@ int vr_gun_ray(GA_WORK* gap)
     int side, st;
     if (!gap || !plp || !vr_on()) return 0;
     if (gap->wpn_no != plp->wpnr_no || gap->ax != plp->wax || gap->ay != plp->way) return 0;   /* not the player's shot */
+    diag_shots++;
     {   /* which hand: the one whose node is nearer the game's muzzle point */
         const float* h9 = plp->mlwP->owP[9].mtx;
         float d9 = (gap->gx - h9[12]) * (gap->gx - h9[12]) + (gap->gy - h9[13]) * (gap->gy - h9[13]) + (gap->gz - h9[14]) * (gap->gz - h9[14]);
@@ -1264,6 +1271,7 @@ void vr_after_draw(void)
     v.za = vr_za; v.zb = vr_zb;
     v.mk_n = mk_n;
     memcpy(v.mk, mk_pt, sizeof(v.mk)); memcpy(v.mk_kind, mk_kind, sizeof(v.mk_kind)); memcpy(v.mk_val, mk_val, sizeof(v.mk_val));
+    for (int s = 0; s < 2; s++) { v.hand_ok[s] = hand_ok[s]; v.hand[s] = hand_aim[s]; }
     mk_n = 0;   /* as drawn (vr_camera), not the room's restored by tps_after_draw */
     stream_vr_view(&v);
     vr_frame = 0;
@@ -1278,4 +1286,55 @@ static void vr_log(const char* fmt, ...)
     vsnprintf(b, sizeof(b), fmt, ap);
     va_end(ap);
     host_log("%s", b);
+}
+
+/* VR diagnosis (ini vr_debug_log = 1), called once per game frame (game.c): the state that decides
+   what is drawn and how the weapons behave, one line whenever it changes, and each trigger pull with
+   a gun: the weapon, its rounds, the reload state and whether a shot followed (vr_gun_ray). */
+void vr_diag_frame(void)
+{
+    extern float BHD_ASPECT_Y;
+    static char last[256];
+    static int trig_was, wait = -1;
+    static unsigned shots0;
+    char b[256];
+    VrInput in;
+    if (!g_vr_debug_log || !sys || !plp) return;
+    snprintf(b, sizeof(b), "room RM_%04d cam %s%s vr %s | fx: %s%s%s%s aspect %.2f | %s%s",
+             sys->stg_no * 1000 + sys->rom_no * 10 + sys->rcase,
+             (cam.flg & 0x2) ? "event" : "fixed", (cam.flg & 0x20) ? "+water" : "",
+             vr_on() ? "head" : vr_session() ? "on (no head camera)" : "off",
+             (sys->gm_flg & 0x100) ? "screen-distortion " : "",
+             (sys->gm_flg & 0x200) ? "monitor " : "",
+             sys->fade_an > 0 ? "fade " : "", sys->cine_an > 0 ? "cinema-bars " : "", BHD_ASPECT_Y,
+             (sys->st_flg & 0x200) ? "message " : "", (sys->st_flg & 0x1) ? "event-running" : "play");
+    if (strcmp(b, last)) { vr_log("vr-diag: %s\n", b); strcpy(last, b); }
+    if (xr_input(&in)) {
+        int t = in.rtrig > 0.5f;
+        unsigned* g = gun_slot();
+        if (t && !trig_was && plp->wpnr_no >= 0 && !knife_equipped()) {
+            vr_log("vr-diag: trigger: weapon %d rounds %d box %d (slot %s, equipped slot %d item %d) mag_out %d mag_held %d empty-flag %d mode %d/%d/%d playing %d message %d\n",
+                   plp->wpnr_no, g ? (int)(*g & 0xFFFF) : -1, box_ammo(), g ? "gun" : "none/endless", swork.pip ? (int)swork.pip[0] : -1, swork.pip && swork.pip[0] ? (int)((swork.pip[swork.pip[0]] >> 16) & 0x7FF) : -1, mag_out, mag_held, (sys->gm_flg & 0x40000) != 0,
+                   plp->mode0, plp->mode1, plp->mode2, vr_playing(), (sys->st_flg & 0x200) != 0);
+            shots0 = diag_shots; wait = 20;
+        }
+        if (wait > 0 && --wait == 0) vr_log("vr-diag: trigger result: %u shot(s) in 20 frames\n", diag_shots - shots0);
+        trig_was = t;
+    }
+}
+
+/* sub1.c bhSearchBullet: in VR a gun is reloaded by hand (reload_update) - except when it is
+   empty: then the trigger reloads it as in the game (a gun left empty with ammo in the boxes,
+   e.g. the bow gun whose holster grab did not take, otherwise only clicked) */
+int vr_block_autoreload(void)
+{
+    unsigned* g;
+    if (!g_vr_manual_reload || !vr_on() || reloading) return 0;
+    g = gun_slot();
+    if (g && (*g & 0xFFFF) == 0) {
+        if (mag_out >= 0) { *g = (*g & 0xFFFF0000u) | (unsigned)mag_kept; mag_out = -1; mag_kept = 0; }   /* (the kept rounds back first) */
+        vr_log("vr: empty gun - the game's own reload (box ammo %d)\n", box_ammo());
+        return 0;
+    }
+    return 1;
 }

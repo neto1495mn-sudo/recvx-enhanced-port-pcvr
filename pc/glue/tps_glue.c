@@ -463,7 +463,8 @@ unsigned int tps_pad(unsigned int pad)
     k = tps_input_keys();
     pad_steer = (pad & 0xF) != 0;
     move_keys = 0;
-    if (FREE_CAM && tps_cam_active && plp && plp->mode1 == 0 && !(k & TPS_K_QUICKTURN)) {
+    if (FREE_CAM && tps_cam_active && plp && plp->mode1 == 0 && !(k & TPS_K_QUICKTURN) &&
+        plp->hp > 0 && !(sys->st_flg & 0x200)) {   /* (not on the game over "Retry?" or a question: left/right choose there) */
         /* camera A: any direction walks forward, tps_player turns the character towards it */
         move_keys = k & (TPS_K_FWD | TPS_K_BACK | TPS_K_LEFT | TPS_K_RIGHT);
         k &= ~move_keys;

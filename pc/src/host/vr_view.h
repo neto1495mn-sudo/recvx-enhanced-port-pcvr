@@ -36,6 +36,8 @@ typedef struct {
     float mk[12][3];            /*   their points (world) */
     int   mk_kind[12];          /*   VRMK_* */
     int   mk_val[12];           /*   VRMK_NUMBER: the number shown */
+    int   hand_ok[2];           /* vr68: the controllers' aim poses (right, left) the hands were put with */
+    VrPose hand[2];
 } VrView;
 enum { VRMK_DOT = 0, VRMK_BUTTON = 1, VRMK_NUMBER = 2 };   /* aiming dot, the "A" over what the action button would use, the holster's ammo count */
 
