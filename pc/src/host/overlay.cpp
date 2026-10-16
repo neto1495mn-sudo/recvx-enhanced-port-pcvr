@@ -645,7 +645,8 @@ void overlay_render(void)
     bool tag = coop_on && tag_flags && !cs.trade_open && (g_coop.nametag || cs.busy_kind || cs.trade_hint[0]);   /* co-op: the partner is drawn in the frame shown */
     bool ping = g_config.show_ping && coop_on && cs.state == COOP_CONNECTED;   /* co-op: next to the frame rate */
     extern const char* g_vr_status;   /* gs_gl.c: why VR is on the cinema screen (NULL: stereo or no VR) */
-    const char* vrs = g_vr_status;
+    extern int g_vr_debug_log;        /* glue/vr_glue.c: ini vr_debug_log */
+    const char* vrs = g_vr_debug_log ? g_vr_status : nullptr;   /* a diagnosis aid: shown only with the debug log */
     if (!visible && !cheats_visible && !coop_visible && !g_config.show_fps && !ping && !crosshair && !hint && !tag && !vrs) return;
     {   /* readable on large displays: scale text with the window height (1080p = 1x) */
         int ww, wh;
