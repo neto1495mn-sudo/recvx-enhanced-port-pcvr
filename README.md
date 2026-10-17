@@ -7,8 +7,8 @@
 
 **Resident Evil Code: Veronica X in VR on PC** – a VR mod for the native PC port of *Resident
 Evil Code: Veronica X* (PS2). Play RE Code Veronica in first person with your hands as the guns:
-PCVR through OpenXR, tested on Meta Quest 2 with Virtual Desktop (should work with other OpenXR
-headsets). Also known as: RE CVX VR, Resident Evil Code Veronica VR mod, Code Veronica PCVR,
+PCVR through OpenXR, tested on Meta Quest 2 with Virtual Desktop (other OpenXR headsets not
+tested yet). Also known as: RE CVX VR, Resident Evil Code Veronica VR mod, Code Veronica PCVR,
 Code Veronica Quest 2.
 
 ## VR version (this branch)
