@@ -3,7 +3,13 @@
 > The underlying decompilation ([AshfordFamily/recvx-decomp](https://github.com/AshfordFamily/recvx-decomp)) is a separate, human-led project. Our changes to it live in a fork and are disclosed as AI-assisted, as that project asks.
 > No game data is included. You need your own legally obtained copy of *Resident Evil Code: Veronica X* (PS2, NTSC-U, SLUS-20184).
 
-# recvx-enhanced-recomp
+# Resident Evil Code: Veronica X – PC Port VR
+
+**Resident Evil Code: Veronica X in VR on PC** – a VR mod for the native PC port of *Resident
+Evil Code: Veronica X* (PS2). Play RE Code Veronica in first person with your hands as the guns:
+PCVR through OpenXR, tested on Meta Quest 2 with Virtual Desktop (should work with other OpenXR
+headsets). Also known as: RE CVX VR, Resident Evil Code Veronica VR mod, Code Veronica PCVR,
+Code Veronica Quest 2.
 
 ## VR version (this branch)
 
@@ -20,7 +26,7 @@ decompilation by AshfordFamily. All credit for the PC port goes to them.
 
 ### How to play in VR
 
-1. Download the zip from the [Releases](https://github.com/neto1495mn-sudo/recvx-enhanced-port-pcvr/releases)
+1. Download `RE-Code-Veronica-X-PC-Port-VR-v1.0-windows.zip` from the [Releases](https://github.com/neto1495mn-sudo/recvx-enhanced-port-pcvr/releases)
    page and unpack it anywhere.
 2. Start your OpenXR runtime (tested only on a Quest 2 through Virtual Desktop / VDXR).
 3. Run `PLAY_VR.bat`. On the first start, pick your own `.iso` of the game (PS2, NTSC-U, SLUS-20184).
@@ -137,6 +143,8 @@ own: write its file name (one per line) in `textures\ignore.txt`.
 **Combat feel**
 - Damage by body part (head, body, arms, legs: `vr_dmg_*`).
 - The view tilts when Claire is hit (`vr_hit_tilt`), and a heartbeat vignette in Danger (`vr_danger_fx`).
+
+## The PC port (recvx-enhanced-recomp by aikatore)
 
 [![build](https://github.com/aikatore/recvx-enhanced-recomp/actions/workflows/build.yml/badge.svg)](https://github.com/aikatore/recvx-enhanced-recomp/actions/workflows/build.yml)
 
