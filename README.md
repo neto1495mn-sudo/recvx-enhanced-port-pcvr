@@ -7,9 +7,44 @@
 
 ## VR version (this branch)
 
-This `vr` branch adds an OpenXR (PC VR) mode: stereo 3D at the headset's rate, the characters and the walking smoothed to it, both hands following the Touch controllers, a laser sight, manual reloading at the holster and knife cuts by swinging.
+[![Resident Evil Code: Veronica X | PC port in VR](https://img.youtube.com/vi/_2-NZcCqmSs/maxresdefault.jpg)](https://www.youtube.com/watch?v=_2-NZcCqmSs)
 
-Video: [https://www.youtube.com/watch?v=_2-NZcCqmSs](https://www.youtube.com/watch?v=_2-NZcCqmSs)
+*Click the image to watch the VR video on YouTube.*
+
+This `vr` branch adds a full PC VR mode (OpenXR; tested on a Quest 2 through Virtual Desktop)
+to the port. Start the game with `--vr`; the VR settings are in `save/recvx.ini`.
+
+**View and movement**
+- Stereo 3D in first person, the camera in your head, at the headset's refresh rate (90 Hz and up).
+- Characters and enemies smoothed to the headset's rate while the game logic stays at 30 FPS
+  (`vr_interpolate`); the stick walking smoothed too (`vr_interp_body`).
+- Room-scale: walking in your room moves Claire, and the game's walls stop her.
+- Snap turn with the right stick (`vr_turn`, degrees), locked on stairs.
+- Instant change of direction, no turning arc (`vr_move_direct`), and an optional steady camera
+  that ignores the body's small animation moves (`vr_cam_steady`).
+- Cutscenes, doors and menus on a cinema screen at eye height that follows you sideways; room
+  changes fade out and in.
+
+**Hands and weapons**
+- Both hands follow the Touch controllers at the headset's rate; each gun aims where its hand points.
+- Twin guns: each trigger fires its own gun.
+- Laser sight: a faint red beam from the muzzle to a dot where the shot hits, hidden behind the
+  gun, the hand and walls (`vr_sight`: 1 ring, 2 laser, 3 both).
+- Walk while aiming (`vr_aim_walk`); letting go of the aim while walking walks at once.
+- Recoil and controller vibration on every shot (`vr_recoil`, `vr_haptics`).
+
+**Reloading by hand** (`vr_manual_reload`)
+- No automatic reload: an empty gun only clicks.
+- B drops the magazine; the left grip takes an ammo box from the holster (shown at your hip with
+  the rounds left, gone when there are none) and you put it in the gun with your left hand.
+
+**Knife**
+- Left grip draws the knife; you cut by swinging, only with the edge leading, with a real swing
+  (`vr_slash_speed`, cm/s).
+
+**Combat feel**
+- Damage by body part (head, body, arms, legs: `vr_dmg_*`).
+- The view tilts when Claire is hit (`vr_hit_tilt`), and a heartbeat vignette in Danger (`vr_danger_fx`).
 
 [![build](https://github.com/aikatore/recvx-enhanced-recomp/actions/workflows/build.yml/badge.svg)](https://github.com/aikatore/recvx-enhanced-recomp/actions/workflows/build.yml)
 
@@ -18,10 +53,6 @@ community decompilation [recvx-decomp](https://github.com/AshfordFamily/recvx-de
 original game code and its PS2 platform layer are compiled for the PC; the PS2 hardware
 underneath (GS, VU, DMA, sound driver, disc, memory card, pad) is emulated at its boundaries, and
 native paths replace the expensive parts. The game reads your own disc image in place.
-
-[![Resident Evil Code: Veronica X (PS2) | PC recompilation with online co-op and Third-Person](https://img.youtube.com/vi/0sW1BHgIMXs/maxresdefault.jpg)](https://www.youtube.com/watch?v=0sW1BHgIMXs)
-
-*Click the image to watch the video on YouTube.*
 
 ## Features
 
