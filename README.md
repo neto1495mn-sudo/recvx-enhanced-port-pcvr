@@ -5,6 +5,12 @@
 
 # recvx-enhanced-recomp
 
+## VR version (this branch)
+
+This `vr` branch adds an OpenXR (PC VR) mode: stereo 3D at the headset's rate, the characters and the walking smoothed to it, both hands following the Touch controllers, a laser sight, manual reloading at the holster and knife cuts by swinging.
+
+Video: [https://www.youtube.com/watch?v=_2-NZcCqmSs](https://www.youtube.com/watch?v=_2-NZcCqmSs)
+
 [![build](https://github.com/aikatore/recvx-enhanced-recomp/actions/workflows/build.yml/badge.svg)](https://github.com/aikatore/recvx-enhanced-recomp/actions/workflows/build.yml)
 
 A native PC port of *Resident Evil Code: Veronica X* (PS2) for Linux and Windows, built from the
