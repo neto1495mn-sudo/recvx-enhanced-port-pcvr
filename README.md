@@ -15,7 +15,7 @@ This `vr` branch adds a full PC VR mode (OpenXR; tested on a Quest 2 through Vir
 to the port. Start the game with `--vr`; the VR settings are in `save/recvx.ini`.
 
 This VR mode is built on [recvx-enhanced-recomp](https://github.com/aikatore/recvx-enhanced-recomp)
-by **aikatore** (version 0.4.0) and the [recvx-decomp](https://github.com/AshfordFamily/recvx-decomp)
+by **aikatore** (version 0.4.0, plus the game fixes of 0.5.2) and the [recvx-decomp](https://github.com/AshfordFamily/recvx-decomp)
 decompilation by AshfordFamily. All credit for the PC port goes to them.
 
 ### How to play in VR
