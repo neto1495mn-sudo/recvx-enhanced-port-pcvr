@@ -34,7 +34,7 @@ static struct {
        frame still wanted (the one the render thread showed last) */
     uint8_t* slot[RING]; uint32_t serial[RING];
     int w, h, stride, produced, consumed, eof;
-    int audio_rate, audio_open; uint64_t audio_put;
+    int audio_rate, audio_open, paused; uint64_t audio_put;   /* paused: movie_pause's, also before the sound opens */
     /* statistics (RECVX_MOVIE_TRACE) */
     uint64_t dec_ns, dec_max_ns, wait_ns; int late;
 } mv;
@@ -84,12 +84,12 @@ static void on_video(void* user, const uint8_t* d, size_t n)
 static void on_audio(void* user, const int16_t* s, size_t frames, int rate)
 {
     (void)user;
-    if (!mv.audio_rate) {
-        mv.audio_rate = rate;
-        if ((mv.audio_open = audio_movie_open(rate))) audio_movie_pause(1);
-    }
-    if (!mv.audio_open) return;
     SDL_LockMutex(mv.m);
+    if (!mv.audio_rate) {   /* (may come after the game started the movie: its pause state, not paused) */
+        mv.audio_rate = rate;
+        if ((mv.audio_open = audio_movie_open(rate))) audio_movie_pause(mv.paused);
+    }
+    if (!mv.audio_open) { SDL_UnlockMutex(mv.m); return; }
     audio_movie_put(s, frames);
     mv.audio_put += frames;
     SDL_UnlockMutex(mv.m);
@@ -153,6 +153,7 @@ int movie_open(uint32_t lsn, uint32_t size)
     for (int i = 0; i < RING; i++) { free(mv.slot[i]); mv.slot[i] = NULL; }
     mv.w = mv.h = mv.stride = mv.produced = mv.consumed = mv.eof = 0;
     mv.dec_ns = mv.dec_max_ns = 0; mv.late = 0;
+    mv.paused = 1;   /* until the game plays it (movie_glue.c readMpeg) */
     SDL_UnlockMutex(mv.m);
     mv.f = pc_fopen(g_config.iso_path, "rb");
     if (!mv.f) return 0;
@@ -160,7 +161,10 @@ int movie_open(uint32_t lsn, uint32_t size)
     mv.pss = pss_create(&sink);
     mv.dec = mpeg2_create(on_frame, NULL);
     while (!mv.produced && step()) {}   /* the first frame (and the sound's format) before playing */
-    mv.th = SDL_CreateThread(run, "movie", NULL);
+    if (!(mv.th = SDL_CreateThread(run, "movie", NULL))) {   /* no more frames: the movie ends after those decoded */
+        host_log("movie: cannot create the decoding thread (%s)\n", SDL_GetError());
+        SDL_LockMutex(mv.m); mv.eof = 1; SDL_UnlockMutex(mv.m);
+    }
     return mv.produced > 0;
 }
 
@@ -183,7 +187,14 @@ void movie_close(void)
     if (mv.m) SDL_UnlockMutex(mv.m);
 }
 
-void movie_pause(int paused) { if (mv.audio_open) audio_movie_pause(paused); }
+void movie_pause(int paused)
+{
+    if (!mv.m) return;
+    SDL_LockMutex(mv.m);
+    mv.paused = paused;
+    if (mv.audio_open) audio_movie_pause(paused);
+    SDL_UnlockMutex(mv.m);
+}
 
 int movie_frames_total(void)
 {
