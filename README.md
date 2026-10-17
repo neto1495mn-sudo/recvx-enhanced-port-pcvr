@@ -30,6 +30,8 @@ decompilation by AshfordFamily. All credit for the PC port goes to them.
    page and unpack it anywhere.
 2. Start your OpenXR runtime (tested only on a Quest 2 through Virtual Desktop / VDXR).
 3. Run `PLAY_VR.bat`. On the first start, pick your own `.iso` of the game (PS2, NTSC-U, SLUS-20184).
+4. Optional, **HD textures**: download the [texture pack (SLUS-20184.zip)](https://disk.yandex.ru/d/_ILWwt29zG2bDw), unpack it into the
+   `textures` folder (see "HD textures" below).
 
 **Controls (Touch controllers)**
 
@@ -88,9 +90,13 @@ With an empty gun you can skip step 1.
 The game can show HD textures made by the community for the **PCSX2** (PS2 emulator) version of
 this game. You have to get a pack yourself; none comes with this mod.
 
+**Download an HD texture pack:** [SLUS-20184.zip on Yandex Disk](https://disk.yandex.ru/d/_ILWwt29zG2bDw) – a community PCSX2 texture
+pack for this game (not made by this mod). Open the link, click **Скачать** (Download), unpack the
+zip and put its folder inside `textures` (steps 2 to 5 below).
+
 1. **Find a pack**: it must be an HD texture pack **for PCSX2** for *Resident Evil Code: Veronica X*
    **NTSC-U, SLUS-20184** (the same disc as your `.iso`). Packs for other versions (PAL, Japanese,
-   Dreamcast, PS3/Xbox HD) do not match. Search for "Code Veronica X PCSX2 texture pack".
+   Dreamcast, PS3/Xbox HD) do not match. The pack linked above is one of them.
 2. **Check the files**: a PCSX2 pack is a folder of `.dds` or `.png` images with long hexadecimal
    names such as `104bcba3e277e448-ac18592ba12c29a2-00002654.dds`. Do not rename them: the name is
    how the game finds each texture.
