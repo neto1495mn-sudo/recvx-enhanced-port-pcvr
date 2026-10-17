@@ -737,14 +737,6 @@ static void heading_update(void)
     facing = (float)(short)plp->ay * (3.14159265f / 32768.0f);
     ctl = xr_input(&in);
     if (!vr_active || !ctl || rec_seen != xr_recenter_gen()) { vr_yaw = facing; rec_seen = xr_recenter_gen(); }
-    {   /* vr95: on the stairs the view faces the way she climbs or goes down (her facing, the stairs' way) */
-        static int was;
-        if (on_stairs == 1) {
-            if (!was && g_vr_debug_log) vr_log("vr-diag: stairs: the view turned %.0f degrees to face them\n", (facing - vr_yaw) * 57.2958f);
-            vr_yaw = facing;
-            was = 1;
-        } else was = 0;
-    }
     if (ctl && on_stairs == 1) {   /* vr91: on the stairs the stick does not turn (the stairs go straight); the head still looks around */
         static unsigned nl;
         if (fabsf(in.rx) > 0.7f && g_vr_debug_log && nl++ < 20) vr_log("vr-diag: turn held on the stairs\n");
@@ -921,34 +913,7 @@ int vr_walk_at_once(void)
 /* vr86: the frame's input, before the game moves her and the hands are put (bhControlPlayer): the
    heading turned here, so the hands and the world of a frame use the same one (a snap turn showed the
    weapons a frame at the old heading - a ghost) */
-static void trigger_log(void);
-void vr_pad_frame(void) { if (plp && vr_active) heading_update(); trigger_log(); }
-/* vr101 diagnosis (vr_debug_log): each trigger pull (how far, how long) and the rounds of the gun in hand */
-static void trigger_log(void)
-{
-    static int down[2], last_rounds = -1;
-    static float peak[2];
-    static uint64_t t0[2];
-    VrInput in;
-    unsigned* g;
-    if (!g_vr_debug_log || !plp || !xr_input(&in)) return;
-    for (int s = 0; s < 2; s++) {
-        float v = s ? in.ltrig : in.rtrig;
-        if (v > peak[s]) peak[s] = v;
-        if (!down[s] && v > 0.5f) { down[s] = 1; t0[s] = SDL_GetTicks(); vr_log("vr-diag: %s trigger past half (%.2f) - fire sent\n", s ? "left" : "right", v); }
-        else if (down[s] && v < 0.5f) {
-            down[s] = 0;
-            vr_log("vr-diag: %s trigger let go after %u ms (deepest %.2f)\n", s ? "left" : "right", (unsigned)(SDL_GetTicks() - t0[s]), peak[s]);
-            peak[s] = 0;
-        } else if (!down[s] && v < 0.05f) peak[s] = 0;
-    }
-    g = gun_slot();
-    {
-        int r = g ? (int)(*g & 0xFFFF) : -1;
-        if (r != last_rounds && last_rounds >= 0 && r >= 0) vr_log("vr-diag: rounds %d -> %d\n", last_rounds, r);
-        last_rounds = r;
-    }
-}
+void vr_pad_frame(void) { if (plp && vr_active) heading_update(); }
 int vr_playing(void) { return vr_on() && SDL_GetTicks() - cam_ms < 100 && !(sys && (sys->st_flg & 0x200)); }   /* (a message or a question on screen: its own controls) */
 
 static int knife_equipped(void)
@@ -962,27 +927,51 @@ static int dual_equipped(void)
     return plp && plp->wpnr_no >= 0 && plp->wpnr_no < 23 && (WpnTab[plp->wpnr_no].flg & 0x800);
 }
 
-/* the trigger of a hand (0 right, 1 left) is pulled, or was within the last 150 ms (the game
-   fires the left gun two frames after the right) */
-static int trigger_recent(int side)
+/* vr102: a pull of a twin-gun trigger (0 right, 1 left) is kept until that hand's gun fires, at most
+   700 ms: the game takes no new shot during the last one's animation (playpch.c bhCPM2_act_atk_pch),
+   a quick pull there was lost; and a shot the game fires late is still that hand's (vr101 log: a
+   150 ms window hid both flashes - sound and a round, no shot) */
+static uint64_t pull_ms[2], decided_ms[2];
+static int pull_was[2], hand_fired[2];
+static void trigger_pulls(const VrInput* in)
 {
-    static uint64_t last_ms[2];
-    VrInput in;
     uint64_t now = SDL_GetTicks();
-    if (xr_input(&in) && (side ? in.ltrig : in.rtrig) > 0.5f) last_ms[side] = now ? now : 1;
-    return last_ms[side] && now - last_ms[side] < 150;
+    for (int s = 0; s < 2; s++) {
+        int t = (s ? in->ltrig : in->rtrig) > 0.5f;
+        if (t && !pull_was[s]) pull_ms[s] = now ? now : 1;   /* (now | 1 was one ms ahead: a pull dropped at once) */
+        pull_was[s] = t;
+        if (pull_ms[s] && now - pull_ms[s] > 700) pull_ms[s] = 0;
+    }
 }
 
-/* pwksub.c bhSetGunFire / bhSetYakkyou: with twin guns in VR each hand fires with its own
-   trigger - no muzzle flash or shell from the hand whose trigger is not pulled */
+/* the shot the game fires from a hand now is that hand's: its trigger is held or a pull is kept.
+   One answer per shot (the hit test and the flash of a shot come within a few frames) */
+static int hand_fires(int side)
+{
+    VrInput in;
+    uint64_t now = SDL_GetTicks();
+    int held;
+    if (decided_ms[side] && now - decided_ms[side] < 100) return hand_fired[side];
+    held = xr_input(&in) && (side ? in.ltrig : in.rtrig) > 0.5f;
+    hand_fired[side] = held || pull_ms[side];
+    pull_ms[side] = 0;
+    decided_ms[side] = now ? now : 1;
+    return hand_fired[side];
+}
+
+/* pwksub.c bhSetGunFire: with twin guns in VR each hand fires with its own trigger - no muzzle
+   flash from the hand whose trigger is not pulled */
 int vr_dual_block(void* pp, int jno)
 {
-    int b;
     if (pp != (void*)plp || !vr_on() || !dual_equipped() || (jno != 9 && jno != 13)) return 0;
-    b = !trigger_recent(jno == 13);
-    if (g_vr_debug_log) vr_log("vr-diag: twin guns: the game fires the %s gun - %s (its trigger %s)\n", jno == 13 ? "left" : "right",
-                               b ? "BLOCKED" : "shown", b ? "not pulled within 150 ms" : "pulled");
-    return b;
+    return !hand_fires(jno == 13);
+}
+
+/* pwksub.c bhSetYakkyou: the shell of a hand's shot, frames later - as its shot was */
+int vr_dual_block_shell(void* pp, int jno)
+{
+    if (pp != (void*)plp || !vr_on() || !dual_equipped() || (jno != 9 && jno != 13)) return 0;
+    return !hand_fired[jno == 13];
 }
 
 /* recoil and vibration of a shot from a hand */
@@ -1095,6 +1084,7 @@ unsigned vr_tps_keys(void)
     VrInput in;
     unsigned k = 0;
     if (!xr_input(&in)) return 0;
+    trigger_pulls(&in);
     if (in.ly > 0.4f) k |= 1;            /* TPS_K_FWD */
     if (in.ly < -0.4f) k |= 2;           /* TPS_K_BACK */
     if (in.lx < -0.4f) k |= 4;           /* TPS_K_LEFT */
@@ -1102,7 +1092,24 @@ unsigned vr_tps_keys(void)
     {
         int dual_aim = vr_playing() && dual_equipped() && in.rgrip > 0.5f;   /* twin guns raised: the left trigger fires the left gun */
         if ((in.ltrig > 0.5f && !dual_aim) || (in.buttons & VRB_LSTICK)) k |= 16;   /* TPS_K_RUN */
-        if (dual_aim && (in.ltrig > 0.5f || in.rtrig > 0.5f)) k |= 512;           /* TPS_K_FIRE: either gun */
+        static uint64_t kick_until;
+        static int kicked;
+        int fire = in.ltrig > 0.5f || in.rtrig > 0.5f;
+        if (!(dual_aim && (pull_ms[0] || pull_ms[1]))) kicked = 0;   /* (each kept pull its own press) */
+        else {
+            /* vr103: a kept pull is a fresh press when the game can take the next shot (aiming, or the
+               end of the last shot's animation, playpch.c): the game fires only on fire let go and
+               pressed again (at_flg 0x40) - held through, the vr102 kept pulls were all dropped */
+            uint64_t now = SDL_GetTicks();
+            int ready = plp && ((plp->mode2 >= 65 && plp->mode2 <= 67) || (plp->mode2 == 169 && (plp->at_flg & 0x10)));
+            if (!ready) { fire = 0; kicked = 0; }
+            else if (!kicked) {   /* let go for over a game frame, then pressed */
+                kicked = 1; kick_until = now + 40;
+            }
+            if (ready) fire = now >= kick_until;
+        }
+        if (dual_aim && fire) k |= 512;   /* TPS_K_FIRE: either gun */
+        if (!dual_aim) pull_ms[0] = pull_ms[1] = 0;
     }
     if (in.buttons & VRB_A) k |= 32;     /* TPS_K_ACTION */
     if ((in.buttons & VRB_Y) && in.ltrig <= 0.5f) k |= 64;   /* TPS_K_STATUS (LT + Y is Select, vr_pad_select) */
@@ -1571,7 +1578,7 @@ int vr_gun_ray(GA_WORK* gap)
             if (d13 < d9) side = 1;
         }
     }
-    if (dual_equipped() && !trigger_recent(side)) return 1;   /* twin guns: this hand's trigger is not pulled */
+    if (dual_equipped() && !hand_fires(side)) return 1;   /* twin guns: this hand's trigger is not pulled */
     shot_feedback(side, gap->wpn_no);
     if (!g_vr_hand_aim) return 0;
     st = 1;

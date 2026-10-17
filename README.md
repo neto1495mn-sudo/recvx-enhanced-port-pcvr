@@ -14,6 +14,59 @@
 This `vr` branch adds a full PC VR mode (OpenXR; tested on a Quest 2 through Virtual Desktop)
 to the port. Start the game with `--vr`; the VR settings are in `save/recvx.ini`.
 
+This VR mode is built on [recvx-enhanced-recomp](https://github.com/aikatore/recvx-enhanced-recomp)
+by **aikatore** (version 0.4.0) and the [recvx-decomp](https://github.com/AshfordFamily/recvx-decomp)
+decompilation by AshfordFamily. All credit for the PC port goes to them.
+
+### How to play in VR
+
+1. Download the zip from the [Releases](https://github.com/neto1495mn-sudo/recvx-enhanced-port-pcvr/releases)
+   page and unpack it anywhere.
+2. Start your OpenXR runtime (tested only on a Quest 2 through Virtual Desktop / VDXR).
+3. Run `PLAY_VR.bat`. On the first start, pick your own `.iso` of the game (PS2, NTSC-U, SLUS-20184).
+
+**Controls (Touch controllers)**
+
+| Button | What it does |
+|---|---|
+| Left stick | Walk (the way you look) |
+| Left trigger, or click the left stick | Run |
+| Right stick left/right | Snap turn (locked on stairs) |
+| Right grip (hold) | Raise the gun and aim with your hand |
+| Right trigger | Fire (with twin guns: the right gun) |
+| Left trigger, while aiming twin guns | Fire the left gun |
+| Left grip | Knife (cut by swinging it); at the belt: take an ammo box |
+| A | Action: open doors, pick up items, examine, confirm |
+| B | Cancel / back; with a gun in hand: drop the magazine |
+| Y | Inventory (status screen) |
+| X | Map |
+| Hold left trigger + press Y | Select |
+| Left menu button (three lines) | Start (pause, options) |
+| Long press of the headset's system button | Recentre the view |
+
+Walking around your room moves Claire too. A small "A" shows over what the action button
+would use (a door, an item) when you are right in front of it.
+
+**Reloading (by hand)**
+
+The gun does not reload by itself: when it is empty it only clicks.
+
+1. Press **B**: the magazine drops out of the gun in your hand.
+2. Look down: an ammo box hangs at your belt, in front of your belly, with the rounds you have
+   left. It is not shown when you have no ammo for that gun.
+3. Bring your **left hand** to the box and squeeze the **left grip**: the box is now in your hand.
+4. Keep the grip held and bring your left hand to the gun: it reloads (sound and vibration).
+
+With an empty gun you can skip step 1.
+
+**HD textures (optional)**
+
+The game can use HD texture packs made for PCSX2 for this game (SLUS-20184). Put the pack's
+files in the `textures` folder next to the game (any subfolder, e.g.
+`textures/SLUS-20184/replacements`, as in PCSX2) and turn on `tex_hd = 1` in `save/recvx.ini`.
+`tex_hd_mb` sets the video memory for them (MB). A list of file names in `textures/ignore.txt`
+keeps those textures as the game's own. No texture pack comes with this mod.
+
 **View and movement**
 - Stereo 3D in first person, the camera in your head, at the headset's refresh rate (90 Hz and up).
 - Characters and enemies smoothed to the headset's rate while the game logic stays at 30 FPS
@@ -35,7 +88,7 @@ to the port. Start the game with `--vr`; the VR settings are in `save/recvx.ini`
 
 **Reloading by hand** (`vr_manual_reload`)
 - No automatic reload: an empty gun only clicks.
-- B drops the magazine; the left grip takes an ammo box from the holster (shown at your hip with
+- B drops the magazine; the left grip takes an ammo box from the holster (shown at your belt with
   the rounds left, gone when there are none) and you put it in the gun with your left hand.
 
 **Knife**
