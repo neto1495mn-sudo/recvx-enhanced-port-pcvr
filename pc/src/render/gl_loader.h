@@ -279,4 +279,7 @@ extern PFN_glGetString gl_GetString;
 typedef void (GLAPIENTRY *PFN_glFinish)(void);
 extern PFN_glFinish gl_Finish;
 #define glFinish gl_Finish
+typedef void (GLAPIENTRY *PFN_glFlush)(void);
+extern PFN_glFlush gl_Flush;
+#define glFlush gl_Flush
 int gl_load(void* (*getproc)(const char*));

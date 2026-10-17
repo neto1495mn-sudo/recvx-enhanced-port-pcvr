@@ -45,6 +45,7 @@ void render_loop(void)
 {
     Frame *prev = NULL, *cur = NULL;
     uint64_t arrived = 0, pace_until = 0;
+    unsigned vr_np = 0, vr_skip = 0;   /* VR diagnosis */
     double swap_avg = 0.0;   /* how long the buffer swap blocks, smoothed */
     double period = 1001.0 / 30000.0 * 1e9;   /* game frame period, measured below */
     int interp = 0, shown = 0;   /* refreshes presented since the frame arrived */
@@ -62,9 +63,16 @@ void render_loop(void)
         f = stream_pop(!cur ? 20 : pace_until > now ? (int)((pace_until - now) / 1000000) : 0);   /* the rest: SDL_DelayPrecise */
         if (f) {
             prof_push(PROF_EXEC);
+            uint64_t tx0 = SDL_GetTicksNS();
             gs_frame_begin();
             stream_exec(f);
             prof_pop();
+            if (xr_active()) {   /* vr74 diagnosis (vr_debug_log): a game frame's drawing that takes long holds the next headset frame */
+                extern int g_vr_debug_log; void host_log(const char*, ...);
+                static unsigned nslow;
+                uint64_t tx = SDL_GetTicksNS() - tx0;
+                if (g_vr_debug_log && tx > 8000000 && nslow < 80) { nslow++; host_log("vr-diag: slow game frame drawing: %.1f ms\n", tx / 1e6); }
+            }
             if (stream_is_partial(f)) { stream_release(f); continue; }   /* download sync point */
             now = SDL_GetTicksNS();
             if (arrived) {
@@ -104,7 +112,12 @@ void render_loop(void)
             else t = (float)((double)(now - arrived) / period);
             /* the next game frame is already waiting (the game runs below its rate): an
                in-between image of this one would only delay it (a whole replay of the scene) */
-            if (t < 1.0f && fixed_t <= 0.0f && stream_queued()) continue;
+            if (t < 1.0f && fixed_t <= 0.0f && stream_queued()) { if (xr_active()) vr_skip++; continue; }
+            if (xr_active() && ++vr_np >= 900) {   /* vr72 diagnosis (vr_debug_log): headset images skipped because the next game frame was already waiting */
+                extern int g_vr_debug_log; void host_log(const char*, ...);
+                if (g_vr_debug_log) host_log("vr-diag: render loop: game frame %.1f ms (avg), in-between images skipped (next frame waiting) %u of %u\n", period * 1e-6, vr_skip, vr_np);
+                vr_np = vr_skip = 0;
+            }
             {   /* the name tag moves with the 3D */
                 float x, y;
                 int fl = stream_point_at(interp ? prev : NULL, cur, t, &x, &y);

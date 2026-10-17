@@ -62,6 +62,7 @@ PFN_glPixelStorei gl_PixelStorei;
 PFN_glGetError gl_GetError;
 PFN_glGetString gl_GetString;
 PFN_glFinish gl_Finish;
+PFN_glFlush gl_Flush;
 
 int gl_load(void* (*getproc)(const char*))
 {
@@ -125,6 +126,7 @@ int gl_load(void* (*getproc)(const char*))
     if (!(gl_GetError = (PFN_glGetError)getproc("glGetError"))) ok = 0;
     if (!(gl_GetString = (PFN_glGetString)getproc("glGetString"))) ok = 0;
     if (!(gl_Finish = (PFN_glFinish)getproc("glFinish"))) ok = 0;
+    if (!(gl_Flush = (PFN_glFlush)getproc("glFlush"))) ok = 0;
     gl_CompressedTexImage2D = (PFN_glCompressedTexImage2D)getproc("glCompressedTexImage2D");
     gl_GenerateMipmap = (PFN_glGenerateMipmap)getproc("glGenerateMipmap");
     gl_TexParameterf = (PFN_glTexParameterf)getproc("glTexParameterf");

@@ -68,7 +68,13 @@ int g_vr_hand_offset = -6;   /* ini vr_hand_offset: the hands moved forward (+) 
 int g_vr_fx_fix = 1;         /* ini vr_fx_fix: 1 = 2D effects with a depth (fire, glows) are placed in the world */
 int g_vr_hand_aim = 1;       /* ini vr_hand_aim: 1 = shots go where the right controller points, 0 = where the head looks */
 
-static int vr_frame;         /* the VR camera set this frame's view (until vr_after_draw) */
+static int vr_frame;
+static int last_vr_frame = 1;   /* vr86: the last drawn frame was in the head (else the cinema screen) */
+static int box_mode;             /* vr87: the ammo box this frame (0 none, 1 holster, 2 left hand) and its corners (world) */
+static float box_c[8][3];
+#define BOX_W 0.09f              /* its size, metres: wide, high, deep */
+#define BOX_H 0.06f
+#define BOX_D 0.05f         /* the VR camera set this frame's view (until vr_after_draw) */
 static int vr_active;        /* the VR camera drew the last frame */
 static float frame_W[16];    /* this frame's local -> world */
 static float frame_Wg[16];   /* this frame's recentred tracking space -> world */
@@ -103,6 +109,117 @@ static unsigned base_gen, cam_gen = 1;
 static float base[3], base_res[3], root_ref, sm_y;
 static int root_ok;
 static int on_stairs = -1;
+static float frame_follow[2];   /* this frame's move of the player by the room walking (body_follow) */
+static float frame_aimwalk[2];  /* vr76: this frame's move by the VR walking while aiming (aim_walk_update) */
+extern float walk_spd, run_spd;
+int g_vr_cam_steady = 1;
+static int steady_reset;   /* vr91: the steady camera starts again where she is (after the stairs) */
+int g_vr_move_direct = 1;       /* ini vr_move_direct: VR - she faces the stick's way at once, no turning arc (vr85) */        /* ini vr_cam_steady: off the stairs, the camera moves with the stick's walking only (vr75) */
+
+/* vr75: the camera's place off the stairs. The game moves the player also by itself - the slide
+   of the stop, the aim stance, turning on the spot - and the camera went along (a lurch). Steady:
+   the camera takes the player's moves only while the stick walks (and the room walking at once);
+   what the game added meanwhile is caught up while walking, or at once if it is large (a hit, a push). */
+static void body_shift(float dx, float dz);
+static int shift_src;             /* vr92 diagnosis: who moves her now (1 room walk, 2 aim walk, 3 under the camera) */
+static float shift_f[4][2];        /* ... this frame, by source */
+static void steady_anchor(float t[3])
+{
+    extern int g_vr_debug_log;
+    extern void host_log(const char* fmt, ...);
+    static float anc[3], last[3];
+    static int ok;
+    static unsigned n, nsnap, nshuffle, nback, nahead, nwallcam, nbrought, nexact;
+    static int stance;
+    static float brought;
+    static float omax, sdir[2];
+    float cur[3] = { plp->px, plp->py, plp->pz }, o[3], ol, s = g_vr_scale / 10.0f;
+    VrInput in;
+    int walk = xr_input(&in) && in.lx * in.lx + in.ly * in.ly > 0.04f;
+    if (!g_vr_cam_steady || !ok || steady_reset) {
+        if (steady_reset && g_vr_debug_log) host_log("vr-diag: steady camera starts again where she is (after the stairs)\n");
+        steady_reset = 0; stance = 0;
+        memcpy(anc, cur, sizeof(anc)); memcpy(last, cur, sizeof(last)); ok = g_vr_cam_steady; memcpy(t, cur, sizeof(cur)); return;
+    }
+    if (plp->mode1 == 1) stance = 1;   /* vr91: knife / aim - she may be brought back under the camera after it */
+    {   /* vr76: what the camera takes - the room walking always; aiming, only the VR's own walking (not the
+           stance turning the body about its feet); walking, only whole steps (not the feet shuffling at a wall) */
+        float dx = cur[0] - last[0], dz = cur[2] - last[2], d = sqrtf(dx * dx + dz * dz), fl = sqrtf(frame_follow[0] * frame_follow[0] + frame_follow[1] * frame_follow[1]);
+        float stepmin = 0.5f * (walk_spd < run_spd ? walk_spd : run_spd);
+        anc[0] += frame_follow[0]; anc[2] += frame_follow[1];
+        dx -= frame_follow[0]; dz -= frame_follow[1]; d = sqrtf(dx * dx + dz * dz); (void)fl;
+        if (plp->mode1 == 1) { anc[0] += frame_aimwalk[0]; anc[2] += frame_aimwalk[1]; walk = 0; nshuffle += d > 1e-3f; }
+        else if (walk && d >= stepmin) {   /* vr77: a ratchet - forward only; a wall pushing back is left out */
+            float ux = dx / d, uz = dz / d, sl;
+            {   /* vr97: "back" is against the way the stick points NOW (not the way she walked before): walking back with the
+                   stick back is followed; only a move against the stick (a wall pushing her back) is left out */
+                float a = (float)cam.ay * (3.14159265f / 32768.0f);
+                sdir[0] = sinf(a) * in.ly + cosf(a) * in.lx; sdir[1] = -cosf(a) * in.ly + sinf(a) * in.lx;
+                sl = sqrtf(sdir[0] * sdir[0] + sdir[1] * sdir[1]);
+                if (sl > 1e-4f) { sdir[0] /= sl; sdir[1] /= sl; sl = 1.0f; }
+            }
+            if (sl > 1e-3f && ux * sdir[0] + uz * sdir[1] < -0.2f * sl) { nback++; walk = 0; }
+            else {
+                float ox, oz, along;
+                ox = cur[0] - anc[0]; oz = cur[2] - anc[2];
+                along = ox * sdir[0] + oz * sdir[1];
+                if (along > 0) {   /* (vr99: vr98's exact following taken back - it made the jolts sharper) */
+                    float mx = 1.5f * run_spd, a2 = along > mx ? mx : along;
+                    anc[0] += sdir[0] * a2 + (ox - sdir[0] * along) * 0.15f;
+                    anc[2] += sdir[1] * a2 + (oz - sdir[1] * along) * 0.15f;
+                }
+                walk = 0;   /* (caught up here) */
+            }
+        }
+        else { if (d > 1e-3f) nshuffle++; walk = 0; if (!xr_input(&in) || in.lx * in.lx + in.ly * in.ly < 0.04f) sdir[0] = sdir[1] = 0.0f; }
+    }
+    {   /* vr79: never ahead of her the way the stick walks (a wall stops the camera where it stops her) */
+        VrInput i2;
+        if (xr_input(&i2) && i2.lx * i2.lx + i2.ly * i2.ly > 0.04f) {
+            float a = (float)cam.ay * (3.14159265f / 32768.0f), wx = sinf(a) * i2.ly + cosf(a) * i2.lx, wz = -cosf(a) * i2.ly + sinf(a) * i2.lx;
+            float wl = sqrtf(wx * wx + wz * wz), ahead;
+            if (wl > 1e-4f) {
+                wx /= wl; wz /= wl;
+                ahead = (anc[0] - cur[0]) * wx + (anc[2] - cur[2]) * wz;
+                if (ahead > 0) { anc[0] -= ahead * wx; anc[2] -= ahead * wz; nahead++; }
+            }
+        }
+    }
+    {   /* vr80: the camera is where she could stand - from her place to its own through the game's wall check */
+        extern int vr_game_wall(float x0, float z0, float* x, float* z);
+        float x = anc[0], z = anc[2];
+        if (fabsf(x - cur[0]) + fabsf(z - cur[2]) > 1e-4f && vr_game_wall(cur[0], cur[2], &x, &z)) { anc[0] = x; anc[2] = z; nwallcam++; }
+    }
+    anc[1] = cur[1];
+    memcpy(last, cur, sizeof(last));
+    o[0] = cur[0] - anc[0]; o[2] = cur[2] - anc[2];
+    ol = sqrtf(o[0] * o[0] + o[2] * o[2]) / (s > 0 ? s : 1.0f);   /* metres */
+    if (ol > omax) omax = ol;
+    if (ol > 3.0f) { memcpy(anc, cur, sizeof(anc)); nsnap++; }   /* a teleport: at once */
+    else if (ol > 0.3f && plp->mode1 == 0 && !stance) {   /* vr97: left behind for any reason: caught up at her walking pace, no jump */
+        float k = walk_spd / (ol * (s > 0 ? s : 1.0f));
+        if (k > 1.0f) k = 1.0f;
+        anc[0] += o[0] * k; anc[2] += o[2] * k; nsnap++;
+    }
+    else if (plp->mode1 == 0 && (xr_input(&in) && in.lx * in.lx + in.ly * in.ly > 0.04f)) stance = 0;   /* walking: the ratchet takes over */
+    else if (plp->mode1 == 0 && stance && ol <= 0.02f) stance = 0;
+    else if (plp->mode1 == 0 && stance && ol > 0.02f) {   /* vr88: off the knife / the aim (the game moved her): she is brought
+                                                           back under the camera - the camera does not jump to her */
+        extern int vr_game_wall(float x0, float z0, float* x, float* z);
+        float x = anc[0], z = anc[2];
+        vr_game_wall(cur[0], cur[2], &x, &z);
+        if (fabsf(x - cur[0]) + fabsf(z - cur[2]) > 1e-4f) { shift_src = 3; body_shift(x - cur[0], z - cur[2]); shift_src = 0; nbrought++; brought += ol; }
+        anc[0] = x; anc[2] = z;
+        memcpy(last, anc, sizeof(last)); last[1] = cur[1];
+    }
+    else if (walk) { anc[0] += o[0] * 0.15f; anc[2] += o[2] * 0.15f; }   /* caught up while walking */
+    if (g_vr_debug_log && ++n >= 300) {
+        host_log("vr-diag: steady camera: off the player by %.2f m now, at most %.2f m; caught up %u; small/aim moves left out %u; wall push-backs left out %u; held back from ahead of her %u; stopped by a wall %u; she was brought under the camera %u times (%.2f m); exact steps %u\n", ol, omax, nsnap, nshuffle, nback, nahead, nwallcam, nbrought, brought, nexact);
+        nbrought = 0; brought = 0; nexact = 0;
+        n = 0; omax = 0; nsnap = 0; nshuffle = 0; nback = 0; nahead = 0; nwallcam = 0;
+    }
+    memcpy(t, anc, sizeof(anc));
+}
 
 static void play_base(float out[3])
 {
@@ -129,7 +246,7 @@ static void play_base(float out[3])
                 }
                 sm_y += (y - sm_y) * 0.5f;   /* step by step with the body, without the bob */
                 t[0] = r[12]; t[1] = sm_y; t[2] = r[14];
-            } else { t[0] = plp->px; t[1] = plp->py; t[2] = plp->pz; st = 0; }
+            } else { steady_anchor(t); st = 0; }
         } else if (plp) { t[0] = plp->px; t[1] = plp->py; t[2] = plp->pz; }
         else { t[0] = t[1] = t[2] = 0; }
         if (on_stairs >= 0 && st != on_stairs)   /* switching: keep the old base, ease into the new */
@@ -137,6 +254,7 @@ static void play_base(float out[3])
         if (st != on_stairs && on_stairs >= 0) {
             extern void host_log(const char* fmt, ...);
             host_log("vr: stairs %s\n", st ? "start (camera follows the body)" : "end");
+            if (!st) steady_reset = 1;   /* vr91: the steady camera starts again where she is */
         }
         on_stairs = st;
         for (int k = 0; k < 3; k++) {
@@ -204,7 +322,10 @@ static float holster_w[3];          /* the holster (world), when a gun is in han
 static int holster_ok;
 static float hand_pos[2][3];        /* where each hand was put this frame (world) */
 static int hand_ok[2];
-static VrPose hand_aim[2];              /* ... and whether it was */
+static VrPose hand_aim[2];
+static float frame_body[3];
+static int laser_ok[2];                       /* vr77: the laser sight of each hand's gun (world): muzzle -> hit */
+static float laser_a[2][3], laser_b[2][3];   /* vr71: the body's place this frame, and the room-walking part of its move */              /* ... and whether it was */
 
 /* The ammo in the boxes for the gun in hand: the inventory items the game would reload it
    from (as bhSearchBullet: ammo items whose combination list names the weapon), summed;
@@ -260,6 +381,16 @@ static void holster_update(const float Wg[16], const VrPose* h)
     pw[2] = Wg[2] * pl[0] + Wg[6] * pl[1] + Wg[10] * pl[2] + Wg[14];
     memcpy(holster_w, pw, sizeof(pw)); holster_ok = 1;
     if (g_vr_holster) mk_add(VRMK_NUMBER, pw, n > 999 ? 999 : n);
+    if (n > 0 && box_mode == 0) {   /* vr87: the ammo box at the holster (none left: none shown) */
+        float ax[3] = { cosf(yaw_s), 0.0f, -sinf(yaw_s) }, fw[3] = { sinf(yaw_s), 0.0f, cosf(yaw_s) };
+        for (int c = 0; c < 8; c++) {
+            float q[3];
+            for (int k = 0; k < 3; k++)
+                q[k] = pl[k] + ax[k] * ((c & 1) ? 0.5f : -0.5f) * BOX_W + (k == 1 ? ((c & 2) ? 0.5f : -0.5f) * BOX_H - 0.06f : 0.0f) + fw[k] * ((c & 4) ? 0.5f : -0.5f) * BOX_D;   /* (vr90: below the ammo count) */
+            for (int k = 0; k < 3; k++) box_c[c][k] = Wg[k] * q[0] + Wg[4 + k] * q[1] + Wg[8 + k] * q[2] + Wg[12 + k];
+        }
+        box_mode = 1;
+    }
 }
 
 
@@ -287,6 +418,7 @@ static int body_free(float dx, float dz)
 static void body_shift(float dx, float dz)
 {
     EXP_WORK* ex = (EXP_WORK*)plp->exp0;
+    shift_f[shift_src & 3][0] += dx; shift_f[shift_src & 3][1] += dz;
     plp->px += dx; plp->pz += dz;
     plp->pxb += dx; plp->pzb += dz;
     if (ex) { ex->bpx += dx; ex->bpz += dz; ex->bpxb += dx; ex->bpzb += dz; ex->spx += dx; ex->spz += dz; }
@@ -300,12 +432,28 @@ static void body_shift(float dx, float dz)
 }
 
 /* move with the game's walls: whole, else sliding along x or z; which way it went (0 none) */
+/* vr80: from (x0, z0) towards (*x, *z) through the game's own wall check (bhCheckWallEx, the player's
+   radius and height, as her walking): *x, *z where the game would stop her; 1 if a wall was met */
+int vr_game_wall(float x0, float z0, float* x, float* z)
+{
+    extern int bhCheckWallEx(BH_PWORK* pw, NJS_POINT3* npos, NJS_POINT3* opos, float par, float pah);
+    NJS_POINT3 np, op, apos = sys->apos;
+    ATR_WORK* ahtp = sys->ahtp;
+    int hit;
+    op.x = x0; op.y = plp->py; op.z = z0;
+    np.x = *x; np.y = plp->py; np.z = *z;
+    hit = bhCheckWallEx(plp, &np, &op, plp->ar, plp->ah) != 0;
+    sys->apos = apos; sys->ahtp = ahtp;   /* (the game's own state kept) */
+    *x = np.x; *z = np.z;
+    return hit;
+}
+
 static int body_move(float dx, float dz)
 {
-    if (body_free(dx, dz)) { body_shift(dx, dz); return 3; }
-    if (body_free(dx, 0)) { body_shift(dx, 0); return 1; }
-    if (body_free(0, dz)) { body_shift(0, dz); return 2; }
-    return 0;
+    float x = plp->px + dx, z = plp->pz + dz;   /* vr80: the room walking stops where the game's walls stop her */
+    int hit = vr_game_wall(plp->px, plp->pz, &x, &z);
+    if (fabsf(x - plp->px) + fabsf(z - plp->pz) > 1e-5f) { shift_src = 1; body_shift(x - plp->px, z - plp->pz); shift_src = 0; }
+    return hit ? 0 : 3;
 }
 
 static void body_follow(const VrPose* h)
@@ -386,13 +534,28 @@ static void enemy_diary(void)
 /* Walking while aiming: the game holds Claire still with a weapon raised; in VR the left stick
    moves her where the head looks at the speed she walks (runs, with the run trigger) - measured
    from her own walking (not stairs, not the room's walking) - through the game's walls. */
-static float walk_spd = 0.55f, run_spd = 1.1f;   /* units per game frame, until measured */
+float walk_spd = 0.55f, run_spd = 1.1f;   /* units per game frame, until measured (also steady_anchor) */
 static float last_px, last_pz;
 static int last_ok;
 
+static unsigned aw_nwall;   /* vr78 diagnosis: aim walk steps the game's wall check stopped */
+
+static float end_px, end_pz;   /* vr95: where she was at the end of the last frame */
+static int end_ok, end_aim;
 static void aim_walk_update(void)
 {
     VrInput in;
+    frame_aimwalk[0] = frame_aimwalk[1] = 0.0f;
+    if (end_ok && end_aim && plp->mode1 == 1 && plp->mode0 == 1) {   /* vr95: aiming (or the knife) the VR owns her place - the game's own
+                                                                        moves in it (the stance pinning her feet back where the aim began) undone */
+        float gx = plp->px - end_px, gz = plp->pz - end_pz;
+        if (gx * gx + gz * gz > 1e-6f && gx * gx + gz * gz < 9.0f) {
+            static unsigned n; static float tot;
+            shift_src = 2; body_shift(-gx, -gz); shift_src = 0;
+            tot += sqrtf(gx * gx + gz * gz);
+            if (g_vr_debug_log && (n++ % 150) == 0) vr_log("vr-diag: aiming: the game's own moves undone (%.2f m so far)\n", tot / (g_vr_scale / 10.0f));
+        }
+    }
     float dx = plp->px - last_px, dz = plp->pz - last_pz, d = sqrtf(dx * dx + dz * dz);
     int stick, run;
     if (!xr_input(&in)) { last_ok = 0; return; }
@@ -404,13 +567,38 @@ static void aim_walk_update(void)
     }
     if (g_vr_aim_walk && stick && plp->mode0 == 1 && plp->mode1 == 1 && !(sys->st_flg & 0x200)) {
         float a = (float)cam.ay * (3.14159265f / 32768.0f), fx = sinf(a), fz = -cosf(a), rx = cosf(a), rz = sinf(a);
-        float m = sqrtf(in.lx * in.lx + in.ly * in.ly), mx, mz, sp = 0.6f * walk_spd;   /* aiming: no running, 60% of her walk */
+        float m = sqrtf(in.lx * in.lx + in.ly * in.ly), mx, mz, sp;
+        {   /* vr96: drawing / putting away a weapon or the knife (64 up, 68 down, the knife) keeps her walking speed;
+               only aiming slows her to 80% - eased over about half a second, no jolt */
+            static float k = 1.0f;
+            int slow = (plp->mode2 == 65 || plp->mode2 == 66 || plp->mode2 == 67 || plp->mode2 == 69) && !knife_equipped();
+            k += ((slow ? 0.8f : 1.0f) - k) * 0.12f;
+            sp = k * walk_spd;
+            {   static int last = -1; if (g_vr_debug_log && last != plp->mode2) { last = plp->mode2; vr_log("vr-diag: aim walk: state %d, speed %.0f%%\n", plp->mode2, k * 100.0f); } }
+        }
         if (m > 1.0f) m = 1.0f;
         mx = (fx * in.ly + rx * in.lx); mz = (fz * in.ly + rz * in.lx);
         d = sqrtf(mx * mx + mz * mz);
         if (d > 1e-4f) {
             mx = mx / d * sp * m; mz = mz / d * sp * m;
-            body_move(mx, mz);
+            {   /* vr78: the step through the game's own wall check (bhCheckWallEx, her radius and height, as her
+                   walking without aiming): she stops where the game stops her */
+                extern int bhCheckWallEx(BH_PWORK* pw, NJS_POINT3* npos, NJS_POINT3* opos, float par, float pah);
+                NJS_POINT3 np, op;
+                float px0 = plp->px, pz0 = plp->pz;
+                op.x = plp->px; op.y = plp->py; op.z = plp->pz;
+                np.x = plp->px + mx; np.y = plp->py; np.z = plp->pz + mz;
+                {   NJS_POINT3 apos = sys->apos; ATR_WORK* ahtp = sys->ahtp;   /* (as body_free: the game's own state kept) */
+                    if (bhCheckWallEx(plp, &np, &op, plp->ar, plp->ah)) aw_nwall++;
+                    sys->apos = apos; sys->ahtp = ahtp; }
+                if (fabsf(np.x - px0) + fabsf(np.z - pz0) > 1e-5f) { shift_src = 2; body_shift(np.x - px0, np.z - pz0); shift_src = 0; }
+                frame_aimwalk[0] = plp->px - px0; frame_aimwalk[1] = plp->pz - pz0;
+            }
+            {
+                extern int g_vr_debug_log; extern void host_log(const char* fmt, ...);
+                static unsigned nl;
+                if (g_vr_debug_log && (nl++ % 150) == 0) host_log("vr-diag: aim walk: the game's wall check stopped the step %u times so far\n", aw_nwall);
+            }
         }
     }
 }
@@ -537,6 +725,87 @@ static void prompts_update(void)
 }
 
 /* end of tps_camera(), the third-person camera already in `cam`: replace it with the head's */
+/* the heading: the player's own with controllers (right stick), else the character's facing; once a game frame */
+static void heading_update(void)
+{
+    static unsigned done_gen;
+    VrInput in;
+    float facing;
+    int ctl;
+    if (done_gen == cam_gen) return;
+    done_gen = cam_gen;
+    facing = (float)(short)plp->ay * (3.14159265f / 32768.0f);
+    ctl = xr_input(&in);
+    if (!vr_active || !ctl || rec_seen != xr_recenter_gen()) { vr_yaw = facing; rec_seen = xr_recenter_gen(); }
+    {   /* vr95: on the stairs the view faces the way she climbs or goes down (her facing, the stairs' way) */
+        static int was;
+        if (on_stairs == 1) {
+            if (!was && g_vr_debug_log) vr_log("vr-diag: stairs: the view turned %.0f degrees to face them\n", (facing - vr_yaw) * 57.2958f);
+            vr_yaw = facing;
+            was = 1;
+        } else was = 0;
+    }
+    if (ctl && on_stairs == 1) {   /* vr91: on the stairs the stick does not turn (the stairs go straight); the head still looks around */
+        static unsigned nl;
+        if (fabsf(in.rx) > 0.7f && g_vr_debug_log && nl++ < 20) vr_log("vr-diag: turn held on the stairs\n");
+        if (fabsf(in.rx) > 0.7f) snap_held = 1;   /* (no turn when she steps off with the stick still out) */
+        ctl = 0;
+    }
+    if (ctl) {
+        if (g_vr_turn > 0) {
+            if (fabsf(in.rx) > 0.7f && !snap_held) {
+                vr_yaw -= (in.rx > 0 ? 1.0f : -1.0f) * g_vr_turn * (3.14159265f / 180.0f); snap_held = 1;
+                if (g_vr_debug_log) { static unsigned n; if (n++ < 30) vr_log("vr-diag: snap turn before the hands (frame gen %u)\n", cam_gen); }
+            }
+            else if (fabsf(in.rx) < 0.3f) snap_held = 0;
+        } else if (fabsf(in.rx) > 0.15f) vr_yaw -= in.rx * (3.14159265f / 180.0f) * 4.0f;   /* ~120 deg/s at 30 fps */
+    }
+}
+
+/* vr92 diagnosis (vr_debug_log): "walking on the spot" - the stick pushed, the game walking her, but she does not
+   get anywhere: who moved her each frame (the game, the room walk, the aim walk, the steady camera's pull),
+   logged when it happens (half a second without getting anywhere), at most once a second */
+static void stuck_check(void)
+{
+    static float px0, pz0, wx[15], wz[15], gm[15], src[15][4], gdx[15], gdz[15];
+    static short ays[15];
+    static float slx[15], sly[15];
+    static unsigned char m2[15];
+    static unsigned stf[15];
+    static int have, i, nlog;
+    static uint64_t last_ms;
+    VrInput in;
+    float s = g_vr_scale / 10.0f, m = 0.0f, game, sx = 0, sz = 0;
+    int k;
+    memset(&in, 0, sizeof(in));
+    if (!plp) return;
+    if (xr_input(&in)) m = sqrtf(in.lx * in.lx + in.ly * in.ly);
+    for (k = 1; k < 4; k++) { sx += shift_f[k][0]; sz += shift_f[k][1]; }
+    if (have) {
+        float gx = plp->px - px0 - sx, gz = plp->pz - pz0 - sz;   /* the game's own move this frame */
+        game = sqrtf(gx * gx + gz * gz);
+        wx[i] = plp->px; wz[i] = plp->pz; gm[i] = game; gdx[i] = gx; gdz[i] = gz; ays[i] = (short)plp->ay; m2[i] = (unsigned char)plp->mode2; slx[i] = in.lx; sly[i] = in.ly; stf[i] = (unsigned)plp->stflg;
+        for (k = 1; k < 4; k++) src[i][k] = sqrtf(shift_f[k][0] * shift_f[k][0] + shift_f[k][1] * shift_f[k][1]);
+        i = (i + 1) % 15;
+        if (g_vr_debug_log && m > 0.5f && plp->mode0 == 1 && nlog < 60) {
+            float gsum = 0, s1 = 0, s2 = 0, s3 = 0, nx = plp->px - wx[i], nz = plp->pz - wz[i], net = sqrtf(nx * nx + nz * nz);
+            for (k = 0; k < 15; k++) { gsum += gm[k]; s1 += src[k][1]; s2 += src[k][2]; s3 += src[k][3]; }
+            if (gsum > 2.0f && net < 0.3f * gsum && SDL_GetTicks() > last_ms + 1000) {
+                last_ms = SDL_GetTicks(); nlog++;
+                vr_log("vr-diag: WALKING ON THE SPOT: last 0.5 s the game moved her %.2f m but she got %.2f m; moved back by room walk %.2f, aim walk %.2f, camera pull %.2f m; mode %d/%d/%d flg %x stflg %x, stairs %d, stick %.2f %.2f\n",
+                       gsum / s, net / s, s1 / s, s2 / s, s3 / s, plp->mode0, plp->mode1, plp->mode2, (unsigned)plp->flg, (unsigned)plp->stflg, on_stairs, in.lx, in.ly);
+                for (k = 0; k < 15; k++) {   /* vr94: frame by frame, oldest first - where she was, the game's own step, her facing */
+                    int j = (i + k) % 15;
+                    vr_log("vr-diag:   frame %2d: at %.2f %.2f, game step %+.3f %+.3f m, facing %d, mode2 %d, stick %+.2f %+.2f, wall %s, ours room %.3f aim %.3f pull %.3f\n",
+                           k, wx[j] / s, wz[j] / s, gdx[j] / s, gdz[j] / s, (int)ays[j], (int)m2[j], slx[j], sly[j], (stf[j] & 1) ? "HIT" : "-", src[j][1] / s, src[j][2] / s, src[j][3] / s);
+                }
+            }
+        }
+    }
+    px0 = plp->px; pz0 = plp->pz; have = 1;
+    memset(shift_f, 0, sizeof(shift_f));
+}
+
 void vr_camera(void)
 {
     VrPose h;
@@ -555,18 +824,7 @@ void vr_camera(void)
         if (why) { extern volatile int g_vr_danger; g_vr_danger = 0; vr_active = 0; mk_n = 0; return; }
     }
 
-    {   /* heading: the player's own with controllers (right stick), else the character's facing */
-        VrInput in;
-        float facing = (float)(short)plp->ay * (3.14159265f / 32768.0f);
-        int ctl = xr_input(&in);
-        if (!vr_active || !ctl || rec_seen != xr_recenter_gen()) { vr_yaw = facing; rec_seen = xr_recenter_gen(); }
-        if (ctl) {
-            if (g_vr_turn > 0) {
-                if (fabsf(in.rx) > 0.7f && !snap_held) { vr_yaw -= (in.rx > 0 ? 1.0f : -1.0f) * g_vr_turn * (3.14159265f / 180.0f); snap_held = 1; }
-                else if (fabsf(in.rx) < 0.3f) snap_held = 0;
-            } else if (fabsf(in.rx) > 0.15f) vr_yaw -= in.rx * (3.14159265f / 180.0f) * 4.0f;   /* ~120 deg/s at 30 fps */
-        }
-    }
+    heading_update();   /* (done already this frame by vr_pad_frame, before the hands) */
     yb = vr_yaw;
     cb = cosf(yb); sb = sinf(yb);
     (void)cb; (void)sb;
@@ -580,7 +838,33 @@ void vr_camera(void)
        recentred origin (the head at recentring) at the player's eyes, tilted by a hit */
     enemy_diary();
     aim_walk_update();
-    body_follow(&h);
+    {   /* vr74 diagnosis (vr_debug_log): the slide after the stick is let go (the game's stop) */
+        extern int g_vr_debug_log;
+        static int held, n;
+        static float sx, sz, dist, lx, lz;
+        VrInput in;
+        float mag = xr_input(&in) ? sqrtf(in.lx * in.lx + in.ly * in.ly) : 0.0f;
+        if (mag > 0.5f) { held = 1; n = 0; }
+        else if (held && mag < 0.2f) { held = 0; n = 1; sx = lx = plp->px; sz = lz = plp->pz; dist = 0; }
+        else if (n > 0) {
+            float dx = plp->px - lx, dz = plp->pz - lz, s = g_vr_scale / 10.0f;
+            dist += sqrtf(dx * dx + dz * dz);
+            lx = plp->px; lz = plp->pz;
+            if (sqrtf(dx * dx + dz * dz) > 1e-3f) n++;
+            else {
+                if (g_vr_debug_log && n > 1) host_log("vr-diag: stop slide: %.2f m along, %.2f m in a line, over %d game frames (mode %d/%d/%d)\n",
+                                                     dist / (s > 0 ? s : 1.0f), sqrtf((plp->px - sx) * (plp->px - sx) + (plp->pz - sz) * (plp->pz - sz)) / (s > 0 ? s : 1.0f),
+                                                     n - 1, plp->mode0, plp->mode1, plp->mode2);
+                n = 0;
+            }
+            if (n > 60) n = 0;
+        }
+    }
+    {
+        float px0 = plp->px, pz0 = plp->pz;
+        body_follow(&h);
+        frame_follow[0] = plp->px - px0; frame_follow[1] = plp->pz - pz0;
+    }
     last_px = plp->px; last_pz = plp->pz; last_ok = 1;
     make_Wg(Wg);
     xr_recenter_matrix(rec);
@@ -616,15 +900,55 @@ void vr_camera(void)
         extern float Ps2_zbuff_a, Ps2_zbuff_b;
         vr_za = Ps2_zbuff_a; vr_zb = Ps2_zbuff_b;
     }
+    stuck_check();
+    end_px = plp->px; end_pz = plp->pz; end_ok = 1; end_aim = plp->mode1 == 1;   /* vr95 */
     cam_gen++;   /* the next game frame computes its base anew */
 }
 
 int vr_on(void) { return vr_active && xr_stereo_ready(); }
+/* player.c bhCPM2_act_wre: the aim let go with the stick pushed - she walks at once (vr79) */
+int vr_walk_at_once(void)
+{
+    VrInput in;
+    int r = vr_on() && xr_input(&in) && in.lx * in.lx + in.ly * in.ly > 0.09f;
+    if (r && g_vr_debug_log) { static unsigned n; if (n++ < 20) vr_log("vr-diag: aim let go while walking: walking at once\n"); }
+    return r;
+}
 
 
 /* in play: the VR camera ran in the last moments - in menus, the inventory, the map and the
    title it does not run (tps_pad, pad.c) */
-void vr_pad_frame(void) {}
+/* vr86: the frame's input, before the game moves her and the hands are put (bhControlPlayer): the
+   heading turned here, so the hands and the world of a frame use the same one (a snap turn showed the
+   weapons a frame at the old heading - a ghost) */
+static void trigger_log(void);
+void vr_pad_frame(void) { if (plp && vr_active) heading_update(); trigger_log(); }
+/* vr101 diagnosis (vr_debug_log): each trigger pull (how far, how long) and the rounds of the gun in hand */
+static void trigger_log(void)
+{
+    static int down[2], last_rounds = -1;
+    static float peak[2];
+    static uint64_t t0[2];
+    VrInput in;
+    unsigned* g;
+    if (!g_vr_debug_log || !plp || !xr_input(&in)) return;
+    for (int s = 0; s < 2; s++) {
+        float v = s ? in.ltrig : in.rtrig;
+        if (v > peak[s]) peak[s] = v;
+        if (!down[s] && v > 0.5f) { down[s] = 1; t0[s] = SDL_GetTicks(); vr_log("vr-diag: %s trigger past half (%.2f) - fire sent\n", s ? "left" : "right", v); }
+        else if (down[s] && v < 0.5f) {
+            down[s] = 0;
+            vr_log("vr-diag: %s trigger let go after %u ms (deepest %.2f)\n", s ? "left" : "right", (unsigned)(SDL_GetTicks() - t0[s]), peak[s]);
+            peak[s] = 0;
+        } else if (!down[s] && v < 0.05f) peak[s] = 0;
+    }
+    g = gun_slot();
+    {
+        int r = g ? (int)(*g & 0xFFFF) : -1;
+        if (r != last_rounds && last_rounds >= 0 && r >= 0) vr_log("vr-diag: rounds %d -> %d\n", last_rounds, r);
+        last_rounds = r;
+    }
+}
 int vr_playing(void) { return vr_on() && SDL_GetTicks() - cam_ms < 100 && !(sys && (sys->st_flg & 0x200)); }   /* (a message or a question on screen: its own controls) */
 
 static int knife_equipped(void)
@@ -653,8 +977,12 @@ static int trigger_recent(int side)
    trigger - no muzzle flash or shell from the hand whose trigger is not pulled */
 int vr_dual_block(void* pp, int jno)
 {
+    int b;
     if (pp != (void*)plp || !vr_on() || !dual_equipped() || (jno != 9 && jno != 13)) return 0;
-    return !trigger_recent(jno == 13);
+    b = !trigger_recent(jno == 13);
+    if (g_vr_debug_log) vr_log("vr-diag: twin guns: the game fires the %s gun - %s (its trigger %s)\n", jno == 13 ? "left" : "right",
+                               b ? "BLOCKED" : "shown", b ? "not pulled within 150 ms" : "pulled");
+    return b;
 }
 
 /* recoil and vibration of a shot from a hand */
@@ -797,6 +1125,7 @@ static void make_Wg(float Wg[16])
         float b[3];
         play_base(b);
         Wg[12] = b[0]; Wg[13] = b[1] + g_vr_eye_height / 10.0f; Wg[14] = b[2];
+        frame_body[0] = Wg[12]; frame_body[1] = Wg[13]; frame_body[2] = Wg[14];
     }
     if (g_vr_roomscale) {   /* the head over the body: the room's walking is the body's (body_follow) */
         VrPose h;
@@ -908,8 +1237,8 @@ static void log_hand_objects(void)
 static void vr_slash(BH_PWORK* p, const VrPose* hp, const float* H)
 {
     static float lp[3];
-    static uint64_t lt, next_ms;
-    static int have, swing;
+    static uint64_t lt;
+    static int have, swing, armed = 1;
     uint64_t now = SDL_GetTicksNS();
     float v[3] = { 0, 0, 0 }, sp = 0;
     if (have && now > lt) {
@@ -920,11 +1249,21 @@ static void vr_slash(BH_PWORK* p, const VrPose* hp, const float* H)
     }
     lp[0] = hp->px; lp[1] = hp->py; lp[2] = hp->pz; lt = now; have = 1;
     if (!knife_equipped() || g_vr_slash_speed <= 0 || p->mode0 != 1 || !vr_playing()) { swing = 0; return; }
-    if (!swing && sp * 100.0f > g_vr_slash_speed && now / 1000000 >= next_ms) {
-        swing = 4;
-        next_ms = now / 1000000 + 500;
-        vr_log("vr: knife cut (hand %.1f m/s)\n", sp);
-        if (g_vr_haptics) xr_haptic(0, 0.5f, 40);
+    if (sp * 100.0f < 0.5f * g_vr_slash_speed) armed = 1;   /* vr91: the hand slowed down - the next swing may cut (no time limit) */
+    if (!swing && armed && sp * 100.0f > g_vr_slash_speed) {
+        /* vr89: only the edge cuts - the knife's +z (measured, vr88: it led 33 of 34 right cuts) ahead of the hand's move */
+        float c = cosf(vr_yaw), sn = sinf(vr_yaw), mw[3] = { c * v[0] + sn * v[2], v[1], -sn * v[0] + c * v[2] };
+        float ml = sqrtf(mw[0] * mw[0] + mw[1] * mw[1] + mw[2] * mw[2]), zl = sqrtf(H[8] * H[8] + H[9] * H[9] + H[10] * H[10]);
+        float edge = (ml > 1e-4f && zl > 1e-6f) ? (mw[0] * H[8] + mw[1] * H[9] + mw[2] * H[10]) / (ml * zl) : 0.0f;
+        if (edge >= 0.5f) {   /* vr93: within ~60 degrees of the edge (45 was too tight, vr91 log) */
+            swing = 4;
+            armed = 0;
+            vr_log("vr: knife cut (hand %.1f m/s, edge %+.2f)\n", sp, edge);
+            if (g_vr_haptics) xr_haptic(0, 0.5f, 40);
+        } else if (g_vr_debug_log) {
+            static uint64_t last_ms;
+            if (now / 1000000 > last_ms + 300) { last_ms = now / 1000000; vr_log("vr-diag: knife swing not on the edge (edge %+.2f): no cut\n", edge); }
+        }
     }
     if (swing > 0) {
         GA_WORK gap;
@@ -1010,7 +1349,14 @@ static void sight_add(const float* H, int side, int wno)
         if (t > 0 && t < dist) dist = t;
     }
     for (int k = 0; k < 3; k++) p[k] = o[k] + d[k] * dist;
-    mk_add(VRMK_DOT, p, 0);
+    if (g_vr_sight & 1) mk_add(VRMK_DOT, p, 0);
+    if (g_vr_sight & 2) {   /* the beam from the muzzle; a muzzle point behind the hand (the mirrored left gun) is put as far in front of it */
+        float v[3] = { o[0] - hand_pos[side][0], o[1] - hand_pos[side][1], o[2] - hand_pos[side][2] };
+        float along = v[0] * d[0] + v[1] * d[1] + v[2] * d[2], l = sqrtf(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+        (void)l;
+        if (along < 0.0f) for (int k = 0; k < 3; k++) o[k] -= 2.0f * along * d[k];   /* vr79: mirrored along the barrel, at the barrel's height */
+        memcpy(laser_a[side], o, sizeof(o)); memcpy(laser_b[side], p, sizeof(p)); laser_ok[side] = 1;
+    }
 }
 
 const char* pc_save_dir(void);   /* config.c */
@@ -1055,8 +1401,17 @@ void vr_hand(BH_PWORK* p)
     float ya, pa;
     int wn, aiming, ctl;
     hand_ok[0] = hand_ok[1] = 0;
+    laser_ok[0] = laser_ok[1] = 0;
+    box_mode = 0;
     barrel_ok[0] = barrel_ok[1] = 0;
     if (!vr_on() || !p || !p->mlwP) return;
+    {   /* vr86: the last frame was not in the head (the cinema screen: a cut, a door): the hands stay hers, as the game poses them */
+        static int was = -1;
+        int head = SDL_GetTicks() - cam_ms < 100;   /* vr87: the VR camera ran lately (the cinema screen does not run it) */
+        if (was != head && g_vr_debug_log) vr_log("vr-diag: hands %s\n", head ? "follow the controllers again" : "left on her (cinema screen)");
+        was = head;
+        if (!head) return;
+    }
     if (!hooked) { hooked = 1; vr_log("vr: hand hook running (player model %d nodes)\n", p->mlwP->obj_num); }
     if (!grip_loaded) grip_load();
     log_hand_objects();
@@ -1173,6 +1528,16 @@ void vr_hand(BH_PWORK* p)
             }
         }
         memcpy(hand_pos[side], P, sizeof(P));
+        if (side == 1 && mag_held) {   /* vr87: the ammo box in the left hand, from the holster to the gun */
+            /* vr90: in the palm - along the controller (C: its axes in the world), 6 cm ahead of the hand point */
+            float s = g_vr_scale / 10.0f, ctr[3];
+            for (int k = 0; k < 3; k++) ctr[k] = P[k] - C[k * 3 + 2] * 0.06f * s;
+            for (int c = 0; c < 8; c++) {
+                float o[3] = { ((c & 1) ? 0.5f : -0.5f) * BOX_W * s, ((c & 2) ? 0.5f : -0.5f) * BOX_H * s, ((c & 4) ? 0.5f : -0.5f) * BOX_D * s };
+                for (int k = 0; k < 3; k++) box_c[c][k] = C[k * 3 + 0] * o[0] + C[k * 3 + 1] * o[1] + C[k * 3 + 2] * o[2] + ctr[k];
+            }
+            box_mode = 2;
+        }
         hand_ok[side] = 1;
         hand_log(side, 0, wn);
         if (side == 0) vr_slash(p, hp, H);
@@ -1252,12 +1617,13 @@ int vr_run_held(void) { VrInput in; return xr_input(&in) && (in.ltrig > 0.5f || 
 
 int vr_pad_select(void) { VrInput in; return xr_input(&in) && in.ltrig > 0.5f && (in.buttons & VRB_Y); }   /* LT + Y: Select */
 int vr_pad_start(void) { VrInput in; return xr_input(&in) && (in.buttons & VRB_MENU); }        /* left menu button: Start */
-int vr_quick_knife(void) { VrInput in; return xr_input(&in) && in.lgrip > 0.5f && !mag_held && !(g_vr_manual_reload && near_holster()); }             /* left grip: quick knife */
+int vr_quick_knife(void) { VrInput in; return xr_input(&in) && in.lgrip > 0.5f && !mag_held && !(g_vr_manual_reload && near_holster() && box_ammo() > 0); }   /* vr94: the holster only takes the grip when there is ammo to take */             /* left grip: quick knife */
 
 /* tps_after_draw(): the frame is drawn with `cam`; hand its camera to the renderer */
 void vr_after_draw(void)
 {
     VrView v;
+    last_vr_frame = vr_frame;   /* vr86: whether this frame was in the head (vr_hand, next frame) */
     if (!vr_frame) { mk_n = 0; return; }
     memset(&v, 0, sizeof(v));
     v.valid = 1;
@@ -1272,6 +1638,24 @@ void vr_after_draw(void)
     v.mk_n = mk_n;
     memcpy(v.mk, mk_pt, sizeof(v.mk)); memcpy(v.mk_kind, mk_kind, sizeof(v.mk_kind)); memcpy(v.mk_val, mk_val, sizeof(v.mk_val));
     for (int s = 0; s < 2; s++) { v.hand_ok[s] = hand_ok[s]; v.hand[s] = hand_aim[s]; }
+    for (int s = 0; s < 2; s++) { v.laser_ok[s] = laser_ok[s]; memcpy(v.laser_a[s], laser_a[s], sizeof(v.laser_a[s])); memcpy(v.laser_b[s], laser_b[s], sizeof(v.laser_b[s])); }
+    v.box_mode = box_mode; memcpy(v.box_c, box_c, sizeof(v.box_c));
+    v.box_amb[0] = rom ? rom->amb_r[(int)rom->amb_itm & 3] : 1.0f; v.box_amb[1] = rom ? rom->amb_g[(int)rom->amb_itm & 3] : 1.0f; v.box_amb[2] = rom ? rom->amb_b[(int)rom->amb_itm & 3] : 1.0f;
+    {   /* VR diagnosis (vr_debug_log) */
+        static int last = -1;
+        if (g_vr_debug_log && box_mode != last) vr_log("vr-diag: ammo box %s (room light %.2f %.2f %.2f)\n", box_mode == 1 ? "at the holster" : box_mode == 2 ? "in the left hand" : "not shown", v.box_amb[0], v.box_amb[1], v.box_amb[2]);
+        last = box_mode;
+    }
+    memcpy(v.body, frame_body, sizeof(v.body)); memcpy(v.follow, frame_follow, sizeof(v.follow));
+    {   /* vr72: the stick's move, this frame and the last (a wall pushing back reverses it) */
+        static float last_body[3], last_step[3];
+        static int have;
+        float pos[3] = { plp ? plp->px : 0.0f, plp ? plp->py : 0.0f, plp ? plp->pz : 0.0f };   /* vr73: the position, not the body's root (it sways with the walk) */
+        float st[3] = { pos[0] - last_body[0] - frame_follow[0], pos[1] - last_body[1], pos[2] - last_body[2] - frame_follow[1] };
+        if (!have) st[0] = st[1] = st[2] = 0.0f;
+        memcpy(v.step, st, sizeof(st)); memcpy(v.step_prev, last_step, sizeof(last_step));
+        memcpy(last_step, st, sizeof(st)); memcpy(last_body, pos, sizeof(last_body)); have = 1;
+    }
     mk_n = 0;   /* as drawn (vr_camera), not the room's restored by tps_after_draw */
     stream_vr_view(&v);
     vr_frame = 0;
@@ -1331,10 +1715,9 @@ int vr_block_autoreload(void)
     unsigned* g;
     if (!g_vr_manual_reload || !vr_on() || reloading) return 0;
     g = gun_slot();
-    if (g && (*g & 0xFFFF) == 0) {
-        if (mag_out >= 0) { *g = (*g & 0xFFFF0000u) | (unsigned)mag_kept; mag_out = -1; mag_kept = 0; }   /* (the kept rounds back first) */
-        vr_log("vr: empty gun - the game's own reload (box ammo %d)\n", box_ammo());
-        return 0;
+    if (g && (*g & 0xFFFF) == 0 && g_vr_debug_log) {   /* vr101: empty too - it only clicks; B, the holster and the gun reload it */
+        static uint64_t last;
+        if (SDL_GetTicks() > last + 1000) { last = SDL_GetTicks(); vr_log("vr-diag: empty gun: the game's own reload blocked (box ammo %d) - B and the holster\n", box_ammo()); }
     }
     return 1;
 }

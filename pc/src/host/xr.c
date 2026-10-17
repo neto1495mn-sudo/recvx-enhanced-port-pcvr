@@ -748,9 +748,9 @@ void xr_frame_end_quad_rect(int x, int y, int w, int h)
             float fy = -2.0f * (q->y * q->z - q->w * q->x);
             float yaw = yaw_of(q), pitch = asinf(fy < -1.0f ? -1.0f : fy > 1.0f ? 1.0f : fy), d = (float)g_vr_screen_dist / 100.0f, k;
             float hp[3] = { loc.pose.position.x, loc.pose.position.y, loc.pose.position.z };
-            if (pitch > 0.6f) pitch = 0.6f;
-            if (pitch < -0.6f) pitch = -0.6f;
-            if (!last_ms || now - last_ms > 500) { sy = yaw; sp = pitch; memcpy(shp, hp, sizeof(shp)); }   /* appears: in front of the gaze */
+            if (pitch > 0.1f) pitch = 0.1f;   /* vr100: at the eyes' height - it follows sideways, up and down only ~6 degrees */
+            if (pitch < -0.1f) pitch = -0.1f;
+            if (!last_ms || now - last_ms > 500) { sy = yaw; sp = 0.0f; memcpy(shp, hp, sizeof(shp)); }   /* appears: in front, level with the eyes (even looking down) */
             else {
                 float dt = (now - last_ms) / 1000.0f, dy = yaw - sy;
                 while (dy > 3.14159265f) dy -= 6.2831853f;

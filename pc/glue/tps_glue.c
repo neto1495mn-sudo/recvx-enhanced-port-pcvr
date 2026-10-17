@@ -696,6 +696,20 @@ void tps_player(void)
         was_aiming = aim;
         if (!aim) {   /* walk towards the keys' direction seen from the camera; not during the game's own turns (quick turn) */
             float f = !!(move_keys & TPS_K_FWD) - !!(move_keys & TPS_K_BACK), r = !!(move_keys & TPS_K_RIGHT) - !!(move_keys & TPS_K_LEFT);
+            {   /* vr85: VR - she faces the stick's way at once (its exact angle, from the head's heading) and walks
+                   straight there: no turning arc that the camera would follow */
+                extern int vr_move_stick(float* f, float* r);
+                extern int g_vr_move_direct, g_vr_debug_log;
+                float vf, vr;
+                if (g_vr_move_direct && vr_on() && vr_move_stick(&vf, &vr) && vf * vf + vr * vr > 0.04f && (f != 0 || r != 0) && !(plp->flg & 0x100000)) {
+                    static unsigned nl;
+                    short want = (short)(int)wrap(yaw - atan2f(vr, vf) * (32768.0f / 3.14159265f));
+                    if (g_vr_debug_log && (nl++ % 90) == 0)
+                        host_log("vr-diag: turn at once: stick %.2f %.2f, turned %d to %d\n", vf, vr, (int)(short)(want - plp->ay), (int)want);
+                    plp->ay = want;
+                    return;
+                }
+            }
             if ((f != 0 || r != 0) && !(plp->flg & 0x100000)) {
                 d = wrap(yaw - atan2f(r, f) * (32768.0f / 3.14159265f) - (short)plp->ay);
                 plp->ay += (int)(d * 0.3f);   /* 95% in 9 game frames */

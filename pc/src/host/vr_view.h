@@ -38,6 +38,14 @@ typedef struct {
     int   mk_val[12];           /*   VRMK_NUMBER: the number shown */
     int   hand_ok[2];           /* vr68: the controllers' aim poses (right, left) the hands were put with */
     VrPose hand[2];
+    float body[3];              /* vr71: the body's place (world) the play space was put at this frame */
+    float follow[2];            /* ... of which moved by the player's own steps in the room this frame (x, z) */
+    int   box_mode;             /* vr87: the ammo box drawn: 0 none, 1 at the holster, 2 in the left hand */
+    float box_c[8][3];          /* ... its corners (world; bit 0 x+, bit 1 y+, bit 2 z+) */
+    float box_amb[3];           /* ... the room's item light */
+    int   laser_ok[2];          /* vr77: the laser sight of each hand's gun (world): muzzle -> hit */
+    float laser_a[2][3], laser_b[2][3];
+    float step[3], step_prev[3]; /* vr72/73: the player's own move (the stick; its position, not the swaying body) this frame and the one before (world) */
 } VrView;
 enum { VRMK_DOT = 0, VRMK_BUTTON = 1, VRMK_NUMBER = 2 };   /* aiming dot, the "A" over what the action button would use, the holster's ammo count */
 

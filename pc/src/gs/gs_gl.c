@@ -2207,7 +2207,8 @@ static const char* mk_fs =
     "  g.y = 11.0 - g.y;\n"
     "  vec2 q = abs(v_c) * vec2(u_aspect, 1.0); vec2 lim = vec2(u_aspect, 1.0) - 0.25;\n"
     "  float plate = length(max(q - lim, 0.0)) - 0.25; aa = fwidth(plate);\n"
-    "  float pa = (1.0 - smoothstep(-aa, aa, plate)) * 0.6;\n"
+    "  float inside = 1.0 - smoothstep(-aa, aa, plate), rim = inside * smoothstep(-0.16 - aa, -0.16 + aa, plate);\n"
+    "  float pa = inside * 0.82;\n"
     "  float lit = 0.0;\n"
     "  vec2 c = g - vec2(1.0, 2.0);\n"
     "  int di = int(floor(c.x / 6.0));\n"
@@ -2222,7 +2223,8 @@ static const char* mk_fs =
     "  }\n"
     "  float a = max(pa, lit);\n"
     "  if (a <= 0.0) discard;\n"
-    "  o = vec4(mix(vec3(0.05), vec3(1.0, 0.97, 0.9), lit), a);\n"
+    "  vec3 base = mix(vec3(0.035, 0.045, 0.03), vec3(0.40, 0.48, 0.22), rim);\n"
+    "  o = vec4(mix(base, vec3(0.55, 0.95, 0.38), lit), a);\n"
     "}\n";
 
 static void draw_markers(const VrView* v, const float M[16], const VrEye* E, int w, int h)
@@ -2264,6 +2266,226 @@ static void draw_markers(const VrView* v, const float M[16], const VrEye* E, int
     }
     glBindVertexArray(vao);
     glDisable(GL_BLEND);
+}
+
+/* vr77: the laser sight - a faint red beam from each gun's muzzle, strongest at the gun and gone by
+   half way, and a small red dot where the shot would hit; moved with the hand like the gun */
+static float vr_laser_L[2][16];
+static int vr_laser_on[2];
+static GLuint lz_prog;
+static GLint ul_a, ul_b, ul_hw, ul_dot, ul_iz, ul_depth, ul_rect, ul_eye, ul_z;
+static const char* lz_vs =
+    "#version 330 core\n"
+    "uniform vec2 u_a; uniform vec2 u_b; uniform vec2 u_hw; uniform int u_dot; uniform vec2 u_iz;\n"
+    "out vec2 v_q; out float v_iz;\n"
+    "void main(){\n"
+    "  float t = (gl_VertexID & 1) != 0 ? 1.0 : 0.0, s = (gl_VertexID & 2) != 0 ? 1.0 : -1.0;\n"
+    "  if (u_dot != 0) { vec2 c = vec2(t * 2.0 - 1.0, s); v_q = c; v_iz = u_iz.y; gl_Position = vec4(u_b + c * u_hw, 0.0, 1.0); return; }\n"
+    "  vec2 d = (u_b - u_a) / u_hw; vec2 n = normalize(vec2(-d.y, d.x)) * u_hw;\n"
+    "  v_q = vec2(t, s); v_iz = mix(u_iz.x, u_iz.y, t);\n"
+    "  gl_Position = vec4(mix(u_a, u_b, t) + n * s, 0.0, 1.0);\n"
+    "}\n";
+/* vr80: hidden behind whatever is nearer in the eye's picture (the gun, the hand, a wall): the replay's
+   depth for this eye (GS depth of the eye's distance, z = -zb / (zs * Ez) - za, times u_z.x) read back
+   as a distance (u_z: scale, zs, zb, za; u_z.y 0 = no depth to test) */
+static const char* lz_fs =
+    "#version 330 core\n"
+    "in vec2 v_q; in float v_iz; out vec4 o; uniform int u_dot; uniform sampler2D u_depth; uniform vec4 u_rect; uniform vec2 u_eye; uniform vec4 u_z;\n"
+    "void main(){\n"
+    "  if (u_z.y > 0.0) {\n"
+    "    vec2 c = gl_FragCoord.xy / u_eye; vec2 uv = vec2(mix(u_rect.x, u_rect.z, c.x), mix(u_rect.y, u_rect.w, 1.0 - c.y));\n"
+    "    float gz = texture(u_depth, uv).r / u_z.x + u_z.w;\n"
+    "    if (abs(gz) > 1e-6) { float ez = -u_z.z / (u_z.y * gz); if (ez > 0.0 && ez < 1.0 / v_iz - 0.015) discard; }\n"
+    "  }\n"
+    "  if (u_dot != 0) { float r = length(v_q); float a = 1.0 - smoothstep(0.55, 1.0, r); if (a <= 0.0) discard; o = vec4(1.0, 0.12, 0.08, 0.85 * a); return; }\n"
+    "  float a = 0.55 * clamp(1.0 - v_q.x / 0.65, 0.0, 1.0) * (1.0 - smoothstep(0.3, 1.0, abs(v_q.y)));\n"
+    "  if (a <= 0.0) discard; o = vec4(1.0, 0.1, 0.05, a);\n"
+    "}\n";
+static int laser_ndc(const float L[16], const float M[16], const VrEye* E, const float p[3], float e[3])
+{
+    float V[3];
+    for (int k = 0; k < 3; k++) V[k] = L[k] * p[0] + L[4 + k] * p[1] + L[8 + k] * p[2] + L[12 + k];   /* world -> V (with the hand) */
+    for (int k = 0; k < 3; k++) e[k] = M[k] * V[0] + M[4 + k] * V[1] + M[8 + k] * V[2] + M[12 + k];   /* V -> eye */
+    (void)E;
+    return 1;
+}
+static void eye_to_ndc(const VrEye* E, const float e[3], float n[2])
+{
+    float tx = e[0] / e[2], ty = -e[1] / e[2];
+    n[0] = (tx - E->l) / (E->r - E->l) * 2.0f - 1.0f;
+    n[1] = (ty - E->d) / (E->u - E->d) * 2.0f - 1.0f;
+}
+static void draw_lasers(const VrView* v, const float M[16], const VrEye* E, int w, int h, const RenderTarget* rt)
+{
+    GLuint dtex = 0;
+    int any = 0;
+    for (int s = 0; s < 2; s++) any |= v && v->laser_ok[s] && vr_laser_on[s];
+    if (!any) return;
+    if (!lz_prog) {
+        lz_prog = compile(lz_vs, lz_fs);
+        ul_a = glGetUniformLocation(lz_prog, "u_a"); ul_b = glGetUniformLocation(lz_prog, "u_b");
+        ul_hw = glGetUniformLocation(lz_prog, "u_hw"); ul_dot = glGetUniformLocation(lz_prog, "u_dot"); ul_iz = glGetUniformLocation(lz_prog, "u_iz");
+        ul_depth = glGetUniformLocation(lz_prog, "u_depth"); ul_rect = glGetUniformLocation(lz_prog, "u_rect");
+        ul_eye = glGetUniformLocation(lz_prog, "u_eye"); ul_z = glGetUniformLocation(lz_prog, "u_z");
+    }
+    glViewport(0, 0, w, h);
+    glEnable(GL_BLEND);
+    glBlendEquationSeparate(GL_FUNC_ADD, GL_FUNC_ADD);
+    glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ZERO, GL_ONE);
+    glUseProgram(lz_prog);
+    for (int i = 0; i < 8 && rt; i++) if (dz[i].tex && dz[i].zbp == rt->zbp && dz[i].pw == rt->pw && dz[i].ph == rt->ph) dtex = dz[i].tex;   /* the eye's depth (the replay's) */
+    {
+        uint32_t zpsm = (uint32_t)((gs.ctx[0].zbuf >> 24) & 0xF);
+        float zmax = zpsm == 0 ? 4294967296.0f : zpsm == 1 ? 16777216.0f : 65536.0f;
+        float dw = 640.0f + 2.0f * g_margin_x;
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, dtex);
+        glUniform1i(ul_depth, 0);
+        glUniform4f(ul_rect, 0.0f, 0.0f, rt ? dw / rt->vw : 1.0f, rt ? 480.0f / rt->vh : 1.0f);
+        glUniform2f(ul_eye, (float)w, (float)h);
+        glUniform4f(ul_z, 1.0f / zmax, dtex ? vr_u.zs : 0.0f, v->zb, v->za);
+        {   /* VR diagnosis (vr_debug_log) */
+            extern int g_vr_debug_log;
+            static int last = -1;
+            if (g_vr_debug_log && (dtex != 0) != last) { last = dtex != 0; host_log("vr-diag: laser hidden behind nearer things: %s (zpsm %u)\n", dtex ? "yes" : "no depth found", zpsm); }
+        }
+    }
+    glBindVertexArray(present_vao);
+    for (int s = 0; s < 2; s++) {
+        float ea[3], eb[3], na[2], nb[2];
+        if (!v->laser_ok[s] || !vr_laser_on[s]) continue;
+        laser_ndc(vr_laser_L[s], M, E, v->laser_a[s], ea);
+        laser_ndc(vr_laser_L[s], M, E, v->laser_b[s], eb);
+        if (ea[2] < 0.05f && eb[2] < 0.05f) continue;
+        if (ea[2] < 0.05f || eb[2] < 0.05f) {   /* clipped at the near plane */
+            float* in = ea[2] < 0.05f ? ea : eb; const float* o = ea[2] < 0.05f ? eb : ea;
+            float k = (0.05f - in[2]) / (o[2] - in[2]);
+            for (int q = 0; q < 3; q++) in[q] += (o[q] - in[q]) * k;
+        }
+        eye_to_ndc(E, ea, na); eye_to_ndc(E, eb, nb);
+        glUniform2f(ul_iz, 1.0f / ea[2], 1.0f / eb[2]);
+        glUniform1i(ul_dot, 0);
+        glUniform2f(ul_a, na[0], na[1]); glUniform2f(ul_b, nb[0], nb[1]);
+        glUniform2f(ul_hw, 1.6f / (float)w, 1.6f / (float)h);   /* about 1.6 pixels to each side */
+        glDrawArrays(0x0005 /* GL_TRIANGLE_STRIP */, 0, 4);
+        if (eb[2] >= 0.05f) {   /* the dot where it hits: about 1 cm across at its distance, at least 3 pixels */
+            float r = 0.006f / eb[2], rx = r / (E->r - E->l) * 2.0f, ry = r / (E->u - E->d) * 2.0f;
+            if (rx < 3.0f / w) rx = 3.0f / w;
+            if (ry < 3.0f / h) ry = 3.0f / h;
+            glUniform1i(ul_dot, 1);
+            glUniform2f(ul_hw, rx, ry);
+            glDrawArrays(0x0005, 0, 4);
+        }
+    }
+    glBindVertexArray(vao);
+    glDisable(GL_BLEND);
+}
+
+/* vr87: the ammo box at the holster / in the left hand - a small olive box in the game's look (a
+   yellow band, three rounds on its sides, worn edges), lit by the room's item light, hidden behind
+   what is nearer in the eye's picture (as the laser) */
+static float vr_world_L[16];   /* world -> V of this image (the holster's box) */
+static int vr_world_ok;
+static GLuint bx_prog;
+static GLint ub_vis, ub_c[8], ub_fr, ub_depth, ub_rect, ub_eye, ub_z, ub_amb;
+static const char* bx_vs =
+    "#version 330 core\n"
+    "uniform vec4 u_c[8]; uniform vec4 u_fr; uniform int u_vis;\n"
+    "out vec2 v_uv; out float v_ez; flat out int v_face;\n"
+    "const int F[24] = int[24](0,4,6,2, 1,3,7,5, 0,1,5,4, 2,6,7,3, 0,2,3,1, 4,5,7,6);\n"
+    "const int T[6] = int[6](0,1,2, 0,2,3);\n"
+    "const vec2 Q[4] = vec2[4](vec2(0.0,0.0), vec2(1.0,0.0), vec2(1.0,1.0), vec2(0.0,1.0));\n"
+    "void main(){\n"
+    "  int f = gl_VertexID / 6, k = T[gl_VertexID % 6];\n"
+    "  if ((u_vis & (1 << f)) == 0) { gl_Position = vec4(0.0, 0.0, 2.0, 1.0); v_uv = vec2(0.0); v_face = f; v_ez = 1.0; gl_ClipDistance[0] = -1.0; return; }\n"
+    "  vec3 e = u_c[F[f * 4 + k]].xyz;\n"
+    "  v_uv = Q[k]; v_face = f; v_ez = e.z;\n"
+    "  float tx = e.x / e.z, ty = -e.y / e.z;\n"
+    "  vec2 n = vec2((tx - u_fr.x) / (u_fr.y - u_fr.x) * 2.0 - 1.0, (ty - u_fr.w) / (u_fr.z - u_fr.w) * 2.0 - 1.0);\n"
+    "  gl_Position = vec4(n * e.z, 0.0, e.z);\n"
+    "  gl_ClipDistance[0] = e.z - 0.05;\n"
+    "}\n";
+static const char* bx_fs =
+    "#version 330 core\n"
+    "in vec2 v_uv; in float v_ez; flat in int v_face; out vec4 o;\n"
+    "uniform sampler2D u_depth; uniform vec4 u_rect; uniform vec2 u_eye; uniform vec4 u_z; uniform vec4 u_amb;\n"
+    "float h(vec2 p){ return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }\n"
+    "void main(){\n"
+    "  if (u_z.y > 0.0) {\n"
+    "    vec2 c = gl_FragCoord.xy / u_eye; vec2 uv = vec2(mix(u_rect.x, u_rect.z, c.x), mix(u_rect.y, u_rect.w, 1.0 - c.y));\n"
+    "    float gz = texture(u_depth, uv).r / u_z.x + u_z.w;\n"
+    "    if (abs(gz) > 1e-6) { float ez = -u_z.z / (u_z.y * gz); if (ez > 0.0 && ez < v_ez - 0.01) discard; }\n"
+    "  }\n"
+    "  vec2 q = v_uv; vec3 col = vec3(0.30, 0.34, 0.16);\n"
+    "  bool side = v_face >= 4, end = v_face <= 1;\n"
+    "  if ((side || end) && q.y > 0.56 && q.y < 0.72) col = vec3(0.72, 0.58, 0.16);\n"
+    "  if (side && q.y > 0.14 && q.y < 0.46) { for (int i = 0; i < 3; i++) { float x = 0.3 + 0.2 * float(i);\n"
+    "    if (abs(q.x - x) < 0.045 && q.y < 0.38) col = vec3(0.70, 0.52, 0.20);\n"
+    "    if (q.y >= 0.38 && abs(q.x - x) < 0.045 * (0.46 - q.y) / 0.08) col = vec3(0.55, 0.32, 0.16); } }\n"
+    "  if (v_face == 3 && abs(q.y - 0.5) < 0.03) col *= 0.55;\n"
+    "  float d = min(min(q.x, 1.0 - q.x), min(q.y, 1.0 - q.y)); if (d < 0.05) col *= 0.6;\n"
+    "  col *= 0.85 + 0.15 * h(floor(q * 24.0) + float(v_face));\n"
+    "  float sh = v_face == 3 ? 1.0 : v_face == 2 ? 0.45 : side ? 0.8 : 0.65;\n"
+    "  vec3 amb = clamp(u_amb.rgb, vec3(0.35), vec3(1.0));\n"
+    "  o = vec4(col * sh * amb * 1.15, 1.0);\n"
+    "}\n";
+static void draw_box(const VrView* v, const float M[16], const VrEye* E, int w, int h, const RenderTarget* rt)
+{
+    const float* L;
+    float e8[8][3];
+    GLuint dtex = 0;
+    if (!v || !v->box_mode) return;
+    L = v->box_mode == 2 ? (vr_laser_on[1] ? vr_laser_L[1] : NULL) : (vr_world_ok ? vr_world_L : NULL);
+    if (!L) return;
+    for (int c = 0; c < 8; c++) {
+        const float* p = v->box_c[c];
+        float V[3];
+        for (int k = 0; k < 3; k++) V[k] = L[k] * p[0] + L[4 + k] * p[1] + L[8 + k] * p[2] + L[12 + k];
+        for (int k = 0; k < 3; k++) e8[c][k] = M[k] * V[0] + M[4 + k] * V[1] + M[8 + k] * V[2] + M[12 + k];
+    }
+    if (!bx_prog) {
+        bx_prog = compile(bx_vs, bx_fs);
+        for (int c = 0; c < 8; c++) { char nm[16]; snprintf(nm, sizeof(nm), "u_c[%d]", c); ub_c[c] = glGetUniformLocation(bx_prog, nm); }
+        ub_fr = glGetUniformLocation(bx_prog, "u_fr"); ub_vis = glGetUniformLocation(bx_prog, "u_vis");
+        ub_depth = glGetUniformLocation(bx_prog, "u_depth"); ub_rect = glGetUniformLocation(bx_prog, "u_rect");
+        ub_eye = glGetUniformLocation(bx_prog, "u_eye"); ub_z = glGetUniformLocation(bx_prog, "u_z"); ub_amb = glGetUniformLocation(bx_prog, "u_amb");
+    }
+    for (int i = 0; i < 8 && rt; i++) if (dz[i].tex && dz[i].zbp == rt->zbp && dz[i].pw == rt->pw && dz[i].ph == rt->ph) dtex = dz[i].tex;
+    glViewport(0, 0, w, h);
+    glDisable(GL_BLEND);
+    clip_distances(1);
+    glUseProgram(bx_prog);
+    {
+        uint32_t zpsm = (uint32_t)((gs.ctx[0].zbuf >> 24) & 0xF);
+        float zmax = zpsm == 0 ? 4294967296.0f : zpsm == 1 ? 16777216.0f : 65536.0f;
+        float dw = 640.0f + 2.0f * g_margin_x;
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, dtex);
+        glUniform1i(ub_depth, 0);
+        glUniform4f(ub_rect, 0.0f, 0.0f, rt ? dw / rt->vw : 1.0f, rt ? 480.0f / rt->vh : 1.0f);
+        glUniform2f(ub_eye, (float)w, (float)h);
+        glUniform4f(ub_z, 1.0f / zmax, dtex ? vr_u.zs : 0.0f, v->zb, v->za);
+    }
+    for (int c = 0; c < 8; c++) glUniform4f(ub_c[c], e8[c][0], e8[c][1], e8[c][2], 1.0f);
+    glUniform4f(ub_fr, E->l, E->r, E->u, E->d);
+    {   /* vr90: only the faces turned to the eye (a closed box, the far faces not seen through the near ones) */
+        static const int F[24] = { 0,4,6,2, 1,3,7,5, 0,1,5,4, 2,6,7,3, 0,2,3,1, 4,5,7,6 };
+        float bc[3] = { 0, 0, 0 };
+        int vis = 0;
+        for (int c = 0; c < 8; c++) for (int k = 0; k < 3; k++) bc[k] += e8[c][k] / 8.0f;
+        for (int f = 0; f < 6; f++) {
+            float fc[3] = { 0, 0, 0 }, d = 0.0f;
+            for (int q = 0; q < 4; q++) for (int k = 0; k < 3; k++) fc[k] += e8[F[f * 4 + q]][k] / 4.0f;
+            for (int k = 0; k < 3; k++) d += (fc[k] - bc[k]) * fc[k];   /* outward normal . (eye -> face): < 0 faces the eye */
+            if (d < 0.0f) vis |= 1 << f;
+        }
+        glUniform1i(ub_vis, vis);
+    }
+    glUniform4f(ub_amb, v->box_amb[0], v->box_amb[1], v->box_amb[2], 1.0f);
+    glBindVertexArray(present_vao);
+    glDrawArrays(GL_TRIANGLES, 0, 36);
+    glBindVertexArray(vao);
+    clip_distances(0);
 }
 
 static void draw_vignette(const VrEye* E, int w, int h)
@@ -2410,6 +2632,7 @@ static int present_vr_held(void)
     return 1;
 }
 
+int g_vr_interp_body = 1;   /* ini vr_interp_body: the stick walking smoothed (vr71) */
 int g_vr_interpolate = 1;   /* ini vr_interpolate: the characters move at the headset's rate (their strips blended, stream.c) */
 /* the game's projection of a frame as a 4x4 (column-major): V (view, homogeneous) -> the
    homogeneous GS position of its native vertices (c * Vz + k * V.xy, -zb - za * Vz, Vz) */
@@ -2421,7 +2644,33 @@ static void vr_proj_matrix(float m[16], const VrView* v, float ofx, float ofy)
     m[10] = -v->za; m[14] = -v->zb;
     m[11] = 1.0f;
 }
+static int present_vr_stereo_(const struct Frame* cur, float t);
+/* vr74 diagnosis: a headset frame's work by step (ns): 0 replay (both eyes), 1 eye image wait, 2 eye copy, 3 mirror window, 4 hand to the headset */
+static uint64_t vr_tm[5];
+#define VR_TM(k, stmt) do { uint64_t t_ = SDL_GetTicksNS(); stmt; vr_tm[k] += SDL_GetTicksNS() - t_; } while (0)
+/* vr71 diagnosis (vr_debug_log): how long the 3D picture takes, and the gaps between headset frames (stutter) */
 static int present_vr_stereo(const struct Frame* cur, float t)
+{
+    extern int g_vr_debug_log;
+    static uint64_t last_ns, worst_gap, worst_draw, sum_draw;
+    static unsigned n, slow, gaps;
+    uint64_t t0 = SDL_GetTicksNS(), t1;
+    double hz = xr_display_hz() > 1.0 ? xr_display_hz() : 90.0, budget = 1e9 / hz;
+    int r = present_vr_stereo_(cur, t);
+    t1 = SDL_GetTicksNS();
+    if (last_ns) { uint64_t g = t0 - last_ns; if (g > worst_gap) worst_gap = g; if (g > 1.5 * budget) gaps++; }
+    last_ns = t0;
+    if (t1 - t0 > worst_draw) worst_draw = t1 - t0;
+    if (t1 - t0 > budget * 0.8) slow++;
+    sum_draw += t1 - t0;
+    if (++n >= 450) {
+        if (g_vr_debug_log) host_log("vr-diag: timing: 3D picture avg %.1f ms, worst %.1f ms (budget %.1f, slow %u); headset frames missed %u, worst gap %.1f ms\n",
+                                     sum_draw / 1e6 / n, worst_draw / 1e6, budget / 1e6, slow, gaps, worst_gap / 1e6);
+        n = slow = gaps = 0; worst_gap = worst_draw = sum_draw = 0;
+    }
+    return r;
+}
+static int present_vr_stereo_(const struct Frame* cur, float t)
 {
     static GLuint vr_fbo;
     const VrView* v = cur ? stream_frame_vr(cur) : NULL;
@@ -2455,17 +2704,33 @@ static int present_vr_stereo(const struct Frame* cur, float t)
            (still scenery and characters move with the body at the headset's rate) */
         const struct Frame* pf = g_vr_interpolate && t < 0.999f ? stream_prev_frame(cur) : NULL;
         const VrView* pv = pf ? stream_frame_vr(pf) : NULL;
-        float Wt[16], iWt[16], mv = 0.0f, rot = 0.0f, zs = sqrtf(v->W[0] * v->W[0] + v->W[1] * v->W[1] + v->W[2] * v->W[2]);
-        int use = 0;
-        if (pv && pv->valid) {
-            for (int k = 0; k < 3; k++) mv += (v->W[12 + k] - pv->W[12 + k]) * (v->W[12 + k] - pv->W[12 + k]);
-            mv = sqrtf(mv) / (zs > 1e-3f ? zs : 10.0f);   /* metres */
-            for (int k = 0; k < 12; k++) rot += fabsf(v->W[k] - pv->W[k]);
-            rot /= (zs > 1e-3f ? zs : 10.0f);
-            if (mv < 0.5f && rot < 0.3f) {   /* not a jump (a room change, a recentring) */
-                for (int k = 0; k < 16; k++) Wt[k] = pv->W[k] + (v->W[k] - pv->W[k]) * t;
+        float Wt[16], iWt[16], mv = 0.0f, zs = sqrtf(v->W[0] * v->W[0] + v->W[1] * v->W[1] + v->W[2] * v->W[2]);
+        float dl[3];
+        int use = 0, steady = 1;
+        if (g_vr_interp_body && pv && pv->valid) {   /* vr71: only the body's own move (the stick); the head's part and the room walking as the game made them */
+            dl[0] = v->body[0] - pv->body[0] - v->follow[0];
+            dl[1] = v->body[1] - pv->body[1];
+            dl[2] = v->body[2] - pv->body[2] - v->follow[1];
+            mv = sqrtf(dl[0] * dl[0] + dl[1] * dl[1] + dl[2] * dl[2]) / (zs > 1e-3f ? zs : 10.0f);   /* metres */
+            {   /* vr72: only a steady move - one turned back or cut short (a wall pushing the body back) is shown as made */
+                float a2 = 0.0f, b2 = 0.0f, ab = 0.0f;
+                for (int k = 0; k < 3; k++) { a2 += v->step[k] * v->step[k]; b2 += v->step_prev[k] * v->step_prev[k]; ab += v->step[k] * v->step_prev[k]; }
+                steady = b2 < 1e-6f ? a2 < 0.25f * zs * zs * 0.01f : (ab > 0.7f * sqrtf(a2 * b2) && a2 > 0.25f * b2);
+                if (a2 < 1e-8f) steady = 1;   /* not moving */
+            }
+            if (mv < 0.5f && steady) {   /* not a jump (a room change), not a wall */
+                memcpy(Wt, v->W, sizeof(Wt));
+                for (int k = 0; k < 3; k++) Wt[12 + k] -= (1.0f - t) * dl[k];
                 if (vr_mat_invert(iWt, Wt)) use = 1;
             }
+        }
+        {   /* VR diagnosis (vr_debug_log) */
+            extern int g_vr_debug_log;
+            static unsigned nl, nused, njump, nwall;
+            if (use) nused++; else if (pv && pv->valid && g_vr_interp_body) { if (!steady) nwall++; else njump++; }
+            if (g_vr_debug_log && (nl++ % 300) == 0)
+                host_log("vr-diag: walking smoothed: %s (stick move %.3f m this game frame, room-walk %.3f %.3f; since last: used %u, refused %u, wall/turned back %u)\n",
+                         !g_vr_interp_body ? "off (vr_interp_body 0)" : use ? "on" : "not this frame", mv, v->follow[0], v->follow[1], nused, njump, nwall);
         }
         vr_mat_mul(A, use ? iWt : iW, iG);   /* V of the frame -> local (metres) */
         {   /* vr68: the hand objects follow the controllers now, not as they were when the game frame was made:
@@ -2476,25 +2741,44 @@ static int present_vr_stereo(const struct Frame* cur, float t)
             float P0[16], iP0[16], A0[16], iA[16], B[16], C[16], D[16], Mn[16], iMt[16];
             int have = xr_input(&in);
             g_hand_on = 0;
+            vr_laser_on[0] = vr_laser_on[1] = 0;
             vr_proj_matrix(P0, v, 0.0f, 0.0f);
-            if (have && vr_mat_invert(iP0, P0) && vr_mat_invert(iA, A)) {
+            float Rc[16], iRc[16], dbg_turn = 0.0f;
+            xr_recenter_matrix(Rc);   /* local -> recentred */
+            {   /* vr87: world -> V of this image (the ammo box at the holster) */
+                float iA2[16], iW2[16];
+                vr_world_ok = vr_mat_invert(iA2, A) && vr_mat_invert(iW2, v->W);
+                if (vr_world_ok) vr_mat_mul(vr_world_L, iA2, iW2);
+            }
+            if (have && vr_mat_invert(iP0, P0) && vr_mat_invert(iA, A) && vr_mat_invert(iRc, Rc)) {
                 vr_mat_mul(A0, iW, iG);
                 for (int h = 0; h < 2; h++) {
                     const VrPose* now = h ? &in.aiml : &in.aim;
                     int nv = h ? in.aiml_valid : in.aim_valid;
                     if (v->hand_ok[h] && nv) {
+                        float t1[16], t2[16], iWf[16];
                         vr_mat_from_pose(Mn, now);
                         vr_mat_rigid_inverse_pose(iMt, &v->hand[h]);
-                        vr_mat_mul(D, Mn, iMt);
+                        vr_mat_mul(D, Mn, iMt);   /* in the recentred space the controller poses are in */
+                        vr_mat_mul(C, D, Rc); vr_mat_mul(D, iRc, C);   /* vr70: to local (eye poses' space): inverse(rec) * D * rec */
+                        if (h == 0) { float tr = D[0] + D[5] + D[10], cc = (tr - 1.0f) * 0.5f; dbg_turn = acosf(cc > 1.0f ? 1.0f : cc < -1.0f ? -1.0f : cc) * 57.2958f; }
                         vr_mat_mul(B, A0, iP0);   /* GS -> local as made */
                         vr_mat_mul(C, D, B);
                         vr_mat_mul(B, iA, C);     /* -> V of this image */
                         vr_mat_mul(g_hand_M[h], P0, B);
+                        if (vr_mat_invert(iWf, v->W)) { vr_mat_mul(t1, D, iWf); vr_mat_mul(t2, iA, t1); memcpy(vr_laser_L[h], t2, sizeof(t2)); vr_laser_on[h] = 1; }   /* vr77: world -> V, moved with the hand */
                     } else {
                         vr_mat_mul(C, A0, iP0); vr_mat_mul(B, iA, C); vr_mat_mul(g_hand_M[h], P0, B);   /* as made (A to this image's view) */
                     }
                 }
                 g_hand_on = 1;
+            }
+            {   /* VR diagnosis (vr_debug_log): the recentring the hands are corrected through */
+                extern int g_vr_debug_log;
+                static unsigned nl;
+                if (g_vr_debug_log && (nl++ % 300) == 0)
+                    host_log("vr-diag: hands: %s, recentring turned %.1f deg, right hand turned since the game frame %.1f deg\n",
+                             g_hand_on ? "follow the controllers" : "as made", atan2f(Rc[8], Rc[0]) * 57.2958f, dbg_turn);
             }
         }
     }
@@ -2547,8 +2831,8 @@ static int present_vr_stereo(const struct Frame* cur, float t)
             static unsigned nlog;
             int logit = e == 0 && nlog < 40 && (frame_no % 90) == 0;
             if (logit) memset(&vr_st, 0, sizeof(vr_st)), vr_st.on = 1;
-            if (chars) stream_replay_chars(cur, t, chT);
-            else stream_replay_exact(cur);
+            if (chars) VR_TM(0, stream_replay_chars(cur, t, chT));
+            else VR_TM(0, stream_replay_exact(cur));
             if (logit) {
                 vr_st.on = 0; nlog++;
                 host_log("vr: frame %llu vertices: 3D %u, GS-depth (sprites/VU1) %u, flat 2D %u (screen layers kept flat %u)\n",
@@ -2559,7 +2843,7 @@ static int present_vr_stereo(const struct Frame* cur, float t)
         }
         vr_u.on = 0;
         rt = rt_find(gs.disp_fbp, gs.disp_fbw ? gs.disp_fbw : 10);
-        tex = xr_eye_target(e, w, h);
+        VR_TM(1, tex = xr_eye_target(e, w, h));
         if (!rt || !tex) {
             static int nfail;
             if (nfail++ < 20) host_log("vr: eye %d failed: %s\n", e, !rt ? "no display target after the replay" : "no swapchain image");
@@ -2568,14 +2852,12 @@ static int present_vr_stereo(const struct Frame* cur, float t)
         if (rt && tex) {
             glBindFramebuffer(GL_FRAMEBUFFER, vr_fbo);
             glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
-            draw_area_to(rt->tex, rt->vw, rt->vh, w, h);
-            draw_markers(v, M, E, w, h);
-            draw_vignette(E, w, h);
-            hold_keep_and_dim(e, w, h, vr_fbo);
+            VR_TM(2, draw_area_to(rt->tex, rt->vw, rt->vh, w, h); draw_lasers(v, M, E, w, h, rt); draw_box(v, M, E, w, h, rt); draw_markers(v, M, E, w, h); draw_vignette(E, w, h); hold_keep_and_dim(e, w, h, vr_fbo));
             glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
             glBindFramebuffer(GL_FRAMEBUFFER, 0);
             fb_forget();
         } else ok = 0;
+        glFlush();   /* vr99: the eye's work to the GPU now, not all at the hand-off (xrEndFrame waits less) */
         xr_eye_release(e);
         rt_restore();
     }
@@ -2587,7 +2869,9 @@ static int present_vr_stereo(const struct Frame* cur, float t)
 static uint64_t gs_present_vr(const struct Frame* cur, float t)
 {
     uint64_t swap;
+    uint64_t tw0 = SDL_GetTicksNS();
     int ww = 0, wh = 0, fr = xr_frame_begin(), door;
+    uint64_t tw = SDL_GetTicksNS() - tw0;   /* vr73 diagnosis: how long the headset made us wait */
     static uint64_t last_ms;
     uint64_t now_ms = SDL_GetTicks();
     float dt = last_ms ? (float)(now_ms - last_ms) / 1000.0f : 0.0f;
@@ -2613,9 +2897,8 @@ static uint64_t gs_present_vr(const struct Frame* cur, float t)
         overlay_render();
         if (!present_vr_held()) xr_frame_end_none();
     } else if (fr == 1 && (vr_fade = vr_fade + dt / 0.5f > 1.0f ? 1.0f : vr_fade + dt / 0.5f, present_vr_stereo(cur, t))) {   /* (fading back in after one) */
-        draw_display(final_vw ? img[fin].tex : 0, final_vw ? final_vw : 640, final_vw ? final_vh : 512);   /* mirror */
-        overlay_render();
-        xr_frame_end_stereo();
+        VR_TM(3, draw_display(final_vw ? img[fin].tex : 0, final_vw ? final_vw : 640, final_vw ? final_vh : 512); overlay_render());   /* mirror */
+        VR_TM(4, xr_frame_end_stereo());
     } else {
         int inbetween = cur && snapshot_valid && t < 1.0f;
         if (!door) vr_fade = 1.0f;   /* (the cinema screen: menus, films - no fade) */
@@ -2641,7 +2924,37 @@ static uint64_t gs_present_vr(const struct Frame* cur, float t)
     }
     swap = SDL_GetTicksNS();
     SDL_GL_SwapWindow(g_window);
-    return SDL_GetTicksNS() - swap;
+    swap = SDL_GetTicksNS() - swap;
+    {   /* vr73 diagnosis (vr_debug_log): where a headset frame's time goes - the headset's wait, the
+           window mirror's buffer swap (a monitor's vsync can hold it), the rest of the work */
+        extern int g_vr_debug_log;
+        static uint64_t sw, ss, swmax, ssmax, sall, sallmax, last;
+        static unsigned n, nswap_long;
+        uint64_t all = SDL_GetTicksNS() - tw0;
+        sw += tw; ss += swap; sall += all;
+        if (tw > swmax) swmax = tw;
+        if (swap > ssmax) ssmax = swap;
+        if (all - tw - swap > sallmax) sallmax = all - tw - swap;
+        if (swap > 4000000) nswap_long++;
+        {   /* vr74: a slow headset frame (over 11 ms of our own work), step by step */
+            static unsigned nslow;
+            uint64_t work = all - tw - swap;
+            if (g_vr_debug_log && fr == 1 && work > 11000000 && nslow < 80) {
+                nslow++;
+                host_log("vr-diag: slow frame %llu: work %.1f ms = replay %.1f, eye image wait %.1f, eye copy %.1f, mirror %.1f, to headset %.1f, other %.1f (t %.2f)\n",
+                         (unsigned long long)frame_no, work / 1e6, vr_tm[0] / 1e6, vr_tm[1] / 1e6, vr_tm[2] / 1e6, vr_tm[3] / 1e6, vr_tm[4] / 1e6,
+                         (double)(work - vr_tm[0] - vr_tm[1] - vr_tm[2] - vr_tm[3] - vr_tm[4]) / 1e6, t);
+            }
+            for (int k = 0; k < 5; k++) vr_tm[k] = 0;
+        }
+        (void)last;
+        if (++n >= 450) {
+            if (g_vr_debug_log) host_log("vr-diag: frame time: headset wait avg %.1f max %.1f ms; window swap avg %.1f max %.1f ms (over 4 ms: %u); our work avg %.1f max %.1f ms\n",
+                                         sw / 1e6 / n, swmax / 1e6, ss / 1e6 / n, ssmax / 1e6, nswap_long, (sall - sw - ss) / 1e6 / n, sallmax / 1e6);
+            n = nswap_long = 0; sw = ss = swmax = ssmax = sall = sallmax = 0;
+        }
+    }
+    return swap;
 }
 
 /* show the frame at position t between the previous and the executed frame (t >= 1 or no
