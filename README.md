@@ -59,13 +59,52 @@ The gun does not reload by itself: when it is empty it only clicks.
 
 With an empty gun you can skip step 1.
 
+**How the game works in VR**
+
+- **Where you are**: you see the game in first person from Claire's (or Chris's, Steve's) eyes.
+  The left stick walks the way your head looks; the right stick turns you in steps.
+- **Aiming**: hold the **right grip** to raise the gun. The gun follows your hand: point and pull
+  the trigger. The red laser shows where the shot will hit.
+- **Twin guns** (the dual pistols): hold the right grip, then each trigger fires its own gun.
+  A quick pull during the last shot is kept and fired as soon as the game allows it.
+- **Knife**: squeeze the **left grip** to hold it and swing it like a real knife, edge first.
+  A slow move does not cut.
+- **Doors, cutscenes and menus** are shown on a big screen in front of you at eye height. Use the
+  stick and A/B as on a gamepad there. The 3D comes back by itself when you can play again.
+- **Stairs**: the snap turn is off while Claire goes up or down stairs; just keep the stick pushed.
+- **Lost your forward direction?** Long-press the headset's system button (Oculus button) to
+  recentre.
+- **Sitting or standing**: both work. Walking in your play area moves Claire too, and the game's
+  walls stop her.
+
 **HD textures (optional)**
 
-The game can use HD texture packs made for PCSX2 for this game (SLUS-20184). Put the pack's
-files in the `textures` folder next to the game (any subfolder, e.g.
-`textures/SLUS-20184/replacements`, as in PCSX2) and turn on `tex_hd = 1` in `save/recvx.ini`.
-`tex_hd_mb` sets the video memory for them (MB). A list of file names in `textures/ignore.txt`
-keeps those textures as the game's own. No texture pack comes with this mod.
+The game can show HD textures made by the community for the **PCSX2** (PS2 emulator) version of
+this game. You have to get a pack yourself; none comes with this mod.
+
+1. **Find a pack**: it must be an HD texture pack **for PCSX2** for *Resident Evil Code: Veronica X*
+   **NTSC-U, SLUS-20184** (the same disc as your `.iso`). Packs for other versions (PAL, Japanese,
+   Dreamcast, PS3/Xbox HD) do not match. Search for "Code Veronica X PCSX2 texture pack".
+2. **Check the files**: a PCSX2 pack is a folder of `.dds` or `.png` images with long hexadecimal
+   names such as `104bcba3e277e448-ac18592ba12c29a2-00002654.dds`. Do not rename them: the name is
+   how the game finds each texture.
+3. **Copy them**: put the pack's folder inside the `textures` folder next to `recvx_vr.exe`. Any
+   subfolder works, e.g. `textures\SLUS-20184\replacements\...` exactly as in PCSX2, or the
+   pack's own folder name.
+4. **Turn them on**: in `save\recvx.ini` set `tex_hd = 1` (already on in this release).
+5. **Start the game**: loading the list of files takes a few seconds the first time.
+
+Settings in `save\recvx.ini`:
+
+| Setting | What it does |
+|---|---|
+| `tex_hd` | 1 = use the HD textures, 0 = the game's own |
+| `tex_hd_mb` | Video memory for HD textures, in MB (default 600; less if the game stutters, more on a big GPU) |
+| `tex_hd_max` | Largest texture size kept, e.g. 1024 or 2048 (bigger ones are reduced: less memory, smoother) |
+
+To check it worked, start with `--log` and look in `recvx.log` for a line like
+`tex: 6568 replacement textures found`. A texture you do not like can be kept as the game's
+own: write its file name (one per line) in `textures\ignore.txt`.
 
 **View and movement**
 - Stereo 3D in first person, the camera in your head, at the headset's refresh rate (90 Hz and up).
