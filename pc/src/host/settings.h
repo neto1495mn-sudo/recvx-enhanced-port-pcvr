@@ -10,7 +10,7 @@
 extern "C" {
 #endif
 
-enum { SP_DISPLAY, SP_GAMEPLAY, SP_CONTROLS, SP_TPS, SP_AUDIO, SP_COOP, SP_EXTRAS, SP_COUNT };   /* in menu order */
+enum { SP_VR, SP_DISPLAY, SP_GAMEPLAY, SP_CONTROLS, SP_TPS, SP_AUDIO, SP_COOP, SP_EXTRAS, SP_COUNT };   /* in menu order */
 extern const char* const settings_pages[SP_COUNT];
 
 enum {

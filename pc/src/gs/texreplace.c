@@ -43,6 +43,7 @@ int g_tex_hd = 1;        /* ini tex_hd: use the packs */
 int g_tex_hd_log = 0;    /* ini tex_hd_log: log the names of textures without a replacement */
 int g_tex_hd_mb = 600;   /* ini tex_hd_mb: video memory for replacements (MB) */
 int g_tex_hd_max = 1024; /* ini tex_hd_max: largest size kept (bigger images are reduced) */
+int g_tex_hd_per_frame = 2;   /* ini tex_hd_per_frame: replacements converted per frame (vr119: 4 made frames of 25-38 ms on entering a room) */
 
 #define GL_COMPRESSED_RGBA_S3TC_DXT1_EXT 0x83F1
 #define GL_COMPRESSED_RGBA_S3TC_DXT3_EXT 0x83F2
@@ -400,7 +401,7 @@ static void queue_convert(Entry* e)
 void trep_frame_begin(void)
 {
     int done = 0;
-    while (nqueue && done < 4) {   /* a few per frame: no long hitch on entering a room */
+    while (nqueue && done < (g_tex_hd_per_frame > 0 ? g_tex_hd_per_frame : 1)) {   /* a few per frame: no long hitch on entering a room */
         Entry* e = queue[0];
         int dw = e->w, dh = e->ht;
         memmove(queue, queue + 1, (size_t)(--nqueue) * sizeof(queue[0]));

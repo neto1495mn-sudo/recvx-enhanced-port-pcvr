@@ -40,6 +40,21 @@ if(WIN32 AND RECVX_VR)
     set(BUILD_API_LAYERS OFF CACHE BOOL "" FORCE)
     FetchContent_Declare(openxr GIT_REPOSITORY https://github.com/KhronosGroup/OpenXR-SDK.git GIT_TAG release-1.1.63 GIT_SHALLOW TRUE)
     FetchContent_MakeAvailable(openxr)
+    # VR (vr117): an implicit API layer that fails to load or negotiate is skipped (the loader logs it) and VR starts
+    # without it - as the loader does when another layer loads after it. With only that layer (OBS's while OBS runs) the
+    # loader returned its error (-32, file access) and failed the whole instance: the game fell back to the desktop.
+    set(_recvx_xr_api "${openxr_SOURCE_DIR}/src/loader/api_layer_interface.cpp")
+    file(READ "${_recvx_xr_api}" _recvx_xr_src)
+    string(FIND "${_recvx_xr_src}" "recvx: skipped layers" _recvx_xr_done)
+    if(_recvx_xr_done EQUAL -1)
+        string(REPLACE "    // If we failed catastrophically for some reason, clean up everything.\n"
+                       "    // recvx: skipped layers (failed to load / negotiate, logged) do not fail the instance\n    if (found_all_layers) {\n        last_error = XR_SUCCESS;\n    }\n\n    // If we failed catastrophically for some reason, clean up everything.\n"
+                       _recvx_xr_new "${_recvx_xr_src}")
+        if(_recvx_xr_new STREQUAL _recvx_xr_src)
+            message(FATAL_ERROR "OpenXR loader: the skipped-layer change no longer applies (loader source changed)")
+        endif()
+        file(WRITE "${_recvx_xr_api}" "${_recvx_xr_new}")
+    endif()
     # mingw-w64's winapifamily.h lacks WINAPI_PARTITION_SYSTEM, which the loader tests under -Werror=undef
     target_compile_options(openxr_loader PRIVATE -Wno-undef -DWINAPI_PARTITION_SYSTEM=0)
 endif()
@@ -185,7 +200,7 @@ target_link_libraries(recvx PRIVATE imgui SDL3::SDL3 miniupnpc::miniupnpc natpmp
 if(WIN32)
     target_link_libraries(recvx PRIVATE ws2_32 pthread shell32 winmm)   # co-op UDP (src/net); clock_gettime (winpthreads)
     if(TARGET openxr_loader)
-        target_link_libraries(recvx PRIVATE openxr_loader advapi32 pathcch)
+        target_link_libraries(recvx PRIVATE openxr_loader advapi32 pathcch winhttp)   # winhttp: the VR update check (src/host/update.c)
     endif()
     # Same address window as Linux: fixed image base, no ASLR relocation; large-address-aware
     # gives the 32-bit exe 4 GB on 64-bit Windows (Linux already uses addresses above 2 GB). -static: libstdc++,

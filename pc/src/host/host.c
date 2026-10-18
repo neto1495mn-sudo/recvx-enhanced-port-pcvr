@@ -290,6 +290,7 @@ int main(int argc, char** argv)
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMEPAD))
         host_fatal("SDL_Init: %s", SDL_GetError());
     bind_apply_source();   /* Gamepad only: gamepads also in the background */
+    { extern void update_check(void); update_check(); }   /* VR: a newer release on GitHub (host/update.c) */
 
     if (!iso_given && (!g_config.iso_path[0] || !cdvd_open_image(g_config.iso_path))) {
         pick_iso();

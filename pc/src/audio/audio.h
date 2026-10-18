@@ -21,3 +21,5 @@ void     audio_stream_volume(int voice, int vol_cdb);
 uint64_t audio_stream_position(int voice);
 int      audio_stream_finished(int voice);
 int      adx_afs_locate(int ptid, int fid, uint32_t* lsn, uint32_t* size);
+/* VR (vr112): one heartbeat ("lub-dub", 0.9 s; heartbeat.wav next to the game if there), volume 0..100 */
+void     audio_vr_heart(int volume);

@@ -22,7 +22,7 @@
 
 extern SDL_Window* g_window;
 
-const char* const settings_pages[SP_COUNT] = { "DISPLAY", "GAMEPLAY", "CONTROLS", "THIRD PERSON", "AUDIO", "CO-OP", "EXTRAS" };
+const char* const settings_pages[SP_COUNT] = { "VR", "DISPLAY", "GAMEPLAY", "CONTROLS", "THIRD PERSON", "AUDIO", "CO-OP", "EXTRAS" };
 
 /* ---------------------------------------------------------------- appliers (main thread) */
 void settings_apply_window(void)
@@ -73,6 +73,8 @@ static void import_card(void)
 static const char* in_session(void) { return g_coop.state != COOP_OFF ? "Not during a co-op session." : NULL; }
 
 /* cheats (F2): the request bits are taken by the game thread at the frame hand-off */
+/* VR: the game has no way out from its menus (vr111) - quit as the window's close does: settings saved, exit handlers run */
+static void quit_desktop(void) { SDL_Event e; SDL_zero(e); e.type = SDL_EVENT_QUIT; SDL_PushEvent(&e); }
 static void heal(void) { __atomic_or_fetch(&g_cheat.request, CHEAT_HEAL, __ATOMIC_ACQ_REL); }
 static void give(void) { if (g_cheat.give_id) __atomic_or_fetch(&g_cheat.request, CHEAT_GIVE, __ATOMIC_ACQ_REL); }
 static void spawn(void) { __atomic_or_fetch(&g_cheat.request, CHEAT_SPAWN, __ATOMIC_ACQ_REL); }
@@ -108,8 +110,33 @@ static const char* const noclips[] = { "Off", "Through walls", "Walls + fly" };
 static const char* const sources[] = { "Auto", "Keyboard/mouse only", "Gamepad only" };
 static const char* const extras[] = { "Off", "Up to 1 per room", "Up to 2 per room", "Up to 3 per room" };
 
+/* vr116: the VR comfort page - the few VR options to set before playing (the rest stay in recvx.ini) */
+extern int g_vr_turn, g_vr_sight, g_vr_comfort, g_vr_res;
+static const int vr_turns[] = { 0, 15, 30, 45, 60, 90 };
+static int vr_turn_get(void) { int b = 0; for (int i = 0; i < (int)SDL_arraysize(vr_turns); i++) if (abs(vr_turns[i] - g_vr_turn) < abs(vr_turns[b] - g_vr_turn)) b = i; return b; }
+static void vr_turn_set(int v) { if (v >= 0 && v < (int)SDL_arraysize(vr_turns)) g_vr_turn = vr_turns[v]; }
+static const char* vr_turn_name(int v, char* b, int n) { if (v <= 0) return "Smooth"; SDL_snprintf(b, n, "%d degrees", vr_turns[v]); return b; }
+/* vr118: three sights - Laser, Dot, Off (vr_sight 2, 1, 0; 3, both, shows as Laser) - and three vignettes - Off, Medium,
+   Strong (vr_comfort 0, 2, 3; 1, weak, shows as Medium) */
+static const int vr_sight_v[] = { 2, 1, 0 }, vr_comfort_v[] = { 0, 2, 3 };
+static const char* const vr_sights[] = { "Laser", "Dot", "Off" };
+static const char* const vr_comforts[] = { "Off", "Medium", "Strong" };
+static int vr_sight_get(void) { return g_vr_sight >= 2 ? 0 : g_vr_sight == 1 ? 1 : 2; }
+static void vr_sight_set(int v) { if (v >= 0 && v < 3) g_vr_sight = vr_sight_v[v]; }
+static int vr_comfort_get(void) { return g_vr_comfort <= 0 ? 0 : g_vr_comfort <= 2 ? 1 : 2; }
+static void vr_comfort_set(int v) { if (v >= 0 && v < 3) g_vr_comfort = vr_comfort_v[v]; }
+
 #define V(x) ((int*)&(x))
 const Setting g_settings[] = {
+    { SP_VR, "Snap turn", NULL, 0, 5, 1, .get = vr_turn_get, .set = vr_turn_set, .name = vr_turn_name, .group = "COMFORT",
+      .help = "Right stick: turn in steps of this many degrees, or Smooth for a continuous turn." },
+    { SP_VR, "Comfort vignette", NULL, 0, 2, 1, vr_comforts, .get = vr_comfort_get, .set = vr_comfort_set,
+      .help = "Darkens the edges of the view only while you walk with the stick or turn; walking in your room does not." },
+    { SP_VR, "Sight", NULL, 0, 2, 1, vr_sights, .get = vr_sight_get, .set = vr_sight_set, .group = "WEAPONS",
+      .help = "Laser: a faint red beam from the gun to where the shot hits. Dot: a small ring there. Off: no sight." },
+    { SP_VR, "Resolution", V(g_vr_res), 50, 200, 10, .fmt = "%d%%", .group = "PICTURE",
+      .help = "Each eye's resolution, in percent of what the headset recommends. Higher is sharper and heavier for the GPU." },
+
     { SP_DISPLAY, "Fullscreen", V(g_config.fullscreen), 0, 1, 1, .help = "Also F11.", .apply = settings_apply_window, .group = "WINDOW" },
     { SP_DISPLAY, "Window size", NULL, 0, 5, 1, .get = size_get, .set = size_set, .name = size_name, .locked = fullscreen_on, .apply = settings_apply_window },
     { SP_DISPLAY, "VSync", V(g_config.vsync), 0, 1, 1, .apply = apply_vsync },
@@ -134,7 +161,9 @@ const Setting g_settings[] = {
     { SP_DISPLAY, "Native textures", V(g_config.native_tex), 0, 1, 1, .help = "Textures uploaded once and bound afterwards instead of re-uploaded on every switch." },
     { SP_DISPLAY, "Cull off-screen models", V(g_config.model_cull), 0, 1, 1, .help = "As on the PS2. Off: models no longer pop at the screen edges. Third person never culls." },
 
-    { SP_GAMEPLAY, "Skip intro", V(g_config.skip_intro), 0, 1, 1, .flags = SET_RESTART, .help = "Boot straight into the title menu: no warning screen, logos or intro movie.", .group = "GENERAL" },
+    { SP_GAMEPLAY, "Exit to desktop", NULL, .flags = SET_ACTION, .apply = quit_desktop, .group = "GENERAL",
+      .help = "Closes the game now. Progress since the last save is lost." },
+    { SP_GAMEPLAY, "Skip intro", V(g_config.skip_intro), 0, 1, 1, .flags = SET_RESTART, .help = "Boot straight into the title menu: no warning screen, logos or intro movie." },
     { SP_GAMEPLAY, "Skip door animations", V(g_config.skip_doors), 0, 1, 1, .help = "Room transitions use the game's load screen instead of the door, stairs or ladder animation." },
     { SP_GAMEPLAY, "Battle Game unlocked", V(g_config.battle_unlocked), 0, 1, 1,
       .help = "The title menu offers BATTLE GAME without a finished playthrough. Saves and records stay as they are; off: only after a cleared game, as the original." },

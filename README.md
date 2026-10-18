@@ -26,12 +26,61 @@ decompilation by AshfordFamily. All credit for the PC port goes to them.
 
 ### How to play in VR
 
-1. Download `RE-Code-Veronica-X-PC-Port-VR-v1.0-windows.zip` from the [Releases](https://github.com/neto1495mn-sudo/recvx-enhanced-port-pcvr/releases)
+1. Download `RE-Code-Veronica-X-PC-Port-VR-v1.1-windows.zip` from the [Releases](https://github.com/neto1495mn-sudo/recvx-enhanced-port-pcvr/releases)
    page and unpack it anywhere.
 2. Start your OpenXR runtime (tested only on a Quest 2 through Virtual Desktop / VDXR).
 3. Run `PLAY_VR.bat`. On the first start, pick your own `.iso` of the game (PS2, NTSC-U, SLUS-20184).
 4. Optional, **HD textures**: download the [texture pack (SLUS-20184.zip)](https://disk.yandex.ru/d/_ILWwt29zG2bDw), unpack it into the
    `textures` folder (see "HD textures" below).
+5. Before playing, set the comfort options in the title screen: **OPTION → ENHANCED SETTINGS → VR**
+   (see "The VR page" below).
+
+When a newer version is out, the game says so when it starts (see "Update check" below).
+
+### What's new in 1.1
+
+- **The VR page** in the game's menu (title screen and in game, also F1): snap turn, comfort
+  vignette, sight, resolution.
+- **Comfort vignette**: dark edges only while you walk with the stick or turn (Off, Medium, Strong).
+- **Hits you can feel**: the controller on the side of the hit vibrates (front: one knock, behind:
+  two); held by a zombie, the vibration follows its bites, "check, check", and only the one holding you.
+- **The zombie no longer goes through your face**: while it holds or hits you, the camera moves back,
+  away from its body, smoothly and never into a wall (`vr_close_push`, cm; `vr_bite_push` adds a small
+  push on each bite, 0 = off).
+- **Life colours**: a yellow (Caution) or orange flash at each hit, the red edge in Danger, a
+  **purple** edge when poisoned (red and purple by turns, softer, when both), with a **heartbeat
+  sound** (`vr_heart_sound`, 0 = off; put a `heartbeat.wav` next to the game to use your own).
+- **Ammo fixes**: a magazine taken out with B only goes back to the same gun (a gun could get 200
+  rounds after Steve's part); B only drops the magazine when there is ammo to reload with (Steve's
+  Lugers lost their rounds); B again puts a stuck magazine back.
+- **Exit to desktop** in OPTION → ENHANCED SETTINGS → GAMEPLAY.
+- **Twin guns**: a quick pull during the last shot is kept and fired as soon as the game allows it.
+- **Stairs**: the view no longer turns by itself; only the snap turn is locked.
+- **OBS / VR overlays**: a broken OpenXR layer no longer drops the game to the desktop.
+- **HD textures**: lighter stutter on entering a room (`tex_hd_per_frame`, see below).
+- **Update check** at start.
+- Game fixes from aikatore's port 0.5.2 (no crash in four rooms with the free camera, the item box,
+  an enemy bug).
+
+### The VR page
+
+In the title screen (or in game): **OPTION → ENHANCED SETTINGS**, the first page, **VR**:
+
+| Option | Choices |
+|---|---|
+| Snap turn | Smooth, 15, 30, 45, 60 or 90 degrees (right stick) |
+| Comfort vignette | Off, Medium, Strong – dark edges only while walking with the stick or turning |
+| Sight | Laser, Dot (a small ring where the shot hits), Off |
+| Resolution | 50% to 200% of what the headset recommends |
+
+The other VR options stay in `save/recvx.ini`.
+
+### Update check
+
+When the game starts it asks GitHub for the latest release of this project (one request, nothing
+about you is sent; at most a few seconds, nothing happens without a network). If a newer version is
+out, a window on the PC offers to open the download page. Set `update_check = 0` in
+`save/recvx.ini` to turn it off.
 
 **Controls (Touch controllers)**
 
@@ -114,9 +163,31 @@ Settings in `save\recvx.ini`:
 | `tex_hd_mb` | Video memory for HD textures, in MB (default 600; less if the game stutters, more on a big GPU) |
 | `tex_hd_max` | Largest texture size kept, e.g. 1024 or 2048 (bigger ones are reduced: less memory, smoother) |
 
+**HD textures and stutter.** With a big pack the game can stutter for about half a second when
+you enter a room or something new appears. It is not your GPU: the pack's images are read from the
+disk, and the ones without mipmaps (the smaller copies VR needs so that far textures do not
+shimmer) are converted while you play, a few per frame. Each conversion takes a few milliseconds of
+a frame the headset wants in 11. What helps:
+
+| Setting | Effect |
+|---|---|
+| `tex_hd_per_frame` (1–4, default 2) | Textures converted per frame. Fewer: lighter stutter that lasts longer, the room gets sharp a bit later. |
+| `tex_hd_max` (e.g. 1024) | Bigger images are reduced to this size: less to read and convert. |
+| `tex_hd_mb` | Video memory for HD textures; less if the stutter comes back while playing. |
+| `tex_hd = 0` | No HD textures: to check whether a stutter comes from them. |
+
+Loading and converting the textures in the background (no stutter at all) is planned.
+
 To check it worked, start with `--log` and look in `recvx.log` for a line like
 `tex: 6568 replacement textures found`. A texture you do not like can be kept as the game's
 own: write its file name (one per line) in `textures\ignore.txt`.
+
+**If the game starts on the desktop instead of the headset**
+
+- Start your OpenXR runtime first (Virtual Desktop / VDXR, Meta Quest Link or SteamVR set as the active OpenXR runtime).
+- `recvx.log` saying `xrCreateInstance ... failed`: another program's OpenXR layer is in the way. Since this version a
+  layer that fails to load is skipped, so this should no longer stop VR (it did with OBS running). If it still happens,
+  close OBS and other VR overlays, or use the free *OpenXR API Layers GUI* to see and disable broken layers.
 
 **View and movement**
 - Stereo 3D in first person, the camera in your head, at the headset's refresh rate (90 Hz and up).

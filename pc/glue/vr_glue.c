@@ -40,6 +40,7 @@ extern uint64_t SDL_GetTicksNS(void);
 #include <string.h>
 #include <stdio.h>
 #include <stdarg.h>
+#include "vr_watch.h"   /* vr108: the VR watch */
 
 int g_vr_scale = 100;        /* ini vr_scale: game units per metre, in tenths (100 = 10 units/m: the character is ~17 tall) */
 int g_vr_eye_height = 155;   /* ini vr_eye_height: the camera's height above the player's feet, tenths of units */
@@ -81,6 +82,8 @@ static float frame_Wg[16];   /* this frame's recentred tracking space -> world *
 static float vr_yaw;         /* the view's heading (radians, forward (-sin, 0, -cos)) */
 static unsigned rec_seen;    /* xr_recenter_gen at the last heading reset */
 static int snap_held;        /* the right stick is still out after a snap turn */
+static uint64_t turn_ms;     /* vr116: the last snap or smooth turn (the comfort vignette) */
+int vr_playing(void);
 static uint64_t cam_ms;      /* when the VR camera last ran (SDL ticks): it runs only in play, not in menus */
 static float vr_za, vr_zb;   /* the GS depth constants the frame is drawn with (Ps2_zbuff_a/b after tps_camera's njClipZ) */
 
@@ -275,30 +278,198 @@ static float hit_side, hit_front;     /* the last hit's direction relative to th
 static uint64_t hit_ms;               /* when (SDL ticks), 0 = none */
 static int last_hp = -1;
 
+/* the nearest live enemy (the one that hit or holds her): its index, and its way relative to the
+   view (side: +1 right, -1 left; front: +1 ahead, -1 behind); -1 if none within 6 m */
+extern int g_vr_debug_log;
+static void make_Wg(float Wg[16]);
+int vr_game_wall(float x0, float z0, float* x, float* z);
+static float close_push[2];       /* vr112: the camera moved back from an enemy at the eyes (world) */
+static float bite_off[2];         /* vr115: and the small push of each bite (world) */
+static uint64_t bite_ms;          /* vr115: the holder's last bite (vr_enemy_sound) */
+int g_vr_bite_push = 0;           /* ini vr_bite_push: each bite pushes the camera back this many cm; 0 = off */
+int g_vr_close_push = 35;         /* ini vr_close_push: keep an enemy's body this many cm from the eyes; 0 = off */
+static int enemy_way(float* side, float* front)
+{
+    float best = 1e9f, dx = 0, dz = 0;
+    int bi = -1;
+    for (int i = 0; i < sys->ewk_n; i++) {
+        BH_PWORK* e = &ene[i];
+        float x, z, d;
+        if (!(e->flg & 0x1) || (e->flg & 0x2)) continue;
+        x = e->px - plp->px; z = e->pz - plp->pz; d = x * x + z * z;
+        if (d < best) { best = d; dx = x; dz = z; bi = i; }
+    }
+    if (bi >= 0 && best < 60.0f * 60.0f && best > 1e-4f) {
+        float l = sqrtf(best), c = cosf(vr_yaw), sn = sinf(vr_yaw);
+        dx /= l; dz /= l;
+        *side = dx * c - dz * sn;      /* right (cos, 0, -sin) */
+        *front = -dx * sn - dz * c;    /* forward (-sin, 0, -cos) */
+        return bi;
+    }
+    *side = 0; *front = 1;
+    return -1;
+}
+
+/* vr110: a vibration from where the hit came - split between the hands as a sound between two
+   speakers (only the right hand for a hit fully on the right, both alike in front or behind),
+   one hard knock from the front, two quick ones from behind, stronger for more damage */
+static uint64_t hap_second_ms;
+static float hap_second[2];
+static void hit_haptics(int dmg, float side, float front)
+{
+    float k = 0.4f + dmg / 60.0f, w[2];
+    if (!g_vr_haptics) return;
+    k = k > 1.0f ? 1.0f : k;
+    side = side > 1.0f ? 1.0f : side < -1.0f ? -1.0f : side;
+    w[0] = sqrtf((1.0f + side) * 0.5f) * 1.3f; w[1] = sqrtf((1.0f - side) * 0.5f) * 1.3f;   /* 0 right, 1 left */
+    for (int h = 0; h < 2; h++) {
+        float amp = k * (w[h] > 1.0f ? 1.0f : w[h]);
+        if (amp < 0.08f) continue;
+        if (front >= 0) xr_haptic(h, amp, 130);
+        else { xr_haptic(h, amp, 60); hap_second[h] = amp; }
+    }
+    if (front < 0) { uint64_t t = SDL_GetTicks(); hap_second_ms = (t ? t : 1) + 150; }
+}
+
+/* vr113: held (mode0 4/5), the holder's sounds are felt as they play (sdfunc.c CallEnemySeMain) - its
+   bites' "check, check" a short hard knock on its side, its grab and letting go a softer one (vr114: the
+   numbers from the vr113 log; the other enemies' sounds not) */
+static uint64_t hold_sound_ms;
+void vr_enemy_sound(int enemy_no, int se_no)
+{
+    float s, f, w0, w1, amp;
+    int n = se_no & 0xFF;
+    if (!plp || !(plp->mode0 == 4 || plp->mode0 == 5) || !vr_on()) return;
+    if (enemy_no != enemy_way(&s, &f)) return;   /* vr114: only the one holding her (the others' groans did too, vr113 log) */
+    if (n == 0) amp = 0.9f;                                            /* the bite (bank 3, 0: each followed by her life falling) */
+    else if (n == 42 || n == 34 || n == 40 || n == 32) amp = 0.5f;     /* its grab and its letting go */
+    else return;
+    w0 = sqrtf((1.0f + s) * 0.5f); w1 = sqrtf((1.0f - s) * 0.5f);
+    if (n == 0) bite_ms = SDL_GetTicks();   /* vr115: the bite's push back */
+    if (!g_vr_haptics) return;
+    if (w0 > 0.15f) xr_haptic(0, amp * w0, n == 0 ? 45 : 60);
+    if (w1 > 0.15f) xr_haptic(1, amp * w1, n == 0 ? 45 : 60);
+    hold_sound_ms = SDL_GetTicks();
+}
+
 static void hit_update(void)
 {
     uint64_t now = SDL_GetTicks();
     float env = 0, a = g_vr_hit_tilt * (3.14159265f / 180.0f);
     if (plp && last_hp >= 0 && plp->hp < last_hp && last_hp - plp->hp < 400) {
-        float best = 1e9f, dx = 0, dz = 0;
-        for (int i = 0; i < sys->ewk_n; i++) {   /* the nearest live enemy is the one that hit */
-            BH_PWORK* e = &ene[i];
-            float x, z, d;
-            if (!(e->flg & 0x1) || (e->flg & 0x2)) continue;
-            x = e->px - plp->px; z = e->pz - plp->pz; d = x * x + z * z;
-            if (d < best) { best = d; dx = x; dz = z; }
-        }
-        if (best < 60.0f * 60.0f && best > 1e-4f) {
-            float l = sqrtf(best), c = cosf(vr_yaw), sn = sinf(vr_yaw);
-            dx /= l; dz /= l;
-            hit_side = dx * c - dz * sn;      /* right (cos, 0, -sin) */
-            hit_front = -dx * sn - dz * c;    /* forward (-sin, 0, -cos) */
-        } else { hit_side = 0; hit_front = 1; }
+        enemy_way(&hit_side, &hit_front);   /* the nearest live enemy is the one that hit */
         hit_ms = now ? now : 1;
+        hit_haptics(last_hp - plp->hp, hit_side, hit_front);
+        {   /* vr112: a hit in Caution - one flash in the life's colour (the game's status screen, sub1.c:
+               60-119 yellow, 30-59 orange; poisoned, Danger: their own pulsing edge) */
+            extern volatile int g_vr_flash_col;
+            extern volatile uint64_t g_vr_flash_ms;
+            if (!(plp->stflg & 0x280000) && plp->hp >= 30 && plp->hp < 120) { g_vr_flash_col = plp->hp >= 60 ? 1 : 2; g_vr_flash_ms = now; }
+        }
         {
             extern void host_log(const char* fmt, ...);
             host_log("vr: hit (life %d -> %d), from %s\n", last_hp, plp->hp, hit_side > 0.3f ? "the right" : hit_side < -0.3f ? "the left" : hit_front > 0 ? "the front" : "behind");
         }
+    }
+    if (hap_second_ms && now >= hap_second_ms) {   /* the second knock of a hit from behind */
+        for (int h = 0; h < 2; h++) if (hap_second[h] > 0) xr_haptic(h, hap_second[h], 60);
+        hap_second[0] = hap_second[1] = 0; hap_second_ms = 0;
+    }
+    {   /* vr110: held by an enemy (mode0 5, player.c bhCPM0_enedam): a pulse from its side every
+           0.4 s; and the diagnosis of the hold (for the escape, vr111 - out once it has told us):
+           which enemy, its states as they change, how long, what ended it */
+        static int held, hold_e = -1, e_last[5];
+        static uint64_t hold_ms, pulse_ms;
+        static unsigned frames;
+        int now_held = plp && (plp->mode0 == 4 || plp->mode0 == 5);   /* vr112: held is 4 (vr111 log: every zombie hold), 5 too */
+        if (now_held) {
+            float s, f;
+            int ei = enemy_way(&s, &f);
+            if (!held) {
+                hold_ms = now; frames = 0; hold_e = ei; e_last[0] = -1;
+                if (g_vr_debug_log) vr_log("vr-diag: hold: start - enemy %d (id %d) %s, her life %d, her mode %d/%d/%d\n", ei, ei >= 0 ? ene[ei].id : -1,
+                                           s > 0.3f ? "on the right" : s < -0.3f ? "on the left" : f > 0 ? "in front" : "behind", plp->hp, plp->mode0, plp->mode1, plp->mode2);
+            }
+            frames++;
+            if (g_vr_haptics && now >= pulse_ms && now - hold_sound_ms > 1200) {   /* (vr113: only when its sounds are not felt) */
+                float w0 = sqrtf((1.0f + s) * 0.5f), w1 = sqrtf((1.0f - s) * 0.5f);
+                if (w0 > 0.15f) xr_haptic(0, 0.55f * w0, 70);
+                if (w1 > 0.15f) xr_haptic(1, 0.55f * w1, 70);
+                pulse_ms = now + 400;
+            }
+            if (g_vr_debug_log && hold_e >= 0) {
+                BH_PWORK* e = &ene[hold_e];
+                if (e->mode0 != e_last[0] || e->mode1 != e_last[1] || e->mode2 != e_last[2] || e->mode3 != e_last[3] || e->hp != e_last[4]) {
+                    vr_log("vr-diag: hold: frame %u: enemy mode %d/%d/%d/%d life %d (motion %d frame %d), her life %d mode %d/%d/%d\n", frames, e->mode0, e->mode1, e->mode2, e->mode3,
+                           e->hp, e->mtn_no, e->frm_no >> 16, plp->hp, plp->mode0, plp->mode1, plp->mode2);
+                    e_last[0] = e->mode0; e_last[1] = e->mode1; e_last[2] = e->mode2; e_last[3] = e->mode3; e_last[4] = e->hp;
+                }
+            }
+        } else if (held && g_vr_debug_log) {
+            BH_PWORK* e = hold_e >= 0 ? &ene[hold_e] : NULL;
+            vr_log("vr-diag: hold: end after %u frames (%.1f s) - her life %d mode %d/%d/%d; enemy mode %d/%d/%d/%d life %d\n", frames, (now - hold_ms) / 1000.0f,
+                   plp ? plp->hp : -1, plp ? plp->mode0 : -1, plp ? plp->mode1 : -1, plp ? plp->mode2 : -1,
+                   e ? e->mode0 : -1, e ? e->mode1 : -1, e ? e->mode2 : -1, e ? e->mode3 : -1, e ? e->hp : -1);
+        }
+        held = now_held;
+    }
+    {   /* vr112: an enemy's body at the eyes - an attack or a hold puts a zombie's head where the VR eyes
+           are (the game's camera was far; vr111 log: 3-15 cm from the eyes for ~3 s of a hold). The camera
+           moves back from it to vr_close_push cm, smoothly and not through the game's walls, and the edge
+           darkens if it is still within 15 cm. Only the camera: the game is not touched.
+           (vr116: the vr111 diagnosis line is out - the move back was found right, vr115) */
+        extern volatile float g_vr_close_dark;
+        VrPose h;
+        static float away[2];
+        float Wg[16], eye[3], nb[3] = { 0, 0, 0 }, s = g_vr_scale / 10.0f, best = 1e9f, want[2] = { 0, 0 }, keep = g_vr_close_push / 100.0f, dark = 0;
+        int bi = -1, bn = -1;
+        if (plp && xr_head_pose(&h)) {
+            make_Wg(Wg);
+            for (int k = 0; k < 3; k++) eye[k] = Wg[k] * h.px + Wg[4 + k] * h.py + Wg[8 + k] * h.pz + Wg[12 + k];
+            eye[0] -= close_push[0] + bite_off[0]; eye[2] -= close_push[1] + bite_off[1];   /* (where the eyes are without the move back) */
+            for (int i = 0; i < sys->ewk_n; i++) {
+                BH_PWORK* e = &ene[i];
+                float x = e->px - eye[0], z = e->pz - eye[2];
+                if (!(e->flg & 0x1) || (e->flg & 0x2) || !e->mlwP || !e->mlwP->owP) continue;
+                if (x * x + z * z > (2.0f * s) * (2.0f * s)) continue;   /* (only enemies within 2 m) */
+                for (int j = 0; j < (int)e->mlwP->obj_num && j < 64; j++) {
+                    const float* m = e->mlwP->owP[j].mtx;
+                    float dx = m[12] - eye[0], dy = m[13] - eye[1], dz = m[14] - eye[2], d = dx * dx + dy * dy + dz * dz;
+                    if (d < best) { best = d; bi = i; bn = j; nb[0] = m[12]; nb[1] = m[13]; nb[2] = m[14]; }
+                }
+            }
+            best = bi >= 0 ? sqrtf(best) / s : 1e9f;
+            if (bi >= 0) {   /* vr115: the way back is away from the enemy's body (the way the vibration feels it), not from
+                                the nearest part: a bite's head is at her neck, beside or behind the eyes - the camera went sideways */
+                float dx = eye[0] - ene[bi].px, dz = eye[2] - ene[bi].pz, l = sqrtf(dx * dx + dz * dz);
+                if (l > 0.02f * s) { away[0] = dx / l; away[1] = dz / l; }
+                else { away[0] = sinf(vr_yaw); away[1] = cosf(vr_yaw); }   /* (right on her: back from the view) */
+            }
+            if (keep > 0.0f && bi >= 0 && best < keep) {   /* back, to keep its body that many cm from the eyes */
+                float m = (keep - best) * s;
+                want[0] = away[0] * m; want[1] = away[1] * m;
+            }
+            for (int k = 0; k < 2; k++) close_push[k] += (want[k] - close_push[k]) * 0.12f;   /* vr114: slower (~0.3 s), out and back - easier on the stomach */
+            {   /* vr115: each bite of the one holding her a small push back, quickly in, ~0.2 s out (vr_bite_push) */
+                uint64_t tb = SDL_GetTicks() - bite_ms;
+                float env = !bite_ms || g_vr_bite_push <= 0 || tb > 800 ? 0.0f : tb < 50 ? tb / 50.0f : expf(-(tb - 50.0f) / 180.0f);
+                float m = g_vr_bite_push / 100.0f * s * env;
+                bite_off[0] = away[0] * m; bite_off[1] = away[1] * m;
+            }
+            if (fabsf(close_push[0] + bite_off[0]) + fabsf(close_push[1] + bite_off[1]) > 1e-3f) {   /* not into a wall: through the game's own wall check, from her */
+                float x = plp->px + close_push[0] + bite_off[0], z = plp->pz + close_push[1] + bite_off[1];
+                vr_game_wall(plp->px, plp->pz, &x, &z);
+                close_push[0] = x - plp->px - bite_off[0]; close_push[1] = z - plp->pz - bite_off[1];
+            }
+            if (bi >= 0) {   /* still close with the move back: the edge darkens */
+                float dx = eye[0] + close_push[0] + bite_off[0] - nb[0], dy = eye[1] - nb[1], dz = eye[2] + close_push[1] + bite_off[1] - nb[2];
+                float de = sqrtf(dx * dx + dy * dy + dz * dz) / s;
+                dark = de < 0.15f ? (0.15f - de) / 0.10f : 0.0f;
+                if (dark > 1.0f) dark = 1.0f;
+            }
+        } else { close_push[0] *= 0.88f; close_push[1] *= 0.88f; bite_off[0] = bite_off[1] = 0; }
+        g_vr_close_dark += (dark - g_vr_close_dark) * 0.4f;
+        if (g_vr_close_dark < 0.01f && dark <= 0.0f) g_vr_close_dark = 0.0f;
     }
     if (plp) last_hp = plp->hp;
     if (hit_ms) {
@@ -552,6 +723,7 @@ static void aim_walk_update(void)
         if (gx * gx + gz * gz > 1e-6f && gx * gx + gz * gz < 9.0f) {
             static unsigned n; static float tot;
             shift_src = 2; body_shift(-gx, -gz); shift_src = 0;
+            if (g_vr_debug_log) vw_undo(sqrtf(gx * gx + gz * gz) / (g_vr_scale / 10.0f), plp->mode2);   /* vr108 watch */
             tot += sqrtf(gx * gx + gz * gz);
             if (g_vr_debug_log && (n++ % 150) == 0) vr_log("vr-diag: aiming: the game's own moves undone (%.2f m so far)\n", tot / (g_vr_scale / 10.0f));
         }
@@ -609,6 +781,29 @@ static void aim_walk_update(void)
    the game's own reload (bhSearchBullet) fills it. */
 static int mag_out = -1, mag_kept;       /* the inventory slot whose magazine is out, its rounds */
 static int mag_held, reloading;
+static unsigned* mag_inv;                 /* vr107: and whose inventory (the character), and which item */
+static unsigned mag_item;
+static const char* inv_who;               /* vr107 diagnosis: who changed the inventory this frame (inv_watch) */
+#define ITEM_OF(v) (((v) >> 16) & 0xFF)
+
+/* vr107: the rounds of a magazine taken out go back to that gun only - the same item in the same
+   character's inventory, wherever the game moved it; else nowhere. Put back by slot number alone,
+   they could land on another item after the game changed the inventory (a character switch, a
+   scene, a sort): a gun that has no ammo was seen with 200 rounds after Steve's part */
+static void mag_return(const char* why)
+{
+    unsigned* p = swork.pip;
+    int slot = -1, max = (sys->st_flg & 0x8000000) ? 10 : 8;
+    if (mag_out < 0) return;
+    if (p && p == mag_inv) {
+        if (mag_out > 0 && ITEM_OF(p[mag_out]) == mag_item) slot = mag_out;
+        else for (int i = 2; i < max + 2 && slot < 0; i++) if (ITEM_OF(p[i]) == mag_item) slot = i;
+    }
+    if (slot >= 0) { p[slot] = (p[slot] & 0xFFFF0000u) | (unsigned)mag_kept; inv_who = "VR: magazine rounds back"; }
+    vr_log("vr: magazine back (%s): %d rounds of item %u %s slot %d (taken from slot %d%s)\n", why, mag_kept, mag_item,
+           slot >= 0 ? "to" : "dropped - not found, was", slot >= 0 ? slot : mag_out, mag_out, p == mag_inv ? "" : ", another character's inventory");
+    mag_out = -1; mag_kept = 0;
+}
 static unsigned* gun_slot(void)
 {
     S_WORK* st = &swork;
@@ -628,14 +823,23 @@ static void reload_update(void)
     if (!g_vr_manual_reload || !xr_input(&in)) return;
     b = (in.buttons & VRB_B) != 0; gr = in.lgrip > 0.5f;
     g = gun_slot();
-    if (mag_out >= 0 && (!g || (int)(g - swork.pip) != mag_out)) {   /* the gun changed: its rounds go back */
-        if (swork.pip && mag_out > 0) { swork.pip[mag_out] = (swork.pip[mag_out] & 0xFFFF0000u) | (unsigned)mag_kept; }
-        mag_out = -1; mag_kept = 0;
+    if (mag_out >= 0 && (!g || (int)(g - swork.pip) != mag_out || swork.pip != mag_inv || ITEM_OF(*g) != mag_item))   /* the gun changed: its rounds go back */
+        mag_return("the gun in hand changed");
+    if (g && b && !b_was && mag_out >= 0 && box_ammo() <= 0) {   /* vr111: B again with no ammo to reload: the magazine back in */
+        *g = (*g & 0xFFFF0000u) | (unsigned)mag_kept;
+        vr_log("vr: magazine back in with B (%d rounds - no ammo to reload with)\n", mag_kept);
+        mag_out = -1; mag_kept = 0; inv_who = "VR: B again, magazine back in";
+        b_was = b; g_was = gr;
+        return;
     }
-    if (g && b && !b_was && mag_out < 0) {   /* B: the magazine out */
+    if (g && b && !b_was && mag_out < 0 && box_ammo() <= 0 && g_vr_debug_log)
+        vr_log("vr: B - magazine kept in: no ammo in the inventory for this gun (e.g. Steve's Lugers)\n");
+    if (g && b && !b_was && mag_out < 0 && box_ammo() > 0) {   /* B: the magazine out (vr111: only when it can be reloaded - the game's ammo list) */
         mag_out = (int)(g - swork.pip);
         mag_kept = (int)(*g & 0xFFFF);
+        mag_inv = swork.pip; mag_item = ITEM_OF(*g);
         *g &= 0xFFFF0000u;
+        inv_who = "VR: B, magazine out";
         CallPlayerWeaponSeEx((NJS_POINT3*)&plp->mlwP->owP[9].mtx[12], 263, 0);
         if (g_vr_haptics) xr_haptic(0, 0.4f, 40);
         vr_log("vr: magazine out (%d rounds kept)\n", mag_kept);
@@ -653,6 +857,7 @@ static void reload_update(void)
         reloading = 1;
         bhSearchBullet();
         reloading = 0;
+        inv_who = "VR: hand reload (the game's reload from the boxes)";
         g = gun_slot();   /* (the game sorts the inventory after a reload) */
         if (g && (*g & 0xFFFF)) sys->gm_flg &= ~0x40000;
         mag_held = 0;
@@ -747,10 +952,11 @@ static void heading_update(void)
         if (g_vr_turn > 0) {
             if (fabsf(in.rx) > 0.7f && !snap_held) {
                 vr_yaw -= (in.rx > 0 ? 1.0f : -1.0f) * g_vr_turn * (3.14159265f / 180.0f); snap_held = 1;
+                turn_ms = SDL_GetTicks();   /* vr116: the comfort vignette */
                 if (g_vr_debug_log) { static unsigned n; if (n++ < 30) vr_log("vr-diag: snap turn before the hands (frame gen %u)\n", cam_gen); }
             }
             else if (fabsf(in.rx) < 0.3f) snap_held = 0;
-        } else if (fabsf(in.rx) > 0.15f) vr_yaw -= in.rx * (3.14159265f / 180.0f) * 4.0f;   /* ~120 deg/s at 30 fps */
+        } else if (fabsf(in.rx) > 0.15f) { vr_yaw -= in.rx * (3.14159265f / 180.0f) * 4.0f; turn_ms = SDL_GetTicks(); }   /* ~120 deg/s at 30 fps */
     }
 }
 
@@ -813,7 +1019,7 @@ void vr_camera(void)
             host_log("vr: camera %s\n", names[why]);
             last = why;
         }
-        if (why) { extern volatile int g_vr_danger; g_vr_danger = 0; vr_active = 0; mk_n = 0; return; }
+        if (why) { extern volatile int g_vr_danger, g_vr_poison; extern volatile float g_vr_close_dark, g_vr_move_dark; g_vr_danger = g_vr_poison = 0; g_vr_close_dark = g_vr_move_dark = 0; vr_active = 0; mk_n = 0; return; }
     }
 
     heading_update();   /* (done already this frame by vr_pad_frame, before the hands) */
@@ -824,6 +1030,21 @@ void vr_camera(void)
     if (g_vr_danger_fx) {   /* the renderer's danger vignette: life in Danger (the game's limp) */
         extern volatile int g_vr_danger;
         g_vr_danger = plp->exp0 && ((EXP_WORK*)plp->exp0)->dmlvl >= 2 && plp->hp > 0;
+        { extern volatile int g_vr_poison; g_vr_poison = (plp->stflg & 0x280000) && plp->hp > 0; }   /* vr112: poisoned (the game's own flags, sub1.c) */
+    }
+    {   /* vr116: the comfort vignette (gs_gl.c) - how much she moves by the stick or turns now, 0..1: in in ~0.1 s, out in
+           ~0.2 s; walking in the room is not counted (the body's own move does not make one sick) */
+        extern volatile float g_vr_move_dark;
+        extern int g_vr_comfort;
+        VrInput in;
+        float want = 0.0f;
+        if (g_vr_comfort && xr_input(&in) && vr_playing() && plp->mode0 == 1) {
+            float st = sqrtf(in.lx * in.lx + in.ly * in.ly);
+            if (st > 0.2f) want = st > 1.0f ? 1.0f : st;
+            if (SDL_GetTicks() - turn_ms < 250) want = 1.0f;
+        }
+        g_vr_move_dark += (want - g_vr_move_dark) * (want > g_vr_move_dark ? 0.35f : 0.2f);
+        if (want <= 0.0f && g_vr_move_dark < 0.01f) g_vr_move_dark = 0.0f;
     }
 
     /* Wg: recentred tracking space (metres) -> world: scaled, turned with the body, the
@@ -932,6 +1153,7 @@ static int dual_equipped(void)
    a quick pull there was lost; and a shot the game fires late is still that hand's (vr101 log: a
    150 ms window hid both flashes - sound and a round, no shot) */
 static uint64_t pull_ms[2], decided_ms[2];
+static int vw_fire_vr, vw_fire_finger;   /* vr108 watch: the fire button sent, a trigger pulled */
 static int pull_was[2], hand_fired[2];
 static void trigger_pulls(const VrInput* in)
 {
@@ -940,7 +1162,7 @@ static void trigger_pulls(const VrInput* in)
         int t = (s ? in->ltrig : in->rtrig) > 0.5f;
         if (t && !pull_was[s]) pull_ms[s] = now ? now : 1;   /* (now | 1 was one ms ahead: a pull dropped at once) */
         pull_was[s] = t;
-        if (pull_ms[s] && now - pull_ms[s] > 700) pull_ms[s] = 0;
+        if (pull_ms[s] && now - pull_ms[s] > 700) { if (g_vr_debug_log && dual_equipped()) { unsigned* g = gun_slot(); vw_pull_dropped(s, g ? (int)(*g & 0xFFFF) : -1); } pull_ms[s] = 0; }
     }
 }
 
@@ -1116,6 +1338,7 @@ unsigned vr_tps_keys(void)
     if (in.buttons & VRB_X) k |= 128;    /* TPS_K_MAP */
     if (in.rgrip > 0.5f) k |= 256;       /* TPS_K_AIM */
     if (in.rtrig > 0.5f && !(vr_playing() && knife_equipped() && g_vr_slash_speed > 0)) k |= 512;   /* TPS_K_FIRE (the knife cuts by swinging) */
+    vw_fire_vr = (k & 512) != 0; vw_fire_finger = in.ltrig > 0.5f || in.rtrig > 0.5f;   /* vr108 watch */
     if ((in.buttons & VRB_B) && !(g_vr_manual_reload && vr_playing() && gun_slot())) k |= 1024;   /* TPS_K_CANCEL (with a gun in hand B drops the magazine) */
     return k;
 }
@@ -1133,6 +1356,7 @@ static void make_Wg(float Wg[16])
         play_base(b);
         Wg[12] = b[0]; Wg[13] = b[1] + g_vr_eye_height / 10.0f; Wg[14] = b[2];
         frame_body[0] = Wg[12]; frame_body[1] = Wg[13]; frame_body[2] = Wg[14];
+        Wg[12] += close_push[0] + bite_off[0]; Wg[14] += close_push[1] + bite_off[1];   /* vr112: back from an enemy at the eyes (vr115: and each bite) */
     }
     if (g_vr_roomscale) {   /* the head over the body: the room's walking is the body's (body_follow) */
         VrPose h;
@@ -1711,6 +1935,50 @@ void vr_diag_frame(void)
         }
         if (wait > 0 && --wait == 0) vr_log("vr-diag: trigger result: %u shot(s) in 20 frames\n", diag_shots - shots0);
         trig_was = t;
+    }
+    {   /* vr107 diagnosis: the inventory watch - each slot whose item or count changed since the last
+           frame, and who changed it (our reload code names itself in inv_who; anything else is the
+           game: a pickup, a scene, the item box, combining, its own reload) */
+        static unsigned* last_p;
+        static unsigned last_v[12];
+        unsigned* p = swork.pip;
+        if (p != last_p) {
+            if (p) {
+                char l[200];
+                int n = 0;
+                for (int i = 2; i < 12; i++) n += snprintf(l + n, sizeof(l) - n, " %u:%u", ITEM_OF(p[i]), p[i] & 0xFFFF);
+                vr_log("vr-diag: inventory: now that of character %d (room RM_%04d, %s), item:count%s\n", sys->ply_id,
+                       sys->stg_no * 1000 + sys->rom_no * 10 + sys->rcase, (sys->st_flg & 0x1) ? "event-running" : "play", l);
+                for (int i = 0; i < 12; i++) last_v[i] = p[i];
+            }
+            last_p = p;
+        } else if (p) {
+            for (int i = 2; i < 12; i++)
+                if (p[i] != last_v[i]) {
+                    vr_log("vr-diag: inventory: slot %d item %u -> %u (flags %03x -> %03x), count %u -> %u - by %s (character %d, room RM_%04d, %s, weapon %d, mode %d)\n",
+                           i, ITEM_OF(last_v[i]), ITEM_OF(p[i]), (last_v[i] >> 24) & 0xFFF, (p[i] >> 24) & 0xFFF, last_v[i] & 0xFFFF, p[i] & 0xFFFF,
+                           inv_who ? inv_who : "the game", sys->ply_id, sys->stg_no * 1000 + sys->rom_no * 10 + sys->rcase,
+                           (sys->st_flg & 0x1) ? "event-running" : (sys->st_flg & 0x200) ? "message" : "play", plp->wpnr_no, plp->mode2);
+                    vw_inv(i, ITEM_OF(last_v[i]), ITEM_OF(p[i]), last_v[i] & 0xFFFF, p[i] & 0xFFFF, ITEM_OF(p[i]) < 156 ? (unsigned)itemdata[ITEM_OF(p[i])].type : 0,
+                           inv_who, !(sys->st_flg & 0x201));   /* vr108 watch */
+                    last_v[i] = p[i];
+                }
+            if (p[0] != last_v[0]) { vr_log("vr-diag: inventory: equipped slot %u -> %u\n", last_v[0], p[0]); last_v[0] = p[0]; }
+        }
+        inv_who = NULL;
+    }
+    {   /* vr108: the VR watch's frame (vr_watch.c) */
+        VwFrame f;
+        unsigned* g = gun_slot();
+        float k = g_vr_scale / 10.0f;
+        f.x = plp->px / k; f.z = plp->pz / k; f.ay = (unsigned short)plp->ay;
+        f.m0 = plp->mode0; f.m1 = plp->mode1; f.m2 = plp->mode2;
+        f.room = sys->stg_no * 1000 + sys->rom_no * 10 + sys->rcase; f.chr = sys->ply_id;
+        f.event = (sys->st_flg & 0x1) != 0; f.message = (sys->st_flg & 0x200) != 0;
+        f.gun_rounds = g ? (int)(*g & 0xFFFF) : -1;
+        f.mag_pending = mag_out >= 0; f.mag_inv_ok = swork.pip == mag_inv;
+        f.fire_vr = vw_fire_vr; f.fire_finger = vw_fire_finger;
+        vw_frame(&f);
     }
 }
 
