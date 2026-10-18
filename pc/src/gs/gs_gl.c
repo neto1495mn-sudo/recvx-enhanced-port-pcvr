@@ -2141,8 +2141,18 @@ const char* g_vr_status;   /* shown by the overlay: why this frame is on the cin
    red edge over each eye, pulsing like a heartbeat, centred on the eye's own view axis */
 volatile int g_vr_danger;
 int g_vr_danger_fx = 1;   /* ini vr_danger_fx */
+/* vr112: the life's colours (vr_glue.c): poisoned - a purple edge pulsing as the red one (red and purple
+   by turns, softer, when also in Danger); a hit in Caution - one yellow (life 60-119) or orange (30-59)
+   flash; an enemy's body at the eyes - a dark edge (0..1); the heartbeat's sound with the pulse */
+volatile int g_vr_poison, g_vr_flash_col;
+volatile uint64_t g_vr_flash_ms;
+volatile float g_vr_close_dark;
+volatile float g_vr_move_dark;   /* vr116: walking with the stick / turning, 0..1 (vr_glue.c) */
+int g_vr_comfort = 0;            /* ini vr_comfort: the comfort vignette while moving - 0 off, 1 weak, 2 medium, 3 strong */
+int g_vr_heart_sound = 60;   /* ini vr_heart_sound: its volume, 0 = none */
+void audio_vr_heart(int volume);
 static GLuint vig_prog;
-static GLint uv_tan, uv_amt;
+static GLint uv_tan, uv_amt, uv_col, uv_rng;
 static const char* vig_vs =
     "#version 330 core\n"
     "uniform vec4 u_tan;\n"   /* l, r, u, d of the eye */
@@ -2154,8 +2164,8 @@ static const char* vig_vs =
     "}\n";
 static const char* vig_fs =
     "#version 330 core\n"
-    "in vec2 v_t; uniform float u_amt; out vec4 o;\n"
-    "void main(){ float r = length(v_t); float a = smoothstep(0.45, 1.25, r) * u_amt; o = vec4(0.75, 0.0, 0.0, a); }\n";
+    "in vec2 v_t; uniform float u_amt; uniform vec4 u_col; uniform vec2 u_rng; out vec4 o;\n"
+    "void main(){ float r = length(v_t); float a = smoothstep(u_rng.x, u_rng.y, r) * u_amt; o = vec4(u_col.rgb, a); }\n";
 
 /* VR markers (VrView.mk*, vr_glue.c) over each eye: the aiming dot (a small white dot,
    vr_sight_size hundredths of a degree across) and the holster's ammo count (6 cm high digits on a dark
@@ -2488,27 +2498,62 @@ static void draw_box(const VrView* v, const float M[16], const VrEye* E, int w, 
     clip_distances(0);
 }
 
+static void vignette_pass(const VrEye* E, float amt, float r, float g, float b, float r0, float r1)
+{
+    glUseProgram(vig_prog);
+    glUniform4f(uv_tan, E->l, E->r, E->u, E->d);
+    glUniform1f(uv_amt, amt);
+    glUniform4f(uv_col, r, g, b, 1.0f);
+    glUniform2f(uv_rng, r0, r1);   /* where the edge starts and where it is full (the view's tangent) */
+    glBindVertexArray(present_vao);
+    glDrawArrays(0x0005 /* GL_TRIANGLE_STRIP */, 0, 4);
+}
+
 static void draw_vignette(const VrEye* E, int w, int h)
 {
-    float t, beat, amt;
-    if (!g_vr_danger || !g_vr_danger_fx) return;
+    static unsigned last_beat;
+    float comfort_amt, comfort_r0 = 0, comfort_r1 = 1;
+    uint64_t now = SDL_GetTicks();
+    unsigned bi = (unsigned)(now / 900);
+    float t, beat, amt = 0, r = 0, g = 0, b = 0, dark = g_vr_close_dark;
+    int danger = g_vr_danger && g_vr_danger_fx, poison = g_vr_poison && g_vr_danger_fx;
+    t = (float)(now % 900) / 1000.0f;   /* ~67 beats a minute: lub-dub, pause */
+    beat = expf(-((t - 0.05f) * (t - 0.05f)) / 0.004f) + 0.6f * expf(-((t - 0.30f) * (t - 0.30f)) / 0.005f);
+    if (danger && poison) {   /* red and purple by turns, softer */
+        if (bi & 1) { r = 0.45f; g = 0.0f; b = 0.6f; } else { r = 0.75f; g = 0.0f; b = 0.0f; }
+        amt = 0.12f + 0.22f * beat;
+    } else if (poison) { r = 0.45f; g = 0.0f; b = 0.6f; amt = 0.18f + 0.30f * beat; }
+    else if (danger) { r = 0.75f; g = 0.0f; b = 0.0f; amt = 0.18f + 0.30f * beat; }   /* light: at most ~half opaque at the very edge */
+    else if (g_vr_flash_col && g_vr_danger_fx && now - g_vr_flash_ms < 500) {   /* one flash a hit */
+        float d = (float)(now - g_vr_flash_ms);
+        float env = d < 60.0f ? d / 60.0f : expf(-(d - 60.0f) / 130.0f);
+        if (g_vr_flash_col == 1) { r = 0.85f; g = 0.75f; b = 0.0f; } else { r = 0.9f; g = 0.4f; b = 0.0f; }
+        amt = 0.45f * env;
+    }
+    if ((danger || poison) && g_vr_heart_sound > 0 && bi != last_beat) audio_vr_heart(g_vr_heart_sound);   /* (once a beat: the eyes share it) */
+    last_beat = bi;
+    {   /* vr116: the comfort vignette - darker edges, a narrower view, while walking with the stick or turning */
+        static const float lv[4][3] = { { 0, 0, 0 }, { 0.80f, 1.25f, 0.75f }, { 0.62f, 1.10f, 0.90f }, { 0.45f, 0.95f, 1.0f } };
+        int c = g_vr_comfort > 0 && g_vr_comfort < 4 ? g_vr_comfort : 0;
+        float md = g_vr_move_dark;
+        if (c && md > 0.0f) comfort_amt = lv[c][2] * (md > 1.0f ? 1.0f : md), comfort_r0 = lv[c][0], comfort_r1 = lv[c][1];
+        else comfort_amt = 0.0f;
+    }
+    if (amt <= 0.0f && dark <= 0.0f && comfort_amt <= 0.0f) return;
     if (!vig_prog) {
         vig_prog = compile(vig_vs, vig_fs);
         uv_tan = glGetUniformLocation(vig_prog, "u_tan");
         uv_amt = glGetUniformLocation(vig_prog, "u_amt");
+        uv_col = glGetUniformLocation(vig_prog, "u_col");
+        uv_rng = glGetUniformLocation(vig_prog, "u_rng");
     }
-    t = fmodf((float)(SDL_GetTicks() % 100000) / 1000.0f, 0.9f);   /* ~67 beats a minute: lub-dub, pause */
-    beat = expf(-((t - 0.05f) * (t - 0.05f)) / 0.004f) + 0.6f * expf(-((t - 0.30f) * (t - 0.30f)) / 0.005f);
-    amt = 0.18f + 0.30f * beat;   /* light: at most ~half opaque at the very edge */
     glViewport(0, 0, w, h);
     glEnable(GL_BLEND);
     glBlendEquationSeparate(GL_FUNC_ADD, GL_FUNC_ADD);
     glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ZERO, GL_ONE);
-    glUseProgram(vig_prog);
-    glUniform4f(uv_tan, E->l, E->r, E->u, E->d);
-    glUniform1f(uv_amt, amt);
-    glBindVertexArray(present_vao);
-    glDrawArrays(0x0005 /* GL_TRIANGLE_STRIP */, 0, 4);
+    if (comfort_amt > 0.0f) vignette_pass(E, comfort_amt, 0.0f, 0.0f, 0.0f, comfort_r0, comfort_r1);
+    if (amt > 0.0f) vignette_pass(E, amt, r, g, b, 0.45f, 1.25f);
+    if (dark > 0.0f) vignette_pass(E, 0.9f * (dark > 1.0f ? 1.0f : dark), 0.0f, 0.0f, 0.0f, 0.45f, 1.25f);   /* an enemy's body at the eyes */
     glBindVertexArray(vao);
     glDisable(GL_BLEND);
 }

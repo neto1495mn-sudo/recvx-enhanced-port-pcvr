@@ -227,6 +227,7 @@ static void settings_window(void)
     ImGui::SetNextWindowSize(ImVec2(460, 0), ImGuiCond_FirstUseEver);
     if (!ImGui::Begin("Resident Evil Code: Veronica X  -  settings (F1)  -  " RECVX_VERSION, &visible)) { ImGui::End(); return; }
 
+    if (ImGui::CollapsingHeader("VR", ImGuiTreeNodeFlags_DefaultOpen)) changed |= settings_imgui(SP_VR);   /* vr116 */
     if (ImGui::CollapsingHeader("Display", ImGuiTreeNodeFlags_DefaultOpen)) {
         changed |= settings_imgui(SP_DISPLAY);
         ImGui::TextDisabled("Output %d x %d, %.1f fps presented", ww, wh, ImGui::GetIO().Framerate);

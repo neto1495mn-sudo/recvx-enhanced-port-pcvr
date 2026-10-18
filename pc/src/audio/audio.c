@@ -266,3 +266,59 @@ int audio_stream_finished(int id)
     SDL_UnlockAudioStream(v->stream);
     return done;
 }
+
+/* VR heartbeat (vr112, gs_gl.c draw_vignette: one call a beat while the life's edge pulses - Danger,
+   poison): a "lub-dub" at 50 and 300 ms, as the edge's pulse. heartbeat.wav next to the game is
+   used instead when it is there; else ours, made here (low thumps with a little overtone, so the
+   headset's small speakers carry them). Its own stream, beside the game's sound. */
+static SDL_AudioStream* heart_stream;
+static int16_t* heart_pcm;
+static int heart_bytes, heart_tried;
+
+static void heart_make(void)
+{
+    const char* base = SDL_GetBasePath();
+    char path[1024];
+    SDL_AudioSpec ws, dst = { SDL_AUDIO_S16, 2, 48000 };
+    Uint8* wb = NULL;
+    Uint32 wl = 0;
+    heart_tried = 1;
+    SDL_snprintf(path, sizeof(path), "%sheartbeat.wav", base ? base : "");
+    if (SDL_LoadWAV(path, &ws, &wb, &wl)) {
+        Uint8* cb = NULL;
+        int cl = 0;
+        if (SDL_ConvertAudioSamples(&ws, wb, (int)wl, &dst, &cb, &cl)) { heart_pcm = (int16_t*)cb; heart_bytes = cl; }
+        SDL_free(wb);
+        host_log("vr: heartbeat sound from %s (%d ms)\n", path, heart_bytes / 192);
+    }
+    if (!heart_pcm) {
+        int n = 48000 * 9 / 10;   /* 0.9 s, one beat of the edge's pulse */
+        heart_pcm = (int16_t*)SDL_calloc((size_t)n * 2, sizeof(int16_t));
+        if (!heart_pcm) return;
+        for (int i = 0; i < n; i++) {
+            float t = i / 48000.0f, v = 0.0f;
+            const float at[2] = { 0.05f, 0.30f }, amp[2] = { 1.0f, 0.65f };
+            for (int k = 0; k < 2; k++) {
+                float d = t - at[k];
+                if (d < 0.0f || d > 0.25f) continue;
+                {
+                    float env = (d < 0.006f ? d / 0.006f : 1.0f) * expf(-d / 0.055f);
+                    float f = 55.0f + 35.0f * expf(-d / 0.03f);   /* a falling thump */
+                    v += amp[k] * env * (sinf(6.2831853f * f * d) + 0.35f * sinf(6.2831853f * 2.0f * f * d));
+                }
+            }
+            heart_pcm[i * 2] = heart_pcm[i * 2 + 1] = (int16_t)(v * 0.8f * 32767.0f / 1.35f);
+        }
+        heart_bytes = n * 4;
+        host_log("vr: heartbeat sound: our own (no heartbeat.wav)\n");
+    }
+    if (dev && (heart_stream = SDL_CreateAudioStream(&dst, &dst)) != NULL) SDL_BindAudioStream(dev, heart_stream);
+}
+
+void audio_vr_heart(int volume)
+{
+    if (!heart_tried) heart_make();
+    if (!heart_stream || !heart_pcm || volume <= 0) return;
+    SDL_SetAudioStreamGain(heart_stream, volume / 100.0f * g_config.sfx_volume / 100.0f);
+    if (SDL_GetAudioStreamQueued(heart_stream) < heart_bytes / 4) SDL_PutAudioStreamData(heart_stream, heart_pcm, heart_bytes);
+}

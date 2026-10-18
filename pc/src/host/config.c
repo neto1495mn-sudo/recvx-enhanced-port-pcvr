@@ -1,6 +1,6 @@
 /* User settings: <save_dir>/recvx.ini, "key = value" lines. */
 #include "xr.h"
-extern int g_vr_scale, g_vr_eye_height, g_vr_fov, g_vr_turn, g_vr_hand_aim, g_vr_fx_fix, g_vr_gun_min, g_vr_hand_offset, g_vr_slash_speed, g_vr_hit_tilt, g_vr_danger_fx, g_vr_eye_shape, g_vr_screen_angle, g_vr_left_mirror, g_vr_dmg_head, g_vr_dmg_body, g_vr_dmg_arm, g_vr_dmg_leg, g_vr_recoil, g_vr_haptics, g_vr_hud_dist, g_vr_hud_angle, g_vr_sight, g_vr_sight_size, g_vr_holster, g_vr_hud_y, g_vr_roomscale, g_vr_manual_reload, g_vr_prompts, g_vr_dmg_body_max, g_vr_wake_shots, g_vr_precise_hits, g_vr_barrel_pitch, g_vr_hud_dist, g_vr_hud_angle, g_vr_aim_walk, g_vr_cam_steady, g_vr_move_direct;
+extern int g_vr_scale, g_vr_eye_height, g_vr_fov, g_vr_turn, g_vr_hand_aim, g_vr_fx_fix, g_vr_gun_min, g_vr_hand_offset, g_vr_slash_speed, g_vr_hit_tilt, g_vr_danger_fx, g_vr_eye_shape, g_vr_screen_angle, g_vr_left_mirror, g_vr_dmg_head, g_vr_dmg_body, g_vr_dmg_arm, g_vr_dmg_leg, g_vr_recoil, g_vr_haptics, g_vr_hud_dist, g_vr_hud_angle, g_vr_sight, g_vr_sight_size, g_vr_holster, g_vr_hud_y, g_vr_roomscale, g_vr_manual_reload, g_vr_prompts, g_vr_dmg_body_max, g_vr_wake_shots, g_vr_precise_hits, g_vr_barrel_pitch, g_vr_hud_dist, g_vr_hud_angle, g_vr_aim_walk, g_vr_cam_steady, g_vr_move_direct, g_vr_heart_sound, g_vr_close_push, g_vr_bite_push, g_vr_comfort, g_update_check, g_tex_hd_per_frame;
 extern int g_tex_hd, g_tex_hd_log, g_tex_hd_mb, g_tex_hd_max, g_fast_doors, g_vr_debug_log, g_vr_door_fade, g_vr_shadows, g_vr_debug_cores, g_vr_interpolate, g_vr_interp_body;   /* gs/texreplace.c */
 static int g_vr_cfg_ver;   /* ini vr_cfg_ver: the VR settings' version, to move older saved values to new defaults */   /* pc/glue/vr_glue.c */
 #include "../ps2_platform.h"
@@ -91,6 +91,12 @@ static const struct { const char* key; int* val; int lo, hi; } keys[] = {
     { "vr_slash_speed", &g_vr_slash_speed, 0, 1000 },
     { "vr_hit_tilt", &g_vr_hit_tilt, 0, 20 },
     { "vr_danger_fx", &g_vr_danger_fx, 0, 1 },
+    { "vr_heart_sound", &g_vr_heart_sound, 0, 100 },   /* vr112: the heartbeat with the Danger / poison edge, volume; 0 = none */
+    { "vr_close_push", &g_vr_close_push, 0, 60 },
+    { "vr_bite_push", &g_vr_bite_push, 0, 15 },
+    { "vr_comfort", &g_vr_comfort, 0, 3 },
+    { "update_check", &g_update_check, 0, 1 },        /* vr119: at start, ask GitHub whether a newer VR release is out (host/update.c) */
+    { "tex_hd_per_frame", &g_tex_hd_per_frame, 1, 4 }, /* vr119: HD textures converted (mipmaps) per frame - fewer: lighter, longer stutter */            /* vr116: dark edges while walking with the stick / turning: 0 off, 1 weak, 2 medium, 3 strong */       /* vr115: each bite pushes the camera back this many cm; 0 = off */     /* vr112: the camera keeps an enemy's body this many cm from the eyes; 0 = off */
     { "vr_eye_shape", &g_vr_eye_shape, 0, 1 },
     { "vr_screen_angle", &g_vr_screen_angle, 20, 120 },
     { "vr_left_mirror", &g_vr_left_mirror, 0, 3 },
