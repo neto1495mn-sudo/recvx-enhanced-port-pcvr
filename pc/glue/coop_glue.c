@@ -1921,6 +1921,9 @@ static void apply_snapshots(void)
             fprintf(stderr, "coop: enemy %d dead here, alive in the host's game: alive again\n", s->idx);
         /* not the host's hit marker (flg & 4): it would come back as a hit of ours */
         ep->flg = s->flg & ~0x4; ep->flg2 = s->flg2 & ~0x4; ep->stflg = s->stflg; ep->mdflg = s->mdflg;
+        /* morphing (mdflg 2) draws between the shapes obj_a and obj_b, which only the enemy's own code picks (Alexia's
+           tentacles, babies, third form): a puppet that never ran that code has none - the guest crashed drawing it */
+        if (!ep->obj_a || !ep->obj_b) ep->mdflg &= ~0x2;
         ep->px = s->px; ep->py = s->py; ep->pz = s->pz;
         ep->ax = s->ax; ep->ay = s->ay; ep->az = s->az;
         ep->mtn_no = s->mtn_no; ep->frm_no = s->frm_no; ep->mtn_md = s->mtn_md; ep->hp = s->hp;
