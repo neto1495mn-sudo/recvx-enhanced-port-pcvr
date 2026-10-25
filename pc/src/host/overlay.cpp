@@ -15,6 +15,7 @@ extern "C" {
 #include "net/coop_proto.h"   /* REC_*: what the host keeps for us */
 #include "../gs/stream.h"
 #include "tps.h"
+extern "C" int xr_active(void);   /* vr132 */
 #include "menu_mouse.h"
 #include "bindings.h"
 #include "settings.h"
@@ -97,6 +98,53 @@ static void calib_pattern(void)
     ImGui::Dummy(ImVec2(2 * w + gap, sq + 2 * gap));
 }
 
+/* one row of the settings list (vr121: also the launcher's graphics tab) */
+static bool setting_widget(int i)
+{
+    const Setting* s = &g_settings[i];
+    bool changed = false;
+    const char* lock = settings_locked(s);
+    char label[96], val[96];
+    int v = settings_get(s), hi = settings_hi(s), st = s->step > 0 ? s->step : 1;
+    SDL_snprintf(label, sizeof label, "%s%s##set%d", s->label, (s->flags & SET_RESTART) ? " (next start)" : "", i);
+    ImGui::BeginDisabled(lock != nullptr);
+    if (s->flags & SET_ACTION) {
+        if (ImGui::Button(label)) settings_act(s);
+    } else if (settings_is_bool(s)) {
+        bool b = v != 0;
+        if (ImGui::Checkbox(label, &b)) { settings_set(s, b); changed = true; }
+    } else if (s->names || (s->name && (s->count || (hi - s->lo) / st <= 10))) {   /* a list (tenths: a slider) */
+        if (ImGui::BeginCombo(label, settings_value(s, val, sizeof val), ImGuiComboFlags_HeightLarge)) {
+            for (int k = s->lo; k <= hi; k += st) {
+                char nm[96];
+                if (ImGui::Selectable(s->name ? s->name(k, nm, sizeof nm) : s->names[k - s->lo], k == v)) { settings_set(s, k); changed = true; }
+            }
+            ImGui::EndCombo();
+        }
+    } else {   /* a number; a value name (tenths) is shown as the slider's text */
+        char fmt[96];
+        const char* f = s->fmt ? s->fmt : "%d";
+        if (s->name) {
+            char* o = fmt;
+            for (const char* c = s->name(v, val, sizeof val); *c && o < fmt + sizeof fmt - 2; c++) { if (*c == '%') *o++ = '%'; *o++ = *c; }
+            *o = 0;
+            f = fmt;
+        }
+        if (ImGui::SliderInt(label, &v, s->lo, hi, f)) {
+            settings_set(s, st > 1 ? (v + st / 2) / st * st : v);
+            changed = true;
+        }
+    }
+    ImGui::EndDisabled();
+    if ((ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled) || ((s->flags & SET_CALIB) && ImGui::IsItemActive())) && (s->help || lock)) {
+        ImGui::BeginTooltip();
+        ImGui::Text("%s%s%s", lock ? lock : "", lock && s->help ? "\n" : "", s->help ? s->help : "");
+        if (s->flags & SET_CALIB) calib_pattern();
+        ImGui::EndTooltip();
+    }
+    return changed;
+}
+
 static bool settings_imgui(int page, bool all = true)
 {
     bool changed = false;
@@ -104,45 +152,7 @@ static bool settings_imgui(int page, bool all = true)
         const Setting* s = &g_settings[i];
         if (s->page != page || !(all || (s->flags & SET_F1))) continue;
         if (s->group && all) ImGui::SeparatorText(s->group);
-        const char* lock = settings_locked(s);
-        char label[96], val[96];
-        int v = settings_get(s), hi = settings_hi(s), st = s->step > 0 ? s->step : 1;
-        SDL_snprintf(label, sizeof label, "%s%s##set%d", s->label, (s->flags & SET_RESTART) ? " (next start)" : "", i);
-        ImGui::BeginDisabled(lock != nullptr);
-        if (s->flags & SET_ACTION) {
-            if (ImGui::Button(label)) settings_act(s);
-        } else if (settings_is_bool(s)) {
-            bool b = v != 0;
-            if (ImGui::Checkbox(label, &b)) { settings_set(s, b); changed = true; }
-        } else if (s->names || (s->name && (s->count || (hi - s->lo) / st <= 10))) {   /* a list (tenths: a slider) */
-            if (ImGui::BeginCombo(label, settings_value(s, val, sizeof val), ImGuiComboFlags_HeightLarge)) {
-                for (int k = s->lo; k <= hi; k += st) {
-                    char nm[96];
-                    if (ImGui::Selectable(s->name ? s->name(k, nm, sizeof nm) : s->names[k - s->lo], k == v)) { settings_set(s, k); changed = true; }
-                }
-                ImGui::EndCombo();
-            }
-        } else {   /* a number; a value name (tenths) is shown as the slider's text */
-            char fmt[96];
-            const char* f = s->fmt ? s->fmt : "%d";
-            if (s->name) {
-                char* o = fmt;
-                for (const char* c = s->name(v, val, sizeof val); *c && o < fmt + sizeof fmt - 2; c++) { if (*c == '%') *o++ = '%'; *o++ = *c; }
-                *o = 0;
-                f = fmt;
-            }
-            if (ImGui::SliderInt(label, &v, s->lo, hi, f)) {
-                settings_set(s, st > 1 ? (v + st / 2) / st * st : v);
-                changed = true;
-            }
-        }
-        ImGui::EndDisabled();
-        if ((ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled) || ((s->flags & SET_CALIB) && ImGui::IsItemActive())) && (s->help || lock)) {
-            ImGui::BeginTooltip();
-            ImGui::Text("%s%s%s", lock ? lock : "", lock && s->help ? "\n" : "", s->help ? s->help : "");
-            if (s->flags & SET_CALIB) calib_pattern();
-            ImGui::EndTooltip();
-        }
+        changed |= setting_widget(i);
     }
     return changed;
 }
@@ -641,7 +651,7 @@ void overlay_render(void)
     /* without a window ImGui leaves the cursor alone (menu_mouse_update shows/hides it) */
     if (windows) ImGui::GetIO().ConfigFlags &= ~ImGuiConfigFlags_NoMouseCursorChange;
     else ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange;
-    bool crosshair = g_tps.on && g_tps.crosshair && g_tps.cam_active && g_tps.aiming;
+    bool crosshair = g_tps.on && g_tps.crosshair && g_tps.cam_active && g_tps.aiming && !xr_active();   /* vr132: none in VR (it was drawn over the mirror) */
     const char* hint = lobby_hint();
     bool tag = coop_on && tag_flags && !cs.trade_open && (g_coop.nametag || cs.busy_kind || cs.trade_hint[0]);   /* co-op: the partner is drawn in the frame shown */
     bool ping = g_config.show_ping && coop_on && cs.state == COOP_CONNECTED;   /* co-op: next to the frame rate */
@@ -704,4 +714,454 @@ void overlay_render(void)
     }
     ImGui::Render();
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+}
+
+/* vr122: the launcher, after the classic PC ones - Max Payne 1/2 (a small window, the characters' portrait the
+   whole height on one side, Play / Options / Quit beside it) and Tomb Raider 2013 (the logo on top, the settings in
+   tabs). The portrait is launcher.png next to the game if there (the player's own picture - no game art ships with
+   the mod), else a dark panel. One PLAY button: the game is played in VR. The options on their own page, in
+   Portuguese. Main thread, before xr_init; the game's window itself, small and centred, given back its own size /
+   full screen on PLAY. ini launcher = 1 (--no-launcher skips it). Returns 0 to quit, 1 to play. */
+extern "C" int g_vr_request, g_launcher, g_tex_hd, g_tex_hd_per_frame, g_vr_turn, g_vr_comfort, g_vr_sight, g_vr_res;
+extern "C" char g_update_tag[64];
+extern "C" int g_update_newer;
+extern "C" unsigned char* stbi_load(const char* filename, int* x, int* y, int* comp, int req_comp);
+extern "C" void stbi_image_free(void* p);
+extern "C" {
+#include "../render/gl_loader.h"
+}
+
+static ImFont *lf_ui, *lf_bold, *lf_title;
+
+static const Setting* setting_by_label(const char* label)
+{
+    for (int i = 0; i < g_settings_n; i++)
+        if (!strcmp(g_settings[i].label, label)) return &g_settings[i];
+    return nullptr;
+}
+
+/* vr134: the launcher in English (the default), Portuguese or Spanish (ini launcher_lang 0, 1, 2) */
+enum { L_PLAY, L_HINT, L_OPTIONS, L_EXIT, L_TAB_VR, L_TAB_GFX, L_TAB_TEX, L_TURN, L_COMFORT, L_SIGHT, L_VRRES, L_FULLSCREEN, L_WINSIZE, L_INTRES, L_VSYNC, L_FPSLIM, L_TEXHD, L_PERFRAME, L_PERFRAME_HELP, L_SHOW, L_BACK, L_DEFAULT, L_UPDATE, L_FOOT1, L_FOOT2, L_SMOOTH, L_OFF, L_MEDIUM, L_STRONG, L_LASER, L_DOT, L_NOSIGHT, L_N };
+static const char* const ltext[3][L_N] = {
+    {   /* en */
+        "PLAY",
+        "Put on the headset: the game opens straight in VR.",
+        "OPTIONS",
+        "EXIT",
+        "VR",
+        "GRAPHICS",
+        "TEXTURES",
+        "Turn (right stick)",
+        "Dark edges while walking",
+        "Sight",
+        "Headset resolution",
+        "Fullscreen",
+        "Window size",
+        "Internal resolution",
+        "VSync",
+        "Frame rate limit",
+        "HD textures",
+        "Prepared per frame",
+        "Fewer: a lighter stutter on entering a room; the room gets sharp a little later.",
+        "Show this launcher when the game starts",
+        "BACK",
+        "DEFAULT",
+        "New version available: %s  -  click to download",
+        "VR %s  \xC2\xB7  VR mod by neto1495mn-sudo",
+        "PC port: aikatore  \xC2\xB7  decompilation: AshfordFamily",
+        "Smooth",
+        "Off",
+        "Medium",
+        "Strong",
+        "Laser",
+        "Dot",
+        "No sight",
+    },
+    {   /* pt */
+        "JOGAR",
+        "Coloque o \xC3\xB3" "culos: o jogo abre direto no VR.",
+        "OP\xC3\x87\xC3\x95" "ES",
+        "SAIR",
+        "VR",
+        "GR\xC3\x81" "FICO",
+        "TEXTURAS",
+        "Giro (anal\xC3\xB3gico direito)",
+        "Bordas escuras ao andar",
+        "Mira",
+        "Resolu\xC3\xA7\xC3\xA3o no \xC3\xB3" "culos",
+        "Tela cheia",
+        "Tamanho da janela",
+        "Resolu\xC3\xA7\xC3\xA3o interna",
+        "VSync",
+        "Limite de quadros",
+        "Texturas HD",
+        "Preparadas por quadro",
+        "Menos: travada mais leve ao entrar numa sala; a sala fica n\xC3\xADtida um pouco depois.",
+        "Mostrar este launcher ao abrir o jogo",
+        "VOLTAR",
+        "PADR\xC3\x83O",
+        "Nova vers\xC3\xA3o dispon\xC3\xADvel: %s  -  clique para baixar",
+        "VR %s  \xC2\xB7  mod VR por neto1495mn-sudo",
+        "port PC: aikatore  \xC2\xB7  decompila\xC3\xA7\xC3\xA3o: AshfordFamily",
+        "Suave",
+        "Desligado",
+        "M\xC3\xA9" "dio",
+        "Forte",
+        "Laser",
+        "Ponto",
+        "Sem mira",
+    },
+    {   /* es */
+        "JUGAR",
+        "Ponte el visor: el juego se abre directamente en VR.",
+        "OPCIONES",
+        "SALIR",
+        "VR",
+        "GR\xC3\x81" "FICOS",
+        "TEXTURAS",
+        "Giro (stick derecho)",
+        "Bordes oscuros al caminar",
+        "Mira",
+        "Resoluci\xC3\xB3n en el visor",
+        "Pantalla completa",
+        "Tama\xC3\xB1o de ventana",
+        "Resoluci\xC3\xB3n interna",
+        "VSync",
+        "L\xC3\xADmite de fotogramas",
+        "Texturas HD",
+        "Preparadas por fotograma",
+        "Menos: tir\xC3\xB3n m\xC3\xA1s leve al entrar en una sala; la sala se ve n\xC3\xADtida un poco despu\xC3\xA9s.",
+        "Mostrar este launcher al iniciar el juego",
+        "VOLVER",
+        "PREDETERMINADO",
+        "Nueva versi\xC3\xB3n disponible: %s  -  haz clic para descargar",
+        "VR %s  \xC2\xB7  mod VR por neto1495mn-sudo",
+        "port de PC: aikatore  \xC2\xB7  descompilaci\xC3\xB3n: AshfordFamily",
+        "Suave",
+        "Desactivado",
+        "Medio",
+        "Fuerte",
+        "L\xC3\xA1ser",
+        "Punto",
+        "Sin mira",
+    },
+};
+extern "C" int g_launcher_lang;
+extern "C" const char* g_vr_version;
+static const char* L(int k) { return ltext[g_launcher_lang >= 0 && g_launcher_lang < 3 ? g_launcher_lang : 0][k]; }
+
+static void opt_label(const char* text)   /* Tomb Raider's two columns: the name, then its control */
+{
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted(text);
+    ImGui::SameLine(200.0f);
+    ImGui::SetNextItemWidth(-1.0f);   /* (to the panel's edge) */
+}
+
+static bool opt_combo(const char* text, const char* const* names, int n, int* idx)
+{
+    bool ch = false;
+    opt_label(text);
+    ImGui::PushID(text);
+    if (ImGui::BeginCombo("##c", names[*idx])) {
+        for (int k = 0; k < n; k++)
+            if (ImGui::Selectable(names[k], k == *idx)) { *idx = k; ch = true; }
+        ImGui::EndCombo();
+    }
+    ImGui::PopID();
+    return ch;
+}
+
+static void opt_setting(const char* text, const char* label)   /* a list of the menus' settings, with our own name */
+{
+    const Setting* s = setting_by_label(label);
+    char val[96];
+    if (!s) return;
+    opt_label(text);
+    ImGui::PushID(label);
+    ImGui::BeginDisabled(settings_locked(s) != nullptr);
+    if (settings_is_bool(s)) {
+        bool b = settings_get(s) != 0;
+        if (ImGui::Checkbox("##b", &b)) settings_set(s, b);
+    } else if (ImGui::BeginCombo("##c", settings_value(s, val, sizeof val))) {
+        int v = settings_get(s), st = s->step > 0 ? s->step : 1;
+        for (int k = s->lo; k <= settings_hi(s); k += st) {
+            char nm[96];
+            if (ImGui::Selectable(s->name ? s->name(k, nm, sizeof nm) : s->names ? s->names[k - s->lo] : (SDL_snprintf(nm, sizeof nm, "%d", k), nm), k == v)) settings_set(s, k);
+        }
+        ImGui::EndCombo();
+    }
+    ImGui::EndDisabled();
+    ImGui::PopID();
+}
+
+/* a button drawn by hand: primary = red, filled; else dark with an outline */
+static bool l_button(const char* text, ImVec2 pos, ImVec2 size, bool primary, float fsize)
+{
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    ImGui::SetCursorScreenPos(pos);
+    bool pressed = ImGui::InvisibleButton(text, size);
+    bool hov = ImGui::IsItemHovered(), held = ImGui::IsItemActive();
+    ImVec2 b(pos.x + size.x, pos.y + size.y);
+    if (primary) {
+        ImU32 top = hov ? IM_COL32(215, 32, 38, 255) : IM_COL32(175, 22, 28, 255), bot = hov ? IM_COL32(120, 10, 14, 255) : IM_COL32(95, 8, 12, 255);
+        if (hov) dl->AddRectFilled(ImVec2(pos.x - 4, pos.y - 4), ImVec2(b.x + 4, b.y + 4), IM_COL32(220, 30, 36, 50), 6.0f);   /* glow */
+        dl->AddRectFilledMultiColor(pos, b, top, top, bot, bot);
+        dl->AddRect(pos, b, IM_COL32(255, 120, 120, held ? 255 : 120), 0.0f, 0, 1.5f);
+    } else {
+        dl->AddRectFilled(pos, b, hov ? IM_COL32(60, 14, 18, 230) : IM_COL32(16, 16, 20, 200));
+        dl->AddRect(pos, b, hov ? IM_COL32(220, 40, 46, 255) : IM_COL32(120, 110, 105, 140), 0.0f, 0, 1.2f);
+    }
+    ImGui::PushFont(lf_bold, fsize);
+    ImVec2 ts = ImGui::CalcTextSize(text);
+    dl->AddText(ImVec2(pos.x + (size.x - ts.x) * 0.5f, pos.y + (size.y - ts.y) * 0.5f), IM_COL32(255, 250, 245, 255), text);
+    ImGui::PopFont();
+    return pressed;
+}
+
+static void l_text(ImDrawList* dl, ImFont* f, float size, ImVec2 p, ImU32 col, const char* t, float spacing = 0.0f)
+{
+    ImGui::PushFont(f, size);
+    if (spacing <= 0.0f) dl->AddText(p, col, t);
+    else for (const char* c = t; *c; c++) { char s[2] = { *c, 0 }; dl->AddText(p, col, s); p.x += ImGui::CalcTextSize(s).x + spacing; }
+    ImGui::PopFont();
+}
+
+extern "C" int overlay_launcher(void)
+{
+    static const float LW = 980.0f, LH = 600.0f;
+    const char* turns[] = { "", "15\xC2\xB0", "30\xC2\xB0", "45\xC2\xB0", "60\xC2\xB0", "90\xC2\xB0" };
+    static const int turn_v[] = { 0, 15, 30, 45, 60, 90 };
+    const char* comforts[3];
+    static const int comfort_v[] = { 0, 2, 3 };
+    const char* sights[3];
+    static const int sight_v[] = { 2, 1, 0 };
+    bool options = false, show = g_launcher != 0;
+    int result = -1, tab = 0;
+    GLuint pic = 0;
+    int pw = 0, ph = 0;
+    if (!ready) return 1;
+    {   /* fonts: Windows' own (Segoe UI, Bahnschrift), else ImGui's */
+        ImGuiIO& io = ImGui::GetIO();
+        const char* wd = SDL_getenv("WINDIR");
+        char p[512];
+        SDL_snprintf(p, sizeof p, "%s\\Fonts\\segoeui.ttf", wd ? wd : "C:\\Windows");
+        if (FILE* f = fopen(p, "rb")) { fclose(f); lf_ui = io.Fonts->AddFontFromFileTTF(p, 18.0f); }
+        SDL_snprintf(p, sizeof p, "%s\\Fonts\\seguisb.ttf", wd ? wd : "C:\\Windows");
+        if (FILE* f = fopen(p, "rb")) { fclose(f); lf_bold = io.Fonts->AddFontFromFileTTF(p, 22.0f); }
+        SDL_snprintf(p, sizeof p, "%s\\Fonts\\bahnschrift.ttf", wd ? wd : "C:\\Windows");
+        if (FILE* f = fopen(p, "rb")) { fclose(f); lf_title = io.Fonts->AddFontFromFileTTF(p, 46.0f); }
+        if (!lf_ui) lf_ui = io.Fonts->AddFontDefault();
+        if (!lf_bold) lf_bold = lf_ui;
+        if (!lf_title) lf_title = lf_bold;
+    }
+    {   /* the portrait: launcher.png next to the game */
+        const char* base = SDL_GetBasePath();
+        char path[1024];
+        int n = 0;
+        SDL_snprintf(path, sizeof path, "%slauncher.png", base ? base : "");
+        if (unsigned char* px = stbi_load(path, &pw, &ph, &n, 4)) {
+            glGenTextures(1, &pic);
+            glBindTexture(GL_TEXTURE_2D, pic);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, pw, ph, 0, GL_RGBA, GL_UNSIGNED_BYTE, px);
+            stbi_image_free(px);
+            host_log("launcher: picture %s (%dx%d)\n", path, pw, ph);
+        }
+    }
+    SDL_SetWindowTitle(win, "Resident Evil Code: Veronica X - PC Port VR");
+    SDL_SetWindowFullscreen(win, false);
+    SDL_SetWindowResizable(win, false);
+    SDL_SetWindowSize(win, (int)LW, (int)LH);
+    SDL_SetWindowPosition(win, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
+    SDL_SyncWindow(win);
+
+    while (result < 0) {
+        SDL_Event ev;
+        while (SDL_PollEvent(&ev)) {
+            ImGui_ImplSDL3_ProcessEvent(&ev);
+            if (ev.type == SDL_EVENT_QUIT) result = 0;
+            if (ev.type == SDL_EVENT_KEY_DOWN && ev.key.scancode == SDL_SCANCODE_ESCAPE) { if (options) options = false; else result = 0; }
+        }
+        ImGui::GetStyle().FontScaleDpi = 1.0f;
+        turns[0] = L(L_SMOOTH); comforts[0] = L(L_OFF); comforts[1] = L(L_MEDIUM); comforts[2] = L(L_STRONG);
+        sights[0] = L(L_LASER); sights[1] = L(L_DOT); sights[2] = L(L_NOSIGHT);
+        ImGui_ImplOpenGL3_NewFrame();
+        ImGui_ImplSDL3_NewFrame();
+        ImGui::NewFrame();
+        ImVec2 ds = ImGui::GetIO().DisplaySize;
+        ImGui::SetNextWindowPos(ImVec2(0, 0));
+        ImGui::SetNextWindowSize(ds);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+        ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(11, 10, 13, 255));
+        ImGui::Begin("##launcher", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
+                                            ImGuiWindowFlags_NoBringToFrontOnFocus);
+        ImGui::PopStyleColor();
+        ImGui::PopStyleVar(2);
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        float artw = pic ? ds.y * pw / ph : ds.x * 0.42f;   /* the portrait's width at the window's height */
+        float rx = artw - 30.0f;                             /* where the right side's content starts */
+        {   /* the right side: a faint red glow, as from the game's own menus */
+            for (int i = 0; i < 7; i++)
+                dl->AddCircleFilled(ImVec2(ds.x * 0.86f, ds.y * 0.12f), ds.y * (0.75f - i * 0.09f), IM_COL32(110, 8, 12, 6 + i * 3), 64);
+        }
+        if (pic) {   /* the portrait, the whole height, fading into the dark at its right edge */
+            dl->AddImage((ImTextureID)(intptr_t)pic, ImVec2(0, 0), ImVec2(artw, ds.y));
+            dl->AddRectFilledMultiColor(ImVec2(artw - 170, 0), ImVec2(artw + 2, ds.y), IM_COL32(11, 10, 13, 0), IM_COL32(11, 10, 13, 255), IM_COL32(11, 10, 13, 255), IM_COL32(11, 10, 13, 0));
+            dl->AddRectFilledMultiColor(ImVec2(0, ds.y - 120), ImVec2(artw, ds.y), IM_COL32(0, 0, 0, 0), IM_COL32(0, 0, 0, 0), IM_COL32(0, 0, 0, 170), IM_COL32(0, 0, 0, 170));
+        } else {   /* no picture: a dark panel with the red glow */
+            dl->AddRectFilledMultiColor(ImVec2(0, 0), ImVec2(artw, ds.y), IM_COL32(30, 6, 8, 255), IM_COL32(11, 10, 13, 255), IM_COL32(11, 10, 13, 255), IM_COL32(45, 8, 10, 255));
+        }
+        {   /* the title (Tomb Raider's logo strip, here on the right) */
+            float x = rx + 20.0f;
+            l_text(dl, lf_ui, 15.0f, ImVec2(x + 2, 38), IM_COL32(190, 182, 175, 255), "RESIDENT EVIL", 6.0f);
+            l_text(dl, lf_title, 50.0f, ImVec2(x, 58), IM_COL32(245, 240, 232, 255), "CODE: VERONICA X");
+            dl->AddRectFilled(ImVec2(x + 2, 120), ImVec2(x + 70, 123), IM_COL32(210, 30, 36, 255));
+            l_text(dl, lf_bold, 20.0f, ImVec2(x + 80, 109), IM_COL32(225, 40, 46, 255), "PC PORT VR", 3.0f);
+        }
+        {   /* vr134: the language, top right - EN PT ES, the chosen one red and underlined (kept in the ini) */
+            static const char* const langs[] = { "EN", "PT", "ES" };
+            float lx = ds.x - 132.0f;
+            ImGui::PushFont(lf_bold, 16.0f);
+            for (int k = 0; k < 3; k++) {
+                ImVec2 ts = ImGui::CalcTextSize(langs[k]), lp(lx, 16.0f);
+                ImGui::SetCursorScreenPos(lp);
+                if (ImGui::InvisibleButton(langs[k], ImVec2(ts.x + 6, ts.y + 6)) && g_launcher_lang != k) { g_launcher_lang = k; settings_save_later(); }
+                bool hov = ImGui::IsItemHovered();
+                dl->AddText(lp, k == g_launcher_lang ? IM_COL32(235, 45, 50, 255) : hov ? IM_COL32(245, 240, 235, 255) : IM_COL32(150, 142, 136, 255), langs[k]);
+                if (k == g_launcher_lang) dl->AddRectFilled(ImVec2(lp.x, lp.y + ts.y + 2), ImVec2(lp.x + ts.x, lp.y + ts.y + 4), IM_COL32(220, 35, 40, 255));
+                lx += ts.x + 18.0f;
+            }
+            ImGui::PopFont();
+        }
+        if (!options) {
+            float x = rx + 20.0f, w = ds.x - x - 60.0f;
+            if (l_button(L(L_PLAY), ImVec2(x, 190), ImVec2(w, 74), true, 30.0f) || ImGui::IsKeyPressed(ImGuiKey_Enter)) result = 1;
+            l_text(dl, lf_ui, 15.0f, ImVec2(x + 2, 272), IM_COL32(170, 160, 155, 255), L(L_HINT));
+            if (l_button(L(L_OPTIONS), ImVec2(x, 316), ImVec2((w - 14) * 0.5f, 50), false, 21.0f)) options = true;
+            if (l_button(L(L_EXIT), ImVec2(x + (w - 14) * 0.5f + 14, 316), ImVec2((w - 14) * 0.5f, 50), false, 21.0f)) result = 0;
+        } else {
+            float x = rx + 20.0f, w = ds.x - x - 40.0f;
+            ImGui::SetCursorScreenPos(ImVec2(x, 150));
+            ImGui::PushFont(lf_ui, 17.0f);
+            ImGui::PushStyleColor(ImGuiCol_ChildBg, IM_COL32(18, 17, 21, 235));
+            ImGui::PushStyleColor(ImGuiCol_Border, IM_COL32(90, 30, 34, 255));
+            ImGui::PushStyleColor(ImGuiCol_FrameBg, IM_COL32(32, 30, 36, 255));
+            ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, IM_COL32(55, 24, 28, 255));
+            ImGui::PushStyleColor(ImGuiCol_FrameBgActive, IM_COL32(75, 22, 26, 255));
+            ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(120, 18, 22, 255));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(165, 26, 32, 255));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, IM_COL32(195, 32, 38, 255));
+            ImGui::PushStyleColor(ImGuiCol_Header, IM_COL32(120, 18, 22, 255));
+            ImGui::PushStyleColor(ImGuiCol_HeaderHovered, IM_COL32(150, 24, 30, 255));
+            ImGui::PushStyleColor(ImGuiCol_HeaderActive, IM_COL32(180, 30, 36, 255));
+            ImGui::PushStyleColor(ImGuiCol_CheckMark, IM_COL32(235, 45, 50, 255));
+            ImGui::PushStyleColor(ImGuiCol_SliderGrab, IM_COL32(200, 30, 36, 255));
+            ImGui::PushStyleColor(ImGuiCol_SliderGrabActive, IM_COL32(240, 50, 56, 255));
+            ImGui::PushStyleColor(ImGuiCol_PopupBg, IM_COL32(20, 19, 24, 250));
+            ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(230, 225, 220, 255));
+            ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 6.0f);
+            ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 3.0f);
+            ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(10, 12));
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(22, 18));
+            ImGui::BeginChild("##opts", ImVec2(w, ds.y - 150 - 96), ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
+            {   /* the tabs, drawn as Tomb Raider's: words, the chosen one red and underlined */
+                const char* tabs[] = { L(L_TAB_VR), L(L_TAB_GFX), L(L_TAB_TEX) };
+                ImVec2 p = ImGui::GetCursorScreenPos();
+                ImDrawList* cl = ImGui::GetWindowDrawList();
+                for (int t = 0; t < 3; t++) {
+                    ImGui::PushFont(lf_bold, 19.0f);
+                    ImVec2 ts = ImGui::CalcTextSize(tabs[t]);
+                    ImGui::SetCursorScreenPos(p);
+                    if (ImGui::InvisibleButton(tabs[t], ImVec2(ts.x + 4, ts.y + 8))) tab = t;
+                    bool hov = ImGui::IsItemHovered();
+                    cl->AddText(p, t == tab ? IM_COL32(235, 45, 50, 255) : hov ? IM_COL32(245, 240, 235, 255) : IM_COL32(150, 142, 136, 255), tabs[t]);
+                    if (t == tab) cl->AddRectFilled(ImVec2(p.x, p.y + ts.y + 4), ImVec2(p.x + ts.x, p.y + ts.y + 7), IM_COL32(220, 35, 40, 255));
+                    p.x += ts.x + 34;
+                    ImGui::PopFont();
+                }
+                ImGui::Dummy(ImVec2(0, 4));
+                ImGui::Separator();
+                ImGui::Spacing();
+            }
+            if (tab == 0) {
+                int i;
+                for (i = 0; i < 6 && turn_v[i] != g_vr_turn; i++) {}
+                if (i == 6) i = 3;
+                if (opt_combo(L(L_TURN), turns, 6, &i)) { g_vr_turn = turn_v[i]; settings_save_later(); }
+                i = g_vr_comfort <= 0 ? 0 : g_vr_comfort <= 2 ? 1 : 2;
+                if (opt_combo(L(L_COMFORT), comforts, 3, &i)) { g_vr_comfort = comfort_v[i]; settings_save_later(); }
+                i = g_vr_sight >= 2 ? 0 : g_vr_sight == 1 ? 1 : 2;
+                if (opt_combo(L(L_SIGHT), sights, 3, &i)) { g_vr_sight = sight_v[i]; settings_save_later(); }
+                opt_label(L(L_VRRES));
+                if (ImGui::SliderInt("##res", &g_vr_res, 50, 200, "%d%%")) { g_vr_res = (g_vr_res + 5) / 10 * 10; settings_save_later(); }
+            } else if (tab == 1) {
+                opt_setting(L(L_FULLSCREEN), "Fullscreen");
+                opt_setting(L(L_WINSIZE), "Window size");
+                opt_setting(L(L_INTRES), "Internal resolution");
+                opt_setting(L(L_VSYNC), "VSync");
+                opt_setting(L(L_FPSLIM), "Frame rate limit");
+            } else {
+                bool hd = g_tex_hd != 0;
+                opt_label(L(L_TEXHD));
+                if (ImGui::Checkbox("##hd", &hd)) { g_tex_hd = hd; settings_save_later(); }
+                opt_label(L(L_PERFRAME));
+                if (ImGui::SliderInt("##pf", &g_tex_hd_per_frame, 1, 4)) settings_save_later();
+                ImGui::TextDisabled("%s", L(L_PERFRAME_HELP));
+            }
+            ImGui::SetCursorPosY(ImGui::GetWindowHeight() - 52);
+            if (ImGui::Checkbox(L(L_SHOW), &show)) settings_save_later();
+            ImGui::EndChild();
+            ImGui::PopStyleVar(4);
+            ImGui::PopStyleColor(16);
+            ImGui::PopFont();
+            if (l_button(L(L_BACK), ImVec2(x, ds.y - 80), ImVec2(180, 46), true, 20.0f)) options = false;
+            float dw;
+            ImGui::PushFont(lf_bold, 20.0f); dw = ImGui::CalcTextSize(L(L_DEFAULT)).x + 44.0f; ImGui::PopFont();
+            if (l_button(L(L_DEFAULT), ImVec2(x + 194, ds.y - 80), ImVec2(dw > 160.0f ? dw : 160.0f, 46), false, 20.0f)) {   /* as the release has them */
+                g_vr_turn = 45; g_vr_comfort = 0; g_vr_sight = 2; g_vr_res = 100; g_tex_hd = 1; g_tex_hd_per_frame = 2;
+                settings_save_later();
+            }
+        }
+        {   /* the foot: a newer release, the version and credits */
+            float x = rx + 20.0f;
+            if (g_update_newer) {
+                char line[128];
+                SDL_snprintf(line, sizeof line, L(L_UPDATE), g_update_tag);
+                ImGui::PushFont(lf_bold, 16.0f);
+                ImGui::SetCursorScreenPos(ImVec2(x, options ? 118.0f + 14.0f : 400.0f));
+                ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(255, 200, 70, 255));
+                if (ImGui::Selectable(line, false, 0, ImGui::CalcTextSize(line))) SDL_OpenURL("https://github.com/neto1495mn-sudo/recvx-enhanced-port-pcvr/releases/latest");
+                ImGui::PopStyleColor();
+                ImGui::PopFont();
+            }
+            if (!options) {
+                char f1[128];
+                SDL_snprintf(f1, sizeof f1, L(L_FOOT1), g_vr_version);
+                l_text(dl, lf_ui, 14.0f, ImVec2(x, ds.y - 66), IM_COL32(150, 142, 136, 255), f1);
+                l_text(dl, lf_ui, 14.0f, ImVec2(x, ds.y - 44), IM_COL32(120, 114, 108, 255), L(L_FOOT2));
+            }
+        }
+        ImGui::End();
+        ImGui::Render();
+        glViewport(0, 0, (int)ds.x, (int)ds.y);
+        glClearColor(0, 0, 0, 1);
+        glClear(GL_COLOR_BUFFER_BIT);
+        ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+        SDL_GL_SwapWindow(win);
+    }
+    if (pic) glDeleteTextures(1, &pic);
+    g_vr_request = 1;   /* (one PLAY: VR) */
+    g_launcher = show;
+    config_save();
+    if (result) {   /* the game's own window back */
+        SDL_SetWindowResizable(win, true);
+        SDL_SetWindowTitle(win, "Resident Evil Code: Veronica X");
+        settings_apply_window();
+        if (!g_config.fullscreen) SDL_SetWindowPosition(win, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
+    }
+    return result;
 }

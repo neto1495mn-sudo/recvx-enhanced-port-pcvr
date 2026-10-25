@@ -177,6 +177,9 @@ static void usage(void)
 }
 
 static char log_path[1024], profile_path[1024];
+int g_launcher = 1;      /* ini launcher: the launcher window at start (vr120) */
+int g_launcher_lang = 0; /* ini launcher_lang: the launcher's language - 0 English, 1 Portuguese, 2 Spanish (vr134) */
+static int no_launcher;  /* --no-launcher */
 static int iso_given;   /* image from the command line / RECVX_ISO: no file selector */
 static int save_given;  /* --save-dir */
 static char start_dir[1024];   /* where the program was started: relative image paths are taken from here */
@@ -217,6 +220,7 @@ static void parse_args(int argc, char** argv)
         else if (!strcmp(argv[i], "--third-person")) g_tps.on = 1;
         else if (!strcmp(argv[i], "--vr")) g_vr_request = 1;
         else if (!strcmp(argv[i], "--no-vr")) g_vr_request = 0;
+        else if (!strcmp(argv[i], "--no-launcher")) no_launcher = 1;   /* vr120 */
         else if (!strcmp(argv[i], "--quiet")) g_config.log_level = 0;
         else if (!strcmp(argv[i], "--coop-host") && i + 1 < argc) { g_coop.port = atoi(argv[++i]); g_coop.request = COOP_REQ_HOST; }
         else if (!strcmp(argv[i], "--coop-join") && i + 1 < argc) { SDL_strlcpy(g_coop.join, argv[++i], sizeof(g_coop.join)); g_coop.request = COOP_REQ_JOIN; }
@@ -313,11 +317,15 @@ int main(int argc, char** argv)
     if (!g_gl) host_fatal("SDL_GL_CreateContext: %s", SDL_GetError());
     SDL_GL_SetSwapInterval(g_config.vsync ? 1 : 0);
     gs_renderer_init();
+    overlay_init(g_window, g_gl);   /* (before the launcher; it was after xr_init) */
+    if (g_launcher && !no_launcher) {   /* vr120: the launcher - VR or desktop, the VR and graphics settings (overlay.cpp) */
+        extern int overlay_launcher(void);
+        if (!overlay_launcher()) exit(0);
+    }
     if (xr_init() && g_vr_stereo) {   /* --vr: after the GL entry points are loaded */
         g_tps.on = 1;              /* stereo needs the free camera: the third-person hook hands it to the head */
         g_config.interpolate = 1;  /* replays of the executed frame (eyes, cinema in-betweens) */
     }
-    overlay_init(g_window, g_gl);
     audio_init();
 
     stream_init();

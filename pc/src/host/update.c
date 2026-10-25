@@ -10,12 +10,16 @@
 
 void host_log(const char* fmt, ...);   /* (not ps2_platform.h: its PS2 names clash with windows.h) */
 
-#define RECVX_VR_VERSION "1.1"
+#define RECVX_VR_VERSION "1.2"
+const char* g_vr_version = RECVX_VR_VERSION;   /* (the launcher's foot) */
 #define UPDATE_HOST L"api.github.com"
 #define UPDATE_PATH L"/repos/neto1495mn-sudo/recvx-enhanced-port-pcvr/releases/latest"
 #define UPDATE_PAGE "https://github.com/neto1495mn-sudo/recvx-enhanced-port-pcvr/releases/latest"
 
 int g_update_check = 1;   /* ini update_check */
+char g_update_tag[64];    /* vr121: the newer release's tag, for the launcher */
+int g_update_newer;       /* ... there is one */
+extern int g_launcher;    /* host.c: with the launcher, it shows the news (no message box) */
 
 #ifdef _WIN32
 #include <windows.h>
@@ -69,6 +73,11 @@ void update_check(void)
     for (int i = 0; i < (int)sizeof(tag) - 1 && p[i] && p[i] != '"'; i++) tag[i] = p[i], tag[i + 1] = 0;
     latest = version_of(tag);
     host_log("update: this is VR %s, the latest release is %s\n", RECVX_VR_VERSION, tag);
+    if (latest > have) {
+        SDL_strlcpy(g_update_tag, tag, sizeof(g_update_tag));
+        g_update_newer = 1;
+        if (g_launcher) return;
+    }
     if (latest > have) {
         char msg[512];
         const SDL_MessageBoxButtonData buttons[] = {

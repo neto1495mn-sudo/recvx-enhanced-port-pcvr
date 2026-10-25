@@ -206,7 +206,8 @@ if(WIN32)
     # gives the 32-bit exe 4 GB on 64-bit Windows (Linux already uses addresses above 2 GB). -static: libstdc++,
     # libgcc and winpthread go into the exe, only system DLLs (UCRT, opengl32, ...) remain.
     target_link_options(recvx PRIVATE -static -Wl,--image-base,0x30000000 -Wl,--disable-dynamicbase -Wl,--large-address-aware
-                        -Wl,--stack,8388608)
+                        -Wl,--stack,8388608
+                        -mwindows)   # vr128: a window program - no console window next to the game (the log goes to recvx.log)
 endif()
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     # Place the image inside the PS2 address window (see docs/ARCHITECTURE.md, "Data model and memory").

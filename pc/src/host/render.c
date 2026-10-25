@@ -41,6 +41,10 @@ static double present_hz(void)
     return lim && lim < hz ? lim : hz;
 }
 
+/* vr123: the game frames' arrival on an even grid (a frame arriving a few ms early or late does not move it),
+   for the VR in-between images by the clock (gs_gl.c) */
+double g_vr_frame_ref, g_vr_frame_period = 1001.0 / 30000.0 * 1e9;
+
 void render_loop(void)
 {
     Frame *prev = NULL, *cur = NULL;
@@ -81,6 +85,12 @@ void render_loop(void)
             }
             arrived = now;
             shown = 0;
+            {   /* vr123 */
+                double nw = (double)now, d = nw - (g_vr_frame_ref + period);
+                if (g_vr_frame_ref <= 0.0 || fabs(d) > period * 0.5) g_vr_frame_ref = nw;
+                else g_vr_frame_ref += period + 0.1 * d;
+                g_vr_frame_period = period;
+            }
             prof_push(PROF_INTERP);
             interp = g_config.interpolate && stream_match(cur, f);
             prof_pop();

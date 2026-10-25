@@ -1381,6 +1381,10 @@ void gs_flush(void)
             }
             glBindTexture(GL_TEXTURE_2D, t);
             hdk = trep_kind(t);
+            if (hdk && !gs_replaying) {   /* vr130 diagnosis: the HD textures drawn while the inventory shows an item (its 3D) */
+                extern volatile int g_vr_inv_item; extern volatile uint64_t g_vr_inv_ms; extern void trep_note(unsigned int, int);
+                if (g_vr_inv_item >= 0 && SDL_GetTicks() - g_vr_inv_ms < 300) trep_note(t, g_vr_inv_item);
+            }
             uni4f(u_texofs, 1.0f / (float)w, 1.0f / (float)h, 0.0f, 0.0f);
             uni1f(u_tex_alpha_scale, ascale);
             uni4f(u_rt16, 0, 0, 0, 0);
@@ -2199,6 +2203,18 @@ static const char* mk_fs =
     "    float a = 1.0 - smoothstep(1.0 - aa * 1.5, 1.0, r);\n"
     "    if (a <= 0.0) discard; o = vec4(1.0, 1.0, 1.0, a); return;\n"
     "  }\n"
+    "  if (u_kind == 1 && u_val == 1) {\n"   /* vr127: close enough - the A button: a dark disc, a thin white rim, a white A */
+    "    float r = length(v_c); aa = fwidth(r);\n"
+    "    float disc = 1.0 - smoothstep(0.95 - aa, 0.95 + aa, r);\n"
+    "    float rim = smoothstep(0.80 - aa, 0.80 + aa, r) * disc;\n"
+    "    vec2 p = v_c;\n"
+    "    float d = min(min(seg(p, vec2(-0.34, -0.45), vec2(0.0, 0.47)), seg(p, vec2(0.34, -0.45), vec2(0.0, 0.47))), seg(p, vec2(-0.19, -0.10), vec2(0.19, -0.10)));\n"
+    "    float glyph = 1.0 - smoothstep(0.075 - aa, 0.075 + aa, d);\n"
+    "    float w = max(rim, glyph * disc);\n"
+    "    float a = max(disc * 0.55, w * 0.95);\n"
+    "    if (a <= 0.0) discard;\n"
+    "    o = vec4(mix(vec3(0.08, 0.07, 0.06), vec3(1.0, 0.97, 0.88), clamp(w / max(a, 1e-3) * min(w * 1.2, 1.0), 0.0, 1.0)), a); return;\n"
+    "  }\n"
     "  if (u_kind == 1) {\n"   /* the interaction icon: a dark disc, a thin white rim, a white arrowhead pointing down */
     "    float r = length(v_c); aa = fwidth(r);\n"
     "    float disc = 1.0 - smoothstep(0.95 - aa, 0.95 + aa, r);\n"
@@ -2211,8 +2227,10 @@ static const char* mk_fs =
     "    if (a <= 0.0) discard;\n"
     "    o = vec4(mix(vec3(0.05, 0.05, 0.055), vec3(0.96, 0.95, 0.93), clamp(w, 0.0, 1.0)), a); return;\n"
     "  }\n"
-    /* the number: n digits of 5x7 dots in cells of 6x9, on a plate of n*6+2 x 11 */
-    "  int n = u_val >= 100 ? 3 : u_val >= 10 ? 2 : 1;\n"
+    /* the number: n digits of 5x7 dots in cells of 6x9, on a plate of n*6+2 x 11 (vr132: or "a/b", u_val 1000000 + a * 1000 + b) */
+    "  int two = u_val >= 1000000 ? 1 : 0, va = two != 0 ? (u_val - 1000000) / 1000 : u_val, vb = two != 0 ? u_val - 1000000 - va * 1000 : 0;\n"
+    "  int na = va >= 100 ? 3 : va >= 10 ? 2 : 1, nb = vb >= 100 ? 3 : vb >= 10 ? 2 : 1;\n"
+    "  int n = two != 0 ? na + 1 + nb : na;\n"
     "  vec2 g = (v_c * 0.5 + 0.5) * vec2(float(n * 6 + 2), 11.0);\n"
     "  g.y = 11.0 - g.y;\n"
     "  vec2 q = abs(v_c) * vec2(u_aspect, 1.0); vec2 lim = vec2(u_aspect, 1.0) - 0.25;\n"
@@ -2223,11 +2241,13 @@ static const char* mk_fs =
     "  vec2 c = g - vec2(1.0, 2.0);\n"
     "  int di = int(floor(c.x / 6.0));\n"
     "  if (di >= 0 && di < n && c.y >= 0.0 && c.y < 7.0) {\n"
-    "    int v = u_val; for (int k = 0; k < n - 1 - di; k++) v /= 10; v = v - (v / 10) * 10;\n"
+    "    int v = 10, len = na, pos = di, num = va;\n"
+    "    if (di > na) { len = nb; pos = di - na - 1; num = vb; }\n"
+    "    if (di != na || two == 0) { v = num; for (int k = 0; k < len - 1 - pos; k++) v /= 10; v = v - (v / 10) * 10; }\n"
     "    vec2 cc = vec2(c.x - float(di) * 6.0, c.y);\n"
     "    int col = int(floor(cc.x)), row = int(floor(cc.y));\n"
     "    if (col < 5) {\n"
-    "      int bits = F[v * 7 + row];\n"
+    "      int bits = v == 10 ? (row < 2 ? 1 : row == 2 ? 2 : row == 3 ? 4 : row == 4 ? 8 : 16) : F[v * 7 + row];\n"
     "      if (((bits >> (4 - col)) & 1) != 0) { vec2 f = fract(cc) - 0.5; float e = length(max(abs(f) - 0.36, 0.0)) - 0.16; float ea = fwidth(e); lit = 1.0 - smoothstep(-ea, ea, e); }\n"
     "    }\n"
     "  }\n"
@@ -2237,6 +2257,8 @@ static const char* mk_fs =
     "  o = vec4(mix(base, vec3(0.55, 0.95, 0.38), lit), a);\n"
     "}\n";
 
+static float vr_world_L[16];   /* (vr130: here for the markers too; defined again below - a tentative definition) */
+static int vr_world_ok;
 static void draw_markers(const VrView* v, const float M[16], const VrEye* E, int w, int h)
 {
     if (!v || v->mk_n <= 0) return;
@@ -2255,7 +2277,8 @@ static void draw_markers(const VrView* v, const float M[16], const VrEye* E, int
         const float* p = v->mk[i];
         float V[3], e[3], tx, ty, nx, ny, hx, hy, ang;
         int kind = v->mk_kind[i];
-        for (int k = 0; k < 3; k++) V[k] = v->G[k] * p[0] + v->G[4 + k] * p[1] + v->G[8 + k] * p[2] + v->G[12 + k];   /* world -> V */
+        if (kind == 2 && vr_world_ok) for (int k = 0; k < 3; k++) V[k] = vr_world_L[k] * p[0] + vr_world_L[4 + k] * p[1] + vr_world_L[8 + k] * p[2] + vr_world_L[12 + k];   /* vr130: the holster's count moves with the body, as its box */
+        else for (int k = 0; k < 3; k++) V[k] = v->G[k] * p[0] + v->G[4 + k] * p[1] + v->G[8 + k] * p[2] + v->G[12 + k];   /* world -> V */
         for (int k = 0; k < 3; k++) e[k] = M[k] * V[0] + M[4 + k] * V[1] + M[8 + k] * V[2] + M[12 + k];               /* V -> eye (x right, y down, z forward) */
         if (e[2] < 0.05f) continue;
         tx = e[0] / e[2]; ty = -e[1] / e[2];                                    /* tangents right, up */
@@ -2264,8 +2287,9 @@ static void draw_markers(const VrView* v, const float M[16], const VrEye* E, int
         if (kind == 0) { ang = tanf(g_vr_sight_size / 100.0f * (3.14159265f / 360.0f)); hx = hy = ang; }
         else if (kind == 1) { hx = hy = 0.04f / e[2]; }                         /* 8 cm across */
         else {
-            int n = v->mk_val[i] >= 100 ? 3 : v->mk_val[i] >= 10 ? 2 : 1;
-            hy = 0.035f / e[2];                                                 /* the plate 7 cm high */
+            int val = v->mk_val[i], two = val >= 1000000, va = two ? (val - 1000000) / 1000 : val, vb = two ? val - 1000000 - va * 1000 : 0;
+            int n = (va >= 100 ? 3 : va >= 10 ? 2 : 1) + (two ? 1 + (vb >= 100 ? 3 : vb >= 10 ? 2 : 1) : 0);
+            hy = (two ? 0.015f : 0.035f) / e[2];                                /* the plate 7 cm high (vr132: "a/b" 3 cm, in front of the box) */
             hx = hy * (float)(n * 6 + 2) / 11.0f;
             glUniform1f(um_aspect, (float)(n * 6 + 2) / 11.0f);
         }
@@ -2397,11 +2421,18 @@ static void draw_lasers(const VrView* v, const float M[16], const VrEye* E, int 
 static float vr_world_L[16];   /* world -> V of this image (the holster's box) */
 static int vr_world_ok;
 static GLuint bx_prog;
-static GLint ub_vis, ub_c[8], ub_fr, ub_depth, ub_rect, ub_eye, ub_z, ub_amb;
+static GLint ub_vis, ub_c[8], ub_fr, ub_depth, ub_rect, ub_eye, ub_z, ub_amb, ub_tr[6], ub_btex, ub_bt;
+/* vr131: ammo boxes with their own picture (the HD pack's texture of the item as the inventory shows it, found with
+   the vr130 log): the file and where each face is on it (x0 y0 x1 y1 of 512: faces x-, x+ the ends; y-, y+ bottom, top;
+   z-, z+ the large sides) */
+static const struct { int item; const char* file; float r[6][4]; } box_pics[] = {
+    { 12, "b773dd6ded67f309-892c799538d422ab-00002213.dds",   /* handgun bullets: "Amerikansky Volk 9 mm" */
+      { { 366, 4, 429, 116 }, { 366, 4, 429, 116 }, { 2, 322, 201, 390 }, { 2, 124, 201, 190 }, { 2, 2, 201, 119 }, { 2, 2, 201, 119 } } },
+};
 static const char* bx_vs =
     "#version 330 core\n"
-    "uniform vec4 u_c[8]; uniform vec4 u_fr; uniform int u_vis;\n"
-    "out vec2 v_uv; out float v_ez; flat out int v_face;\n"
+    "uniform vec4 u_c[8]; uniform vec4 u_fr; uniform int u_vis; uniform vec4 u_tr[6];\n"
+    "out vec2 v_uv; out float v_ez; flat out int v_face; out vec2 v_tuv;\n"
     "const int F[24] = int[24](0,4,6,2, 1,3,7,5, 0,1,5,4, 2,6,7,3, 0,2,3,1, 4,5,7,6);\n"
     "const int T[6] = int[6](0,1,2, 0,2,3);\n"
     "const vec2 Q[4] = vec2[4](vec2(0.0,0.0), vec2(1.0,0.0), vec2(1.0,1.0), vec2(0.0,1.0));\n"
@@ -2410,6 +2441,11 @@ static const char* bx_vs =
     "  if ((u_vis & (1 << f)) == 0) { gl_Position = vec4(0.0, 0.0, 2.0, 1.0); v_uv = vec2(0.0); v_face = f; v_ez = 1.0; gl_ClipDistance[0] = -1.0; return; }\n"
     "  vec3 e = u_c[F[f * 4 + k]].xyz;\n"
     "  v_uv = Q[k]; v_face = f; v_ez = e.z;\n"
+    "  { int ci = F[f * 4 + k]; float bx = float(ci & 1), by = float((ci >> 1) & 1), bz = float((ci >> 2) & 1); vec2 fu;\n"   /* vr131: the face's place on the box's picture */
+    "    if (f == 0) fu = vec2(bz, 1.0 - by); else if (f == 1) fu = vec2(1.0 - bz, 1.0 - by);\n"
+    "    else if (f == 2) fu = vec2(bx, bz); else if (f == 3) fu = vec2(bx, 1.0 - bz);\n"
+    "    else if (f == 4) fu = vec2(1.0 - bx, 1.0 - by); else fu = vec2(bx, 1.0 - by);\n"
+    "    v_tuv = mix(u_tr[f].xy, u_tr[f].zw, fu); }\n"
     "  float tx = e.x / e.z, ty = -e.y / e.z;\n"
     "  vec2 n = vec2((tx - u_fr.x) / (u_fr.y - u_fr.x) * 2.0 - 1.0, (ty - u_fr.w) / (u_fr.z - u_fr.w) * 2.0 - 1.0);\n"
     "  gl_Position = vec4(n * e.z, 0.0, e.z);\n"
@@ -2417,8 +2453,8 @@ static const char* bx_vs =
     "}\n";
 static const char* bx_fs =
     "#version 330 core\n"
-    "in vec2 v_uv; in float v_ez; flat in int v_face; out vec4 o;\n"
-    "uniform sampler2D u_depth; uniform vec4 u_rect; uniform vec2 u_eye; uniform vec4 u_z; uniform vec4 u_amb;\n"
+    "in vec2 v_uv; in float v_ez; flat in int v_face; in vec2 v_tuv; out vec4 o;\n"
+    "uniform sampler2D u_depth; uniform vec4 u_rect; uniform vec2 u_eye; uniform vec4 u_z; uniform vec4 u_amb; uniform sampler2D u_btex; uniform int u_bt;\n"
     "float h(vec2 p){ return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }\n"
     "void main(){\n"
     "  if (u_z.y > 0.0) {\n"
@@ -2427,6 +2463,11 @@ static const char* bx_fs =
     "    if (abs(gz) > 1e-6) { float ez = -u_z.z / (u_z.y * gz); if (ez > 0.0 && ez < v_ez - 0.01) discard; }\n"
     "  }\n"
     "  vec2 q = v_uv; vec3 col = vec3(0.30, 0.34, 0.16);\n"
+    "  if (u_bt != 0) {\n"   /* vr131: the ammo's own box picture */
+    "    float sh = v_face == 3 ? 1.0 : v_face == 2 ? 0.45 : v_face >= 4 ? 0.85 : 0.7;\n"
+    "    vec3 amb = clamp(u_amb.rgb, vec3(0.35), vec3(1.0));\n"
+    "    o = vec4(texture(u_btex, v_tuv).rgb * sh * amb * 1.15, 1.0); return;\n"
+    "  }\n"
     "  bool side = v_face >= 4, end = v_face <= 1;\n"
     "  if ((side || end) && q.y > 0.56 && q.y < 0.72) col = vec3(0.72, 0.58, 0.16);\n"
     "  if (side && q.y > 0.14 && q.y < 0.46) { for (int i = 0; i < 3; i++) { float x = 0.3 + 0.2 * float(i);\n"
@@ -2459,6 +2500,8 @@ static void draw_box(const VrView* v, const float M[16], const VrEye* E, int w, 
         ub_fr = glGetUniformLocation(bx_prog, "u_fr"); ub_vis = glGetUniformLocation(bx_prog, "u_vis");
         ub_depth = glGetUniformLocation(bx_prog, "u_depth"); ub_rect = glGetUniformLocation(bx_prog, "u_rect");
         ub_eye = glGetUniformLocation(bx_prog, "u_eye"); ub_z = glGetUniformLocation(bx_prog, "u_z"); ub_amb = glGetUniformLocation(bx_prog, "u_amb");
+        for (int f = 0; f < 6; f++) { char nm[16]; snprintf(nm, sizeof(nm), "u_tr[%d]", f); ub_tr[f] = glGetUniformLocation(bx_prog, nm); }
+        ub_btex = glGetUniformLocation(bx_prog, "u_btex"); ub_bt = glGetUniformLocation(bx_prog, "u_bt");
     }
     for (int i = 0; i < 8 && rt; i++) if (dz[i].tex && dz[i].zbp == rt->zbp && dz[i].pw == rt->pw && dz[i].ph == rt->ph) dtex = dz[i].tex;
     glViewport(0, 0, w, h);
@@ -2492,6 +2535,27 @@ static void draw_box(const VrView* v, const float M[16], const VrEye* E, int w, 
         glUniform1i(ub_vis, vis);
     }
     glUniform4f(ub_amb, v->box_amb[0], v->box_amb[1], v->box_amb[2], 1.0f);
+    {   /* vr131: the ammo's own picture, when the pack has it */
+        extern unsigned int trep_named(const char* file, int* mips);
+        GLuint bt = 0;
+        int mips = 0;
+        for (size_t i = 0; i < sizeof(box_pics) / sizeof(box_pics[0]) && !bt; i++)
+            if (box_pics[i].item == v->box_item) {
+                float tr[6][4];
+                bt = trep_named(box_pics[i].file, &mips);
+                for (int f = 0; f < 6; f++) for (int k = 0; k < 4; k++) tr[f][k] = box_pics[i].r[f][k] / 512.0f;
+                for (int f = 0; f < 6; f++) glUniform4f(ub_tr[f], tr[f][0], tr[f][1], tr[f][2], tr[f][3]);
+            }
+        glActiveTexture(GL_TEXTURE0 + 2);
+        glBindTexture(GL_TEXTURE_2D, bt);
+        if (bt) {
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, mips ? 0x2703 /* GL_LINEAR_MIPMAP_LINEAR */ : GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        }
+        glActiveTexture(GL_TEXTURE0);
+        glUniform1i(ub_btex, 2);
+        glUniform1i(ub_bt, bt != 0);
+    }
     glBindVertexArray(present_vao);
     glDrawArrays(GL_TRIANGLES, 0, 36);
     glBindVertexArray(vao);
@@ -2690,6 +2754,8 @@ static void vr_proj_matrix(float m[16], const VrView* v, float ofx, float ofy)
     m[11] = 1.0f;
 }
 static int present_vr_stereo_(const struct Frame* cur, float t);
+static float vr_turn_t = 1.0f;   /* vr125: the smooth turn's own t - by the clock, not held at 0..1: a game frame arriving a few ms
+                                    late or early no longer stops the turn and then jumps it (the arrivals' even grid, render.c) */
 /* vr74 diagnosis: a headset frame's work by step (ns): 0 replay (both eyes), 1 eye image wait, 2 eye copy, 3 mirror window, 4 hand to the headset */
 static uint64_t vr_tm[5];
 #define VR_TM(k, stmt) do { uint64_t t_ = SDL_GetTicksNS(); stmt; vr_tm[k] += SDL_GetTicksNS() - t_; } while (0)
@@ -2776,6 +2842,28 @@ static int present_vr_stereo_(const struct Frame* cur, float t)
             if (g_vr_debug_log && (nl++ % 300) == 0)
                 host_log("vr-diag: walking smoothed: %s (stick move %.3f m this game frame, room-walk %.3f %.3f; since last: used %u, refused %u, wall/turned back %u)\n",
                          !g_vr_interp_body ? "off (vr_interp_body 0)" : use ? "on" : "not this frame", mv, v->follow[0], v->follow[1], nused, njump, nwall);
+        }
+        if (fabsf(v->turn) > 1e-5f && fabsf(v->turn) < 0.5f) {   /* vr120: a smooth turn shown at the headset's rate (vr125: by its own t,
+               also past the frame while the next is a little late, and on frames not interpolated otherwise):
+               the play space as the frame made it, turned back by what is left of this frame's turn, about the head
+               (W(yaw - e) = W(yaw) * T(head) * Ry(-e) * T(-head) - the head stays where it is) */
+            VrPose hp;
+            float base[16], R[16], T1[16], T2[16], M1[16], M2[16], e = -(1.0f - vr_turn_t) * v->turn, c = cosf(e), sn = sinf(e);
+            memcpy(base, use ? Wt : v->W, sizeof(base));
+            if (xr_head_pose(&hp)) {   /* vr124: the head pose is in the recentred space and W = Wg * recentre: the turn goes
+                                          in between (W * inverse(recentre) * T(head) * Ry * T(-head) * recentre); about the
+                                          head in the headset's own space it slid sideways and came back each game frame */
+                float Rc[16], iRc[16], M3[16], M4[16];
+                vr_mat_identity(R); R[0] = c; R[8] = sn; R[2] = -sn; R[10] = c;   /* as make_Wg (vr_glue.c) */
+                vr_mat_identity(T1); T1[12] = hp.px; T1[13] = hp.py; T1[14] = hp.pz;
+                vr_mat_identity(T2); T2[12] = -hp.px; T2[13] = -hp.py; T2[14] = -hp.pz;
+                xr_recenter_matrix(Rc);
+                if (vr_mat_invert(iRc, Rc)) {
+                    vr_mat_mul(M1, R, T2); vr_mat_mul(M2, T1, M1); vr_mat_mul(M3, M2, Rc); vr_mat_mul(M4, iRc, M3);
+                    vr_mat_mul(Wt, base, M4);
+                    if (vr_mat_invert(iWt, Wt)) use = 1;
+                }
+            }
         }
         vr_mat_mul(A, use ? iWt : iW, iG);   /* V of the frame -> local (metres) */
         {   /* vr68: the hand objects follow the controllers now, not as they were when the game frame was made:
@@ -2898,6 +2986,25 @@ static int present_vr_stereo_(const struct Frame* cur, float t)
             glBindFramebuffer(GL_FRAMEBUFFER, vr_fbo);
             glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
             VR_TM(2, draw_area_to(rt->tex, rt->vw, rt->vh, w, h); draw_lasers(v, M, E, w, h, rt); draw_box(v, M, E, w, h, rt); draw_markers(v, M, E, w, h); draw_vignette(E, w, h); hold_keep_and_dim(e, w, h, vr_fbo));
+            if (e == 0) {   /* vr127: the window mirrors the left eye (a copy on the GPU), filling it, the middle kept */
+                uint64_t tm0 = SDL_GetTicksNS();
+                int ww = 0, wh = 0;
+                SDL_GetWindowSizeInPixels(g_window, &ww, &wh);
+                if (ww > 0 && wh > 0) {
+                    int sw = w, sh = (int)((float)w * wh / ww), sx = 0, sy;
+                    if (sh > h) { sh = h; sw = (int)((float)h * ww / wh); sx = (w - sw) / 2; }
+                    sy = (h - sh) / 2;
+                    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+                    glDisable(GL_SCISSOR_TEST);
+                    glViewport(0, 0, ww, wh);
+                    glClearColor(0, 0, 0, 1);
+                    glClear(GL_COLOR_BUFFER_BIT);
+                    glBindFramebuffer(GL_READ_FRAMEBUFFER, vr_fbo);
+                    glBlitFramebuffer(sx, sy, sx + sw, sy + sh, 0, 0, ww, wh, GL_COLOR_BUFFER_BIT, GL_LINEAR);
+                    glBindFramebuffer(GL_FRAMEBUFFER, vr_fbo);
+                }
+                vr_tm[3] += SDL_GetTicksNS() - tm0;
+            }
             glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
             glBindFramebuffer(GL_FRAMEBUFFER, 0);
             fb_forget();
@@ -2917,6 +3024,14 @@ static uint64_t gs_present_vr(const struct Frame* cur, float t)
     uint64_t tw0 = SDL_GetTicksNS();
     int ww = 0, wh = 0, fr = xr_frame_begin(), door;
     uint64_t tw = SDL_GetTicksNS() - tw0;   /* vr73 diagnosis: how long the headset made us wait */
+    vr_turn_t = 1.0f;
+    if (fr == 1) {   /* vr123: an in-between image at the time the headset shows it (after its wait), not by
+                        counting images - a headset image shown late no longer holds the turn back */
+        extern double g_vr_frame_ref, g_vr_frame_period;
+        double tc = g_vr_frame_period > 1e6 ? ((double)SDL_GetTicksNS() - g_vr_frame_ref) / g_vr_frame_period : 1.0;
+        if (t < 1.0f) t = tc < 0.0 ? 0.0f : tc > 1.0 ? 1.0f : (float)tc;
+        vr_turn_t = tc < -0.5 ? -0.5f : tc > 1.5 ? 1.5f : (float)tc;   /* vr125: at most half a game frame ahead or behind */
+    }
     static uint64_t last_ms;
     uint64_t now_ms = SDL_GetTicks();
     float dt = last_ms ? (float)(now_ms - last_ms) / 1000.0f : 0.0f;
@@ -2942,7 +3057,10 @@ static uint64_t gs_present_vr(const struct Frame* cur, float t)
         overlay_render();
         if (!present_vr_held()) xr_frame_end_none();
     } else if (fr == 1 && (vr_fade = vr_fade + dt / 0.5f > 1.0f ? 1.0f : vr_fade + dt / 0.5f, present_vr_stereo(cur, t))) {   /* (fading back in after one) */
-        VR_TM(3, draw_display(final_vw ? img[fin].tex : 0, final_vw ? final_vw : 640, final_vw ? final_vh : 512); overlay_render());   /* mirror */
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);   /* vr127: the mirror is the left eye (copied while drawing it); the overlay over it */
+        { int ww = 0, wh = 0; SDL_GetWindowSizeInPixels(g_window, &ww, &wh); glViewport(0, 0, ww, wh); }
+        clip_distances(0);
+        VR_TM(3, overlay_render());
         VR_TM(4, xr_frame_end_stereo());
     } else {
         int inbetween = cur && snapshot_valid && t < 1.0f;

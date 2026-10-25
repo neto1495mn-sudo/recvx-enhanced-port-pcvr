@@ -130,9 +130,10 @@ static LONG WINAPI on_fatal(EXCEPTION_POINTERS* ep)
 void log_start(const char* path)
 {
     wchar_t w[1024];   /* the path is UTF-8 (fileio.h) */
-    if (!MultiByteToWideChar(CP_UTF8, 0, path, -1, w, 1024) || !_wfreopen(w, L"w", stdout)) return;
+    /* vr128: a window program (no console) has no stderr to duplicate onto: both streams opened on the file, appending */
+    if (!MultiByteToWideChar(CP_UTF8, 0, path, -1, w, 1024) || !_wfreopen(w, L"w", stderr) || !_wfreopen(w, L"a", stderr)) return;
+    _wfreopen(w, L"a", stdout);
     setvbuf(stdout, NULL, _IONBF, 0);
-    _dup2(_fileno(stdout), 2);
     setvbuf(stderr, NULL, _IONBF, 0);   /* (buffered, the last lines were lost when the game was closed) */
     SetUnhandledExceptionFilter(on_fatal);
     host_log("log: writing %s\n", path);

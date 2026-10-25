@@ -425,6 +425,31 @@ void trep_frame_begin(void)
     }
 }
 
+/* vr131: an entry's file loaded (from trep_lookup; trep_named) - 0 when it could not be */
+static int load_entry(Entry* e)
+{
+    size_t len = 0;
+    uint8_t* d = read_file(e->path, &len);
+    int mips = 0;
+    uint32_t bytes = 0;
+    GLuint t = 0;
+    if (d) {
+        t = (len > 4 && !memcmp(d, "DDS ", 4)) ? load_dds(d, len, &bytes, &mips, &e->w, &e->ht) : load_png(d, len, &bytes, &mips, &e->w, &e->ht);
+        free(d);
+    }
+    if (!t) { e->failed = 1; host_log("tex: could not load %s\n", e->path); return 0; }
+    make_room(bytes);
+    e->tex = t; e->bytes = bytes; used_bytes += bytes; e->mips = mips;
+    if (t < 65536) hd_kind[t] = (uint8_t)(mips ? 2 : 1);
+    if (!mips || e->w > g_tex_hd_max || e->ht > g_tex_hd_max) queue_convert(e);
+    {
+        static int nlog;
+        const char* name = strrchr(e->path, '/');
+        if (nlog++ < 1000) host_log("tex: HD at %.1f s: %s (%u KB, %u MB in use)\n", SDL_GetTicks() / 1000.0, name ? name + 1 : e->path, bytes >> 10, (unsigned)(used_bytes >> 20));
+    }
+    return e->tex != 0;
+}
+
 unsigned int trep_lookup(uint64_t tex0, uint64_t texa)
 {
     uint64_t h, clut;
@@ -444,27 +469,7 @@ unsigned int trep_lookup(uint64_t tex0, uint64_t texa)
         return 0;
     }
     e->last = (uint32_t)SDL_GetTicks();
-    if (!e->tex && !e->failed) {
-        size_t len = 0;
-        uint8_t* d = read_file(e->path, &len);
-        int mips = 0;
-        uint32_t bytes = 0;
-        GLuint t = 0;
-        if (d) {
-            t = (len > 4 && !memcmp(d, "DDS ", 4)) ? load_dds(d, len, &bytes, &mips, &e->w, &e->ht) : load_png(d, len, &bytes, &mips, &e->w, &e->ht);
-            free(d);
-        }
-        if (!t) { e->failed = 1; host_log("tex: could not load %s\n", e->path); return 0; }
-        make_room(bytes);
-        e->tex = t; e->bytes = bytes; used_bytes += bytes; e->mips = mips;
-        if (t < 65536) hd_kind[t] = (uint8_t)(mips ? 2 : 1);
-        if (!mips || e->w > g_tex_hd_max || e->ht > g_tex_hd_max) queue_convert(e);
-        {
-            static int nlog;
-            const char* name = strrchr(e->path, '/');
-            if (nlog++ < 1000) host_log("tex: HD at %.1f s: %s (%u KB, %u MB in use)\n", SDL_GetTicks() / 1000.0, name ? name + 1 : e->path, bytes >> 10, (unsigned)(used_bytes >> 20));
-        }
-    }
+    if (!e->tex && !e->failed && !load_entry(e)) return 0;
     if (!e->tex) return 0;
     n_hits++;
     if ((n_lookups % 200) == 0) host_log("tex: %u textures seen, %u replaced\n", n_lookups, n_hits);
@@ -472,3 +477,40 @@ unsigned int trep_lookup(uint64_t tex0, uint64_t texa)
 }
 
 int trep_kind(unsigned int gl_tex) { return gl_tex < 65536 ? hd_kind[gl_tex] : 0; }
+
+/* vr131: a replacement texture by its file name (the VR ammo box's own picture) - 0 when not in the pack */
+unsigned int trep_named(const char* file, int* mips)
+{
+    static char last[128];
+    static long idx = -1;
+    size_t fl = strlen(file);
+    if (strcmp(last, file)) {
+        snprintf(last, sizeof(last), "%s", file);
+        idx = -1;
+        for (uint32_t i = 0; i < tab_cap && idx < 0; i++) {
+            size_t pl = tab[i].path ? strlen(tab[i].path) : 0;
+            if (pl >= fl && !strcmp(tab[i].path + pl - fl, file)) idx = (long)i;
+        }
+    }
+    if (idx < 0) return 0;
+    tab[idx].last = (uint32_t)SDL_GetTicks();
+    if (!tab[idx].tex && !tab[idx].failed && !load_entry(&tab[idx])) return 0;
+    if (mips) *mips = tab[idx].mips;
+    return tab[idx].tex;
+}
+
+/* vr130 diagnosis: an HD texture drawn while the inventory shows item `item` - its file, once per item and texture */
+void trep_note(unsigned int gl_tex, int item)
+{
+    static struct { unsigned int t; int item; } seen[1024];
+    static int n;
+    for (int i = 0; i < n; i++) if (seen[i].t == gl_tex && seen[i].item == item) return;
+    if (n >= 1024) return;
+    seen[n].t = gl_tex; seen[n].item = item; n++;
+    for (uint32_t i = 0; i < tab_cap; i++)
+        if (tab[i].path && tab[i].tex == gl_tex) {
+            const char* name = strrchr(tab[i].path, '/');
+            host_log("vr-diag: inventory item %d: texture %s (%dx%d)\n", item, name ? name + 1 : tab[i].path, tab[i].w, tab[i].ht);
+            return;
+        }
+}

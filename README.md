@@ -26,16 +26,46 @@ decompilation by AshfordFamily. All credit for the PC port goes to them.
 
 ### How to play in VR
 
-1. Download `RE-Code-Veronica-X-PC-Port-VR-v1.1-windows.zip` from the [Releases](https://github.com/neto1495mn-sudo/recvx-enhanced-port-pcvr/releases)
+1. Download `RE-Code-Veronica-X-PC-Port-VR-v1.2-windows.zip` from the [Releases](https://github.com/neto1495mn-sudo/recvx-enhanced-port-pcvr/releases)
    page and unpack it anywhere.
 2. Start your OpenXR runtime (tested only on a Quest 2 through Virtual Desktop / VDXR).
-3. Run `PLAY_VR.bat`. On the first start, pick your own `.iso` of the game (PS2, NTSC-U, SLUS-20184).
+3. Run `recvx_vr.exe` (or `PLAY_VR.bat`). On the first start, pick your own `.iso` of the game (PS2, NTSC-U,
+   SLUS-20184); then the launcher opens: press **PLAY**.
 4. Optional, **HD textures**: download the [texture pack (SLUS-20184.zip)](https://disk.yandex.ru/d/_ILWwt29zG2bDw), unpack it into the
    `textures` folder (see "HD textures" below).
 5. Before playing, set the comfort options in the title screen: **OPTION → ENHANCED SETTINGS → VR**
    (see "The VR page" below).
 
 When a newer version is out, the game says so when it starts (see "Update check" below).
+
+### What's new in 1.2
+
+- **A launcher** opens when you start the game: **PLAY** goes straight into VR; **OPTIONS** has the VR,
+  graphics and texture settings. It speaks **English, Portuguese or Spanish** (EN · PT · ES at the top
+  right; English the first time, then the one you chose). Put a `launcher.png` next to the game for a
+  picture on its left (none is included). "Show this launcher when the game starts" turns it off.
+- **No console window** next to the game any more (the log still goes to `recvx.log` with `--log`).
+- **Smooth turn is really smooth**: it turns at the headset's rate (90 Hz on a Quest 2), by the clock,
+  about your head, and no longer stops and jumps when a game frame comes a little late.
+- **The PC monitor shows your left eye** (it showed the game's own camera). The third-person crosshair
+  is no longer drawn in VR.
+- **The action icon**: an arrow from a little away, the **"A" button** when pressing it works now; at the
+  height of the middle of a door, over the thing itself, and it no longer moves with you.
+- **Magazines**: B drops **the game's own magazine** (it falls to the floor, with its sound). Bringing the
+  ammo box to the gun with the magazine still in **tops the gun up** (a full gun: the box is just put
+  away). A light **"tick-tick"** on the gun's controller when it is loaded. After taking the box, the knife
+  only comes out once you let go of the grip and squeeze it again.
+- **The ammo count at the belt** is "in the magazine / in your boxes" (12/50; magazine out: 0/62), in front
+  of the box and steady while you walk or turn.
+- **The handgun bullets' box** at the belt and in your hand looks like the game's own box (with the HD
+  texture pack). The other ammo keeps the plain box for now.
+- **The handgun kicks like a 9 mm**: a sharp snap up and back; the other weapons as before.
+- **Controls**: the left **menu button (three lines) is Select**; **left trigger + Y is Start**. **Run** like
+  Call of Duty: click the left stick once while walking forward.
+
+Not tested in the headset yet: the handgun box picture, the handgun's kick, the ammo count, the
+Select/Start swap and running with one click. Fan translations (e.g. Portuguese) still show broken
+text in game: the translated letters' widths are not read from the disc yet (planned).
 
 ### What's new in 1.1
 
@@ -79,7 +109,8 @@ The other VR options stay in `save/recvx.ini`.
 
 When the game starts it asks GitHub for the latest release of this project (one request, nothing
 about you is sent; at most a few seconds, nothing happens without a network). If a newer version is
-out, a window on the PC offers to open the download page. Set `update_check = 0` in
+out, the launcher shows it in yellow (click it to open the download page; with the launcher off, a window
+on the PC offers it). Set `update_check = 0` in
 `save/recvx.ini` to turn it off.
 
 **Controls (Touch controllers)**
@@ -87,7 +118,8 @@ out, a window on the PC offers to open the download page. Set `update_check = 0`
 | Button | What it does |
 |---|---|
 | Left stick | Walk (the way you look) |
-| Left trigger, or click the left stick | Run |
+| Click the left stick while walking forward | Run (keeps running until you stop pushing forward or click again) |
+| Left trigger (hold) | Run |
 | Right stick left/right | Snap turn (locked on stairs) |
 | Right grip (hold) | Raise the gun and aim with your hand |
 | Right trigger | Fire (with twin guns: the right gun) |
@@ -97,12 +129,12 @@ out, a window on the PC offers to open the download page. Set `update_check = 0`
 | B | Cancel / back; with a gun in hand: drop the magazine |
 | Y | Inventory (status screen) |
 | X | Map |
-| Hold left trigger + press Y | Select |
-| Left menu button (three lines) | Start (pause, options) |
+| Left menu button (three lines) | Select |
+| Hold left trigger + press Y | Start (pause, options) |
 | Long press of the headset's system button | Recentre the view |
 
-Walking around your room moves Claire too. A small "A" shows over what the action button
-would use (a door, an item) when you are right in front of it.
+Walking around your room moves Claire too. An arrow shows over a door you look at from a little
+away; the "A" button over what the action button would use (a door, an item) when pressing it works.
 
 **Reloading (by hand)**
 
@@ -112,9 +144,9 @@ The gun does not reload by itself: when it is empty it only clicks.
 2. Look down: an ammo box hangs at your belt, in front of your belly, with the rounds you have
    left. It is not shown when you have no ammo for that gun.
 3. Bring your **left hand** to the box and squeeze the **left grip**: the box is now in your hand.
-4. Keep the grip held and bring your left hand to the gun: it reloads (sound and vibration).
+4. Keep the grip held and bring your left hand to the gun: it reloads (sound and a "tick-tick" on the gun).
 
-With an empty gun you can skip step 1.
+With an empty gun, or to top it up with the magazine in, you can skip step 1.
 
 **How the game works in VR**
 
