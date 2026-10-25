@@ -20,3 +20,7 @@ __pycache__/
 
 # editor state
 /.claude/
+
+# Diario do VR (so local, nunca vai para o GitHub)
+docs/VR_MUDANCAS*.md
+docs/VR_FUTURO.md
