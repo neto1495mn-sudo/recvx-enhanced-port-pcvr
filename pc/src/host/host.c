@@ -305,6 +305,7 @@ int main(int argc, char** argv)
         if (!g_config.iso_path[0]) { usage(); host_fatal("no game disc image given"); }
         if (!cdvd_open_image(g_config.iso_path)) host_fatal("cannot open game disc image '%s'", g_config.iso_path);
     }
+    { extern void fontsz_from_iso(void); fontsz_from_iso(); }   /* vr138: translations' letter widths (glue/font_glue.c) */
 
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);

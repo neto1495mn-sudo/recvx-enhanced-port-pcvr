@@ -1100,8 +1100,15 @@ void vr_camera(void)
     hit_update();
     if (g_vr_danger_fx) {   /* the renderer's danger vignette: life in Danger (the game's limp) */
         extern volatile int g_vr_danger;
-        g_vr_danger = plp->exp0 && ((EXP_WORK*)plp->exp0)->dmlvl >= 2 && plp->hp > 0;
-        { extern volatile int g_vr_poison; g_vr_poison = (plp->stflg & 0x280000) && plp->hp > 0; }   /* vr112: poisoned (the game's own flags, sub1.c) */
+        g_vr_danger = plp->exp0 && ((EXP_WORK*)plp->exp0)->dmlvl >= 2 && plp->hp >= 0;   /* vr135: life 0 is alive */
+        { extern volatile int g_vr_poison; g_vr_poison = (plp->stflg & 0x280000) && plp->hp >= 0; }   /* vr112: poisoned (the game's own flags, sub1.c) */
+    }
+    if (g_vr_debug_log) {   /* vr135 log preventivo: at life 0 the VR walking must stay on (it went to the tank controls) */
+        static int was0, nl;
+        extern int vr_playing(void);
+        if (plp->hp == 0 && !was0 && nl++ < 20)
+            vr_log("vr-diag: life 0: still alive (mode %d/%d/%d), VR walking %s\n", plp->mode0, plp->mode1, plp->mode2, vr_playing() ? "on" : "OFF");
+        was0 = plp->hp == 0;
     }
     {   /* vr116: the comfort vignette (gs_gl.c) - how much she moves by the stick or turns now, 0..1: in in ~0.1 s, out in
            ~0.2 s; walking in the room is not counted (the body's own move does not make one sick) */
@@ -1949,6 +1956,37 @@ int vr_gun_ray(GA_WORK* gap)
    hidden; what is seen of the player are the hand/weapon objects linked to the hand nodes
    (drawn by the game's object pass from the tracked hand matrices) */
 void vr_draw_hands(void* p) { (void)p; }
+
+/* vr136: player.c, the bowgun's arrow (weapons 10 and 19, effect 130): it leaves the muzzle on the hand node but
+   flew along the body's aim, Rx(wax) Ry(way). Its velocity v goes along the barrel in the right hand instead (as
+   vr_gun_ray), same speed, and its angles ax/ay follow so it flies point first. 0 = left as the game's. */
+int vr_fly_dir(NJS_POINT3* v, int* ax, int* ay, int wno)
+{
+    VrInput in;
+    float r[9], d[3], bd[3], l, sp, c = cosf(vr_yaw), s = sinf(vr_yaw);
+    if (!v || !plp || !vr_on() || !g_vr_hand_aim) return 0;
+    diag_shots++;
+    if (!xr_input(&in) || !in.aim_valid || !hand_ok[0]) return 0;
+    quat_to_rows(r, &in.aim);
+    d[0] = c * -r[2] + s * -r[8]; d[1] = -r[5]; d[2] = -s * -r[2] + c * -r[8];   /* -z of the controller */
+    if (barrel_dir(0, bd)) memcpy(d, bd, sizeof(d));
+    l = sqrtf(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+    sp = sqrtf(v->x * v->x + v->y * v->y + v->z * v->z);
+    if (l < 1e-4f || sp < 1e-4f) return 0;
+    if (g_vr_debug_log) {   /* log preventivo: the first arrow of each weapon */
+        static unsigned seen;
+        if (wno >= 0 && wno < 32 && !(seen & (1u << wno))) {
+            float dot = (v->x * d[0] + v->y * d[1] + v->z * d[2]) / (l * sp);
+            seen |= 1u << wno;
+            vr_log("vr-diag: arrow: weapon %d, the game's way and the controller's %.1f deg apart (%s)\n", wno,
+                   acosf(dot > 1 ? 1 : dot < -1 ? -1 : dot) * (180.0f / 3.14159265f), barrel_ok[0] ? "barrel" : "controller");
+        }
+    }
+    v->x = d[0] / l * sp; v->y = d[1] / l * sp; v->z = d[2] / l * sp;
+    *ay = (int)(atan2f(-d[0], -d[2]) * (32768.0f / 3.14159265f));
+    *ax = (int)(atan2f(d[1], sqrtf(d[0] * d[0] + d[2] * d[2])) * (32768.0f / 3.14159265f));
+    return 1;
+}
 
 /* the left stick (forward, right), -1..1; 0 if no controllers */
 int vr_move_stick(float* f, float* r)

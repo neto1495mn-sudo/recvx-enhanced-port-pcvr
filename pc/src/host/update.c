@@ -1,6 +1,6 @@
 /*
  * VR update check (vr119, ini update_check = 1): at start, the latest release of the VR fork on GitHub
- * (its tag "vr-v<major>.<minor>"), compared with this build's RECVX_VR_VERSION; a newer one is offered in a
+ * (its tag "vr-v<major>.<minor>[.<patch>]"), compared with this build's RECVX_VR_VERSION; a newer one is offered in a
  * message box (open the download page / continue). One HTTPS request, nothing about the player sent; at most
  * ~3 s; without a network, a timeout or anything unexpected it says nothing. Windows (WinHTTP) only.
  */
@@ -10,7 +10,7 @@
 
 void host_log(const char* fmt, ...);   /* (not ps2_platform.h: its PS2 names clash with windows.h) */
 
-#define RECVX_VR_VERSION "1.2"
+#define RECVX_VR_VERSION "1.3"
 const char* g_vr_version = RECVX_VR_VERSION;   /* (the launcher's foot) */
 #define UPDATE_HOST L"api.github.com"
 #define UPDATE_PATH L"/repos/neto1495mn-sudo/recvx-enhanced-port-pcvr/releases/latest"
@@ -51,13 +51,13 @@ static int fetch(char* out, int cap)
     return ok && n > 0;
 }
 
-/* "vr-v1.2" / "v1.2" / "1.2" -> 1002; -1 if not a version */
+/* "vr-v1.2" / "v1.2" / "1.2" -> 1002000, "v1.3.1" -> 1003001 (vr139: a missing patch number is 0); -1 if not a version */
 static int version_of(const char* t)
 {
-    int ma = 0, mi = 0;
+    int ma = 0, mi = 0, pa = 0;
     while (*t && (*t < '0' || *t > '9')) t++;
-    if (sscanf(t, "%d.%d", &ma, &mi) < 1) return -1;
-    return ma * 1000 + mi;
+    if (sscanf(t, "%d.%d.%d", &ma, &mi, &pa) < 1) return -1;
+    return (ma * 1000 + mi) * 1000 + pa;
 }
 
 void update_check(void)

@@ -464,7 +464,8 @@ unsigned int tps_pad(unsigned int pad)
     pad_steer = (pad & 0xF) != 0;
     move_keys = 0;
     if (FREE_CAM && tps_cam_active && plp && plp->mode1 == 0 && !(k & TPS_K_QUICKTURN) &&
-        plp->hp > 0 && !(sys->st_flg & 0x200)) {   /* (not on the game over "Retry?" or a question: left/right choose there) */
+        plp->hp >= 0 && !(sys->st_flg & 0x200)) {   /* (not on the game over "Retry?" or a question: left/right choose there;
+                                                       vr135: life 0 is still alive - dead is hp < 0, as the game tests) */
         /* camera A: any direction walks forward, tps_player turns the character towards it */
         move_keys = k & (TPS_K_FWD | TPS_K_BACK | TPS_K_LEFT | TPS_K_RIGHT);
         k &= ~move_keys;

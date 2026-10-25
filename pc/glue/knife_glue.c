@@ -131,7 +131,7 @@ unsigned int knife_pad(unsigned int pad)
     int held, i, n;
     if (!sys || !plp) return pad;
     iv = inv();
-    if (state && (plp->mode0 == 3 || plp->hp <= 0 ||iv[0] != (unsigned int)knife_slot || ID(iv[knife_slot]) != KNIFE)) {
+    if (state && (plp->mode0 == 3 || plp->hp < 0 ||iv[0] != (unsigned int)knife_slot || ID(iv[knife_slot]) != KNIFE)) {
         host_log("knife: weapon changed elsewhere, nothing to give back\n");   /* inventory, script, game over */
         state = 0;
     }
