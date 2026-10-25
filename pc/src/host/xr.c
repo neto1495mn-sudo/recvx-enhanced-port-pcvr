@@ -84,6 +84,7 @@ void xr_recenter_matrix(float m[16])
 int    xr_init(void) { if (g_vr_request) host_log("vr: not available on this platform yet\n"); return 0; }
 int    xr_active(void) { return 0; }
 double xr_display_hz(void) { return 0.0; }
+int64_t xr_display_time_ns(void) { return 0; }
 void   xr_recenter(void) {}
 void   xr_shutdown(void) {}
 int    xr_frame_begin(void) { return -1; }
@@ -505,6 +506,7 @@ fail:
 
 int xr_active(void) { return sess != XR_NULL_HANDLE && !lost; }
 double xr_display_hz(void) { return xr_active() ? hz : 0.0; }
+int64_t xr_display_time_ns(void) { return xr_active() ? (int64_t)fs.predictedDisplayTime : 0; }
 void xr_recenter(void) { need_center = 1; }
 
 static void poll_events(void)

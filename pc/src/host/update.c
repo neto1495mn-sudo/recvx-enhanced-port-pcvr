@@ -10,7 +10,7 @@
 
 void host_log(const char* fmt, ...);   /* (not ps2_platform.h: its PS2 names clash with windows.h) */
 
-#define RECVX_VR_VERSION "1.3"
+#define RECVX_VR_VERSION "1.3.1"
 const char* g_vr_version = RECVX_VR_VERSION;   /* (the launcher's foot) */
 #define UPDATE_HOST L"api.github.com"
 #define UPDATE_PATH L"/repos/neto1495mn-sudo/recvx-enhanced-port-pcvr/releases/latest"

@@ -75,6 +75,7 @@ static const char* in_session(void) { return g_coop.state != COOP_OFF ? "Not dur
 /* cheats (F2): the request bits are taken by the game thread at the frame hand-off */
 /* VR: the game has no way out from its menus (vr111) - quit as the window's close does: settings saved, exit handlers run */
 static void quit_desktop(void) { SDL_Event e; SDL_zero(e); e.type = SDL_EVENT_QUIT; SDL_PushEvent(&e); }
+void pc_quit_desktop(void) { quit_desktop(); }   /* vr145: the title menu's EXIT (lobby_glue.c) */
 static void heal(void) { __atomic_or_fetch(&g_cheat.request, CHEAT_HEAL, __ATOMIC_ACQ_REL); }
 static void give(void) { if (g_cheat.give_id) __atomic_or_fetch(&g_cheat.request, CHEAT_GIVE, __ATOMIC_ACQ_REL); }
 static void spawn(void) { __atomic_or_fetch(&g_cheat.request, CHEAT_SPAWN, __ATOMIC_ACQ_REL); }

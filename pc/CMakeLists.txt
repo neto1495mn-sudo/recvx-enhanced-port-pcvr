@@ -194,8 +194,16 @@ if(RECVX_LAYOUT_PAD)
     set(LAYOUT_PAD_SRC tests/layout_pad.c)
     set_source_files_properties(tests/layout_pad.c PROPERTIES COMPILE_DEFINITIONS RECVX_LAYOUT_PAD=${RECVX_LAYOUT_PAD})
 endif()
+set(RECVX_RES_OBJ)
+if(WIN32)   # vr145: the exe's icon and name (res/recvx.rc)
+    find_program(RECVX_WINDRES NAMES i686-w64-mingw32-windres windres REQUIRED)
+    set(RECVX_RES_OBJ ${CMAKE_CURRENT_BINARY_DIR}/recvx_res.o)
+    add_custom_command(OUTPUT ${RECVX_RES_OBJ}
+                       COMMAND ${RECVX_WINDRES} -I ${CMAKE_CURRENT_SOURCE_DIR}/res ${CMAKE_CURRENT_SOURCE_DIR}/res/recvx.rc -O coff -o ${RECVX_RES_OBJ}
+                       DEPENDS res/recvx.rc res/recvx.ico)
+endif()
 add_executable(recvx ${LAYOUT_PAD_SRC} $<TARGET_OBJECTS:recvx_game> $<TARGET_OBJECTS:recvx_platform>
-               $<$<TARGET_EXISTS:glibc_compat>:$<TARGET_OBJECTS:glibc_compat>>)
+               $<$<TARGET_EXISTS:glibc_compat>:$<TARGET_OBJECTS:glibc_compat>> ${RECVX_RES_OBJ})
 target_link_libraries(recvx PRIVATE imgui SDL3::SDL3 miniupnpc::miniupnpc natpmp monocypher m)
 if(WIN32)
     target_link_libraries(recvx PRIVATE ws2_32 pthread shell32 winmm)   # co-op UDP (src/net); clock_gettime (winpthreads)

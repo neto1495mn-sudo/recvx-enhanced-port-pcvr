@@ -197,6 +197,10 @@ int   pc_syssave_native(struct SYSSAVE_SCREEN* p);   /* 0 memory card, else the 
 /* mouse in the inventory screens (pc/glue/menu_glue.c) */
 unsigned int menu_pad(unsigned int pad);
 /* the co-op trade screen (pc/glue/trade_glue.c, docs/COOP.md "Trade screen") */
+unsigned int selmenu_pad(unsigned int pad);   /* vr145: pad.c bhSetPad, after trade_pad: Select pauses with a menu (options_glue.c) */
+int pc_selmenu_draw(void);
+void pc_title_exit(void);
+void pc_title_font_leave(void);   /* vr146: adv.c, a game mode chosen at the title: its font released (lobby_glue.c) */   /* vr145: adv.c, the title menu's EXIT row (lobby_glue.c) */   /* vr145: system.c, the pause screen: 1 = the menu drew there */
 unsigned int trade_pad(unsigned int pad);   /* pad.c bhSetPad, after menu_pad: the screen's input, the player stands still */
 void  trade_draw(void);                     /* game.c bhMainSequence, after the frame's drawing */
 int   pc_trade_screen(void);                /* the screen is open (menu_pad leaves the mouse to it) */

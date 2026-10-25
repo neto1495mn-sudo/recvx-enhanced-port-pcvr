@@ -2754,6 +2754,12 @@ static void vr_proj_matrix(float m[16], const VrView* v, float ofx, float ofy)
     m[11] = 1.0f;
 }
 static int present_vr_stereo_(const struct Frame* cur, float t);
+/* vr141: the smooth turn by the headset's clock, shared with the game frame (vr_glue.c, which does not see SDL) */
+static SDL_AtomicInt g_vr_turn_total;   /* the turn so far (microradians, wraps) - added here per headset image */
+static SDL_AtomicInt g_vr_turn_taken;   /* ... of it, what the game frame has taken into its yaw */
+static SDL_AtomicInt g_vr_turn_allow;   /* ... it may turn (smooth turning, controllers, not on the stairs) */
+int  vr_turn_total(void) { return SDL_GetAtomicInt(&g_vr_turn_total); }
+void vr_turn_take(int taken, int allow) { SDL_SetAtomicInt(&g_vr_turn_taken, taken); SDL_SetAtomicInt(&g_vr_turn_allow, allow); }
 static float vr_turn_t = 1.0f;   /* vr125: the smooth turn's own t - by the clock, not held at 0..1: a game frame arriving a few ms
                                     late or early no longer stops the turn and then jumps it (the arrivals' even grid, render.c) */
 /* vr74 diagnosis: a headset frame's work by step (ns): 0 replay (both eyes), 1 eye image wait, 2 eye copy, 3 mirror window, 4 hand to the headset */
@@ -2843,12 +2849,13 @@ static int present_vr_stereo_(const struct Frame* cur, float t)
                 host_log("vr-diag: walking smoothed: %s (stick move %.3f m this game frame, room-walk %.3f %.3f; since last: used %u, refused %u, wall/turned back %u)\n",
                          !g_vr_interp_body ? "off (vr_interp_body 0)" : use ? "on" : "not this frame", mv, v->follow[0], v->follow[1], nused, njump, nwall);
         }
-        if (fabsf(v->turn) > 1e-5f && fabsf(v->turn) < 0.5f) {   /* vr120: a smooth turn shown at the headset's rate (vr125: by its own t,
+        float e = (float)(int)((unsigned)SDL_GetAtomicInt(&g_vr_turn_total) - (unsigned)v->turn_at) * 1e-6f;   /* vr141: turned since the frame */
+        if (fabsf(e) > 1e-5f && fabsf(e) < 0.5f) {   /* vr120: a smooth turn shown at the headset's rate (vr125: by its own t,
                also past the frame while the next is a little late, and on frames not interpolated otherwise):
                the play space as the frame made it, turned back by what is left of this frame's turn, about the head
                (W(yaw - e) = W(yaw) * T(head) * Ry(-e) * T(-head) - the head stays where it is) */
             VrPose hp;
-            float base[16], R[16], T1[16], T2[16], M1[16], M2[16], e = -(1.0f - vr_turn_t) * v->turn, c = cosf(e), sn = sinf(e);
+            float base[16], R[16], T1[16], T2[16], M1[16], M2[16], c = cosf(e), sn = sinf(e);
             memcpy(base, use ? Wt : v->W, sizeof(base));
             if (xr_head_pose(&hp)) {   /* vr124: the head pose is in the recentred space and W = Wg * recentre: the turn goes
                                           in between (W * inverse(recentre) * T(head) * Ry * T(-head) * recentre); about the
@@ -3031,6 +3038,35 @@ static uint64_t gs_present_vr(const struct Frame* cur, float t)
         double tc = g_vr_frame_period > 1e6 ? ((double)SDL_GetTicksNS() - g_vr_frame_ref) / g_vr_frame_period : 1.0;
         if (t < 1.0f) t = tc < 0.0 ? 0.0f : tc > 1.0 ? 1.0f : (float)tc;
         vr_turn_t = tc < -0.5 ? -0.5f : tc > 1.5 ? 1.5f : (float)tc;   /* vr125: at most half a game frame ahead or behind */
+    }
+    {   /* vr141: the smooth turn by the headset's clock - the stick read each headset image, turned by the time since the last
+           (~120 deg/s, as 4 deg a game frame was); the game frame takes it into its yaw, the view shows what it has not yet.
+           vr142: the time is the headset's display time (OpenXR), not ours - even steps, and the image after a missed one
+           covers the time it missed; the stick eased in and out over ~0.1 s (the top speed as before) */
+        static uint64_t last_ns;
+        static int64_t last_disp;
+        static float rx_s;
+        uint64_t now = SDL_GetTicksNS();
+        int64_t disp = fr == 1 ? xr_display_time_ns() : 0;
+        float tdt;
+        VrInput in;
+        if (disp > 0 && last_disp > 0 && disp > last_disp) tdt = (float)(disp - last_disp) * 1e-9f;
+        else tdt = last_ns ? (float)(now - last_ns) * 1e-9f : 0.0f;
+        last_ns = now; if (disp > 0) last_disp = disp;
+        if (tdt > 0.05f) tdt = 0.05f;
+        if (fr == 1 && SDL_GetAtomicInt(&g_vr_turn_allow) && xr_input(&in)) {
+            float want = fabsf(in.rx) > 0.15f ? in.rx : 0.0f, k = tdt / 0.05f;   /* ~95% of the way in 0.15 s, most of it in 0.1 */
+            rx_s += (want - rx_s) * (k > 1.0f ? 1.0f : k);
+            if (want == 0.0f && fabsf(rx_s) < 0.02f) rx_s = 0.0f;
+        } else rx_s = 0.0f;
+        if (rx_s != 0.0f) {
+            int tot = SDL_GetAtomicInt(&g_vr_turn_total);
+            float ahead = (float)(int)((unsigned)tot - (unsigned)SDL_GetAtomicInt(&g_vr_turn_taken)) * 1e-6f;
+            if (fabsf(ahead) < 0.35f) {   /* the game stopped taking it (loading, a pause): no more */
+                float d = -rx_s * (3.14159265f / 180.0f) * 120.0f * tdt;
+                SDL_SetAtomicInt(&g_vr_turn_total, (int)((unsigned)tot + (unsigned)(int)(d * 1e6f)));
+            }
+        }
     }
     static uint64_t last_ms;
     uint64_t now_ms = SDL_GetTicks();

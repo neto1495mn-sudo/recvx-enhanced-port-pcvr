@@ -85,6 +85,9 @@ static unsigned rec_seen;    /* xr_recenter_gen at the last heading reset */
 static int snap_held;        /* the right stick is still out after a snap turn */
 static uint64_t turn_ms;     /* vr116: the last snap or smooth turn (the comfort vignette) */
 static int sprint_on;         /* vr133: running by one click of the left stick while walking forward (as Call of Duty) */
+extern int  vr_turn_total(void);             /* vr141: the smooth turn so far, by the headset's clock (gs_gl.c) */
+extern void vr_turn_take(int taken, int allow);
+static int turn_taken;                        /* ... of it, what vr_yaw has taken */
 static float smooth_turn;    /* vr120: this frame's smooth turn (radians) - the renderer turns the view in between frames */
 int vr_playing(void);
 static uint64_t cam_ms;      /* when the VR camera last ran (SDL ticks): it runs only in play, not in menus */
@@ -359,7 +362,10 @@ static void hit_update(void)
 {
     uint64_t now = SDL_GetTicks();
     float env = 0, a = g_vr_hit_tilt * (3.14159265f / 180.0f);
-    if (plp && last_hp >= 0 && plp->hp < last_hp && last_hp - plp->hp < 400) {
+    if (plp && last_hp >= 0 && plp->hp < last_hp && last_hp - plp->hp <= 2 && (plp->stflg & 0x280000)) {   /* vr154: the poison's drain, a point at a time: not a hit (the tilt each point swayed the view) */
+        static unsigned nl;
+        if (g_vr_debug_log && nl++ < 5) host_log("vr-diag: poison drain (life %d -> %d), no tilt\n", last_hp, plp->hp);
+    } else if (plp && last_hp >= 0 && plp->hp < last_hp && last_hp - plp->hp < 400) {
         enemy_way(&hit_side, &hit_front);   /* the nearest live enemy is the one that hit */
         hit_ms = now ? now : 1;
         hit_haptics(last_hp - plp->hp, hit_side, hit_front);
@@ -1024,11 +1030,13 @@ static void heading_update(void)
                 if (g_vr_debug_log) { static unsigned n; if (n++ < 30) vr_log("vr-diag: snap turn before the hands (frame gen %u)\n", cam_gen); }
             }
             else if (fabsf(in.rx) < 0.3f) snap_held = 0;
-        } else if (fabsf(in.rx) > 0.15f) {   /* ~120 deg/s at 30 fps */
-            float d = -in.rx * (3.14159265f / 180.0f) * 4.0f;
-            vr_yaw += d; smooth_turn += d; turn_ms = SDL_GetTicks();
+        } else {   /* vr141: the renderer turns by the headset's clock (gs_gl.c); here only what it has turned since */
+            float d = (float)(int)((unsigned)vr_turn_total() - (unsigned)turn_taken) * 1e-6f;
+            if (fabsf(d) < 0.5f && fabsf(d) > 1e-6f) { vr_yaw += d; smooth_turn += d; turn_ms = SDL_GetTicks(); }
         }
     }
+    turn_taken = vr_turn_total();   /* vr141: also when not turning - nothing left over for later */
+    vr_turn_take(turn_taken, ctl && g_vr_turn == 0 && vr_active);
 }
 
 /* vr92 diagnosis (vr_debug_log): "walking on the spot" - the stick pushed, the game walking her, but she does not
@@ -2025,6 +2033,7 @@ void vr_after_draw(void)
     v.box_mode = box_mode; memcpy(v.box_c, box_c, sizeof(v.box_c));
     v.box_item = box_item;   /* vr131 */
     v.turn = smooth_turn;   /* vr120 */
+    v.turn_at = turn_taken;   /* vr141 */
     v.box_amb[0] = rom ? rom->amb_r[(int)rom->amb_itm & 3] : 1.0f; v.box_amb[1] = rom ? rom->amb_g[(int)rom->amb_itm & 3] : 1.0f; v.box_amb[2] = rom ? rom->amb_b[(int)rom->amb_itm & 3] : 1.0f;
     {   /* VR diagnosis (vr_debug_log) */
         static int last = -1;

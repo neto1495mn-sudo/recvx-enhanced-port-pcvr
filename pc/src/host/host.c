@@ -112,6 +112,7 @@ void host_pump_events(void)
         lobby_io_event(&ev);
         switch (ev.type) {
         case SDL_EVENT_QUIT:
+            host_log("exit: quit asked (window closed or quit)\n");   /* vr144 */
             exit(0);
         case SDL_EVENT_KEY_DOWN:
             if (bind_hotkey(&ev, B_FULLSCREEN)) {
@@ -273,8 +274,29 @@ static int SDLCALL game_thread(void* ud)
     exit(recvx_game_main(1, game_argv));
 }
 
+#ifdef _WIN32
+__declspec(dllimport) void* __stdcall GetCurrentProcess(void);
+__declspec(dllimport) int __stdcall TerminateProcess(void* process, unsigned code);
+__declspec(dllimport) void* __stdcall GetModuleHandleW(const unsigned short* name);
+__declspec(dllimport) void* __stdcall LoadImageW(void* inst, const unsigned short* name, unsigned type, int cx, int cy, unsigned flags);
+__declspec(dllimport) intptr_t __stdcall SendMessageW(void* wnd, unsigned msg, uintptr_t wp, intptr_t lp);
+__declspec(dllimport) int __stdcall GetSystemMetrics(int index);
+#endif
+/* vr144: registered first, so it runs last of the atexit handlers - after ours (the watch's summary, co-op goodbye,
+   port mappings, settings) the process ends at once: the C runtime's own teardown (unloading the OpenXR runtime
+   and the GL driver with the game thread still running) could hang, the window frozen until it was killed */
+static void end_process(void)
+{
+    host_log("exit: our cleanup done, ending the process\n");
+    fflush(stdout); fflush(stderr);
+#ifdef _WIN32
+    TerminateProcess(GetCurrentProcess(), 0);
+#endif
+}
+
 int main(int argc, char** argv)
 {
+    atexit(end_process);   /* vr144 */
     setvbuf(stdout, NULL, _IONBF, 0); /* the game's printf diagnostics */
     argv = pc_utf8_argv(argc, argv);   /* paths are UTF-8 everywhere (fileio.h) */
     { char* cwd = SDL_GetCurrentDirectory(); if (cwd) { SDL_strlcpy(start_dir, cwd, sizeof(start_dir)); SDL_free(cwd); } }
@@ -305,7 +327,8 @@ int main(int argc, char** argv)
         if (!g_config.iso_path[0]) { usage(); host_fatal("no game disc image given"); }
         if (!cdvd_open_image(g_config.iso_path)) host_fatal("cannot open game disc image '%s'", g_config.iso_path);
     }
-    { extern void fontsz_from_iso(void); fontsz_from_iso(); }   /* vr138: translations' letter widths (glue/font_glue.c) */
+    { extern void fontsz_from_iso(void); fontsz_from_iso(); }
+    { extern void plates_from_iso(void); plates_from_iso(); }   /* vr151: the title's plate texture (glue/font_glue.c) */   /* vr138: translations' letter widths (glue/font_glue.c) */
 
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
@@ -314,6 +337,16 @@ int main(int argc, char** argv)
     g_window = SDL_CreateWindow("Resident Evil Code: Veronica X", g_config.window_w, g_config.window_h,
                                 SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | (g_config.fullscreen ? SDL_WINDOW_FULLSCREEN : 0));
     if (!g_window) host_fatal("SDL_CreateWindow: %s", SDL_GetError());
+#ifdef _WIN32
+    {   /* vr145: the exe's icon (res/recvx.rc, id 1) on the window too - big for Alt+Tab, small for the title bar */
+        void* hwnd = SDL_GetPointerProperty(SDL_GetWindowProperties(g_window), SDL_PROP_WINDOW_WIN32_HWND_POINTER, NULL);
+        void* inst = GetModuleHandleW(NULL);
+        void* big = LoadImageW(inst, (const unsigned short*)(uintptr_t)1, 1 /* IMAGE_ICON */, GetSystemMetrics(11), GetSystemMetrics(12), 0);
+        void* small = LoadImageW(inst, (const unsigned short*)(uintptr_t)1, 1, GetSystemMetrics(49), GetSystemMetrics(50), 0);
+        if (hwnd && big) SendMessageW(hwnd, 0x80 /* WM_SETICON */, 1, (intptr_t)big);
+        if (hwnd && small) SendMessageW(hwnd, 0x80, 0, (intptr_t)small);
+    }
+#endif
     g_gl = SDL_GL_CreateContext(g_window);
     if (!g_gl) host_fatal("SDL_GL_CreateContext: %s", SDL_GetError());
     SDL_GL_SetSwapInterval(g_config.vsync ? 1 : 0);

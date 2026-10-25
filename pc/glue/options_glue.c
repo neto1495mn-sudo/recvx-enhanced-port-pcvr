@@ -63,7 +63,8 @@ void pc_options_frame(void) { g_menu_mouse.active = 1; }
    32, SCREEN SETUP 64, DEFAULT 160, EXIT 192, SETUP 224; the only H is in the narrower key config
    caption CHANGE AIM at 256, drawn wider). u = left edge, w = width (measured from the texture),
    dw = drawn width. */
-static const struct { short u, v, w, dw; } row8[] = {
+typedef struct { short u, v, w, dw; } Row8Letter;
+static const Row8Letter row8_us[] = {
     { 16, 224, 16, 16 }, { 88, 64, 19, 19 }, { 302, 256, 13, 18 }, { 0, 0, 18, 18 },   /* E (SETUP) N (SCREEN) H (CHANGE) A (AUDIO) */
     { 88, 64, 19, 19 }, { 70, 32, 17, 17 }, { 16, 224, 16, 16 }, { 0, 160, 18, 18 },  /* N C (CONFIG) E D (DEFAULT) */
     { -1, 0, 12, 12 },                                                                  /* space */
@@ -71,10 +72,21 @@ static const struct { short u, v, w, dw; } row8[] = {
     { 38, 192, 11, 11 }, { 88, 64, 19, 19 }, { 158, 32, 19, 19 }, { 0, 224, 15, 15 },  /* I (EXIT) N G (CONFIG) S */
 };
 
+/* vr153: the Brazilian translation's texture 0 has no H or G: "MAIS AJUSTES" from its own SAIR (v 192), MONO (256) and
+   the whole AJUSTES (224), measured from the disc */
+static const Row8Letter row8_br[] = {
+    { 152, 256, 21, 21 }, { 16, 192, 18, 18 }, { 35, 192, 11, 11 }, { 0, 192, 15, 15 },   /* M (MONO) A I S (SAIR) */
+    { -1, 0, 12, 12 },                                                                      /* space */
+    { 0, 224, 118, 118 },                                                                   /* AJUSTES */
+};
+extern int g_plates_br;   /* the disc's language (font_glue.c plates_from_iso) */
+#define row8 (g_plates_br ? row8_br : row8_us)
+#define ROW8_N (g_plates_br ? (int)(sizeof(row8_br) / sizeof(row8_br[0])) : (int)(sizeof(row8_us) / sizeof(row8_us[0])))
+
 static float row8_x(void)   /* right-aligned with the values */
 {
     float w = 0;
-    for (int i = 0; i < (int)(sizeof(row8) / sizeof(row8[0])); i++) w += row8[i].dw + 1;
+    for (int i = 0; i < ROW8_N; i++) w += row8[i].dw + 1;
     return ROW8_RIGHT - w;
 }
 
@@ -85,7 +97,7 @@ void pc_options_row8(int selected)
     unsigned int col = selected ? (((unsigned int)ap->FlushCount2 + 255) << 24) | 0xFFFFFF : 0x7FAFAFAF;
     float x = row8_x();
     QUAD* q = &Qtex[15];
-    for (int i = 0; i < (int)(sizeof(row8) / sizeof(row8[0])); i++) {
+    for (int i = 0; i < ROW8_N; i++) {
         if (row8[i].u >= 0) {
             SetQuadPos(x, ROW8_Y, row8[i].dw, 32.0f, q);
             SetQuadUv2(row8[i].u, row8[i].v, row8[i].w, 32.0f, 0, q);
@@ -503,4 +515,117 @@ void pc_options_close(void)
     st.any_pending = 0;
     st.capture = 0;
     g_menu_mouse.active = 0;
+}
+
+/* ---------------------------------------------------------------- vr145: the Select menu */
+/* In play, Select (the left menu button in VR) no longer opens the OPTION screen straight away: the
+   game is paused with its own pause (system.c bhSysCallEvent: sp_flg 0, the PAUSE screen of the
+   screen saver task, mode 10) and this small menu is drawn in place of the PAUSE message:
+   CONTINUE, OPTIONS (the OPTION screen as before) and RETURN TO TITLE (asked again first).
+   Input: the pad as the pause reads it (Ps2_pad) and the Touch controllers directly (in play they
+   do not reach the pad). Start still ends the pause as the game's own does: the menu goes with it. */
+#include "../../decomp/include/ps2/veronica/prog/ps2_sg_pad.h"
+#include "../src/host/xr.h"
+extern unsigned char Pause_Flag;
+extern int coop_on;
+void bhReturnTitle(void);
+
+static struct { int open, sel, ask, act; unsigned int prev_pad, prev_vr; } sm;
+enum { SM_CONTINUE, SM_OPTIONS, SM_TITLE, SM_N };
+static const char* const sm_names[SM_N] = { "CONTINUE", "OPTIONS", "RETURN TO TITLE" };
+
+static int sm_can_open(void)
+{
+    return sys && plp && (sys->tk_flg & 0x80) && !coop_on && !(sys->ss_flg & 0xA0400000) && !(sys->cb_flg & 0x7)
+        && !(sys->st_flg & 0x1C040208) && !(sys->st_flg & 0x4);
+}
+
+static void sm_pause(void)   /* as bhSysCallEvent's pause */
+{
+    sys->ss_flg |= 0x80000000;
+    Pause_Flag = 1;
+    sys->pau_spbak = sys->sp_flg;
+    sys->pau_pad_on = sys->pad_on; sys->pau_pad_ps = sys->pad_ps; sys->pau_pad_old = sys->pad_old;
+    sys->sp_flg = 0;
+    sys->ssv_md0 = 10;
+}
+
+static void sm_unpause(void)   /* as its end of the pause (Start) */
+{
+    sys->ss_flg &= ~0x80000000;
+    sys->sp_flg = sys->pau_spbak;
+    sys->pad_on = sys->pau_pad_on; sys->pad_ps = sys->pau_pad_ps; sys->pad_old = sys->pau_pad_old;
+    sys->ssv_md0 = 0; sys->ssv_tim = 0; sys->ssv_an = 0;
+    Pause_Flag = 0;
+}
+
+/* pad.c bhSetPad (after trade_pad): Select opens the menu; the action chosen runs here, with the game back */
+unsigned int selmenu_pad(unsigned int pad)
+{
+    static unsigned int held;
+    if (sm.act) {
+        int a = sm.act - 1;
+        sm.act = 0;
+        if (a == SM_OPTIONS) { host_log("selmenu: options\n"); return pad | 0x8000; }   /* system.c opens the OPTION screen */
+        if (a == SM_TITLE && sys && (sys->tk_flg & 0x80)) { host_log("selmenu: return to title\n"); bhReturnTitle(); return 0; }
+    }
+    if (held) { held &= pad; return pad & ~0x8000; }   /* Select still held after the menu: nothing more */
+    if ((pad & 0x8000) && !(sys->pad_old & 0x8000) && sm_can_open()) {
+        sm.open = 1; sm.sel = 0; sm.ask = 0; sm.prev_pad = ~0u; sm.prev_vr = ~0u;
+        held = pad & 0x8000;
+        sm_pause();
+        host_log("selmenu: open (paused)\n");
+        return pad & ~0x8000;
+    }
+    return pad;
+}
+
+/* system.c bhSysCallScreenSaver, mode 10 (the pause): 1 = the menu drew here (no PAUSE message) */
+int pc_selmenu_draw(void)
+{
+    unsigned int pad, press, vr = 0, vpress;
+    VrInput in;
+    int up, down, ok, back, i;
+    float y0 = 170.0f;
+    if (!sm.open) return 0;
+    if (!(sys->ss_flg & 0x80000000)) { sm.open = 0; host_log("selmenu: closed by Start\n"); return 0; }
+    pad = Ps2_pad.pad1.on;
+    if (xr_input(&in)) {
+        vr = (in.buttons & (VRB_A | VRB_B | VRB_MENU)) | (in.ly > 0.5f ? 0x100 : 0) | (in.ly < -0.5f ? 0x200 : 0);
+    }
+    press = sm.prev_pad == ~0u ? 0 : pad & ~sm.prev_pad;   /* (what was held when it opened is not a press) */
+    vpress = sm.prev_vr == ~0u ? 0 : vr & ~sm.prev_vr;
+    sm.prev_pad = pad; sm.prev_vr = vr;
+    up = (press & 0x1000) || (vpress & 0x100);
+    down = (press & 0x4000) || (vpress & 0x200);
+    ok = (press & ok_button()) || (vpress & VRB_A);
+    back = (press & (cancel_button() | 0x100)) || (vpress & (VRB_B | VRB_MENU));
+    if (sm.ask) {
+        if (up || down) { sm.ask = sm.ask == 1 ? 2 : 1; CallSystemSe(0, 2); }
+        if (ok && sm.ask == 1) { CallSystemSe(0, 3); sm.open = 0; sm_unpause(); sm.act = 1 + SM_TITLE; }
+        else if (back || ok) { CallSystemSe(0, 1); sm.ask = 0; }
+    } else {
+        if (up) { sm.sel = (sm.sel + SM_N - 1) % SM_N; CallSystemSe(0, 2); }
+        if (down) { sm.sel = (sm.sel + 1) % SM_N; CallSystemSe(0, 2); }
+        if (ok) {
+            CallSystemSe(0, 3);
+            if (sm.sel == SM_TITLE) sm.ask = 2;   /* NO first */
+            else { sm.open = 0; sm_unpause(); if (sm.sel == SM_OPTIONS) sm.act = 1 + SM_OPTIONS; host_log("selmenu: %s\n", sm_names[sm.sel]); }
+        } else if (back) { CallSystemSe(0, 1); sm.open = 0; sm_unpause(); host_log("selmenu: closed\n"); }
+    }
+    if (!sm.open) return 1;
+    njColorBlendingMode(0, 8); njColorBlendingMode(1, 6);
+    pc_ui_rect(180, y0 - 20, 460, y0 + 150, 0xC0000000, 1.3f);
+    if (!sm.ask) {
+        pc_ui_text(320 - pc_ui_text_w("PAUSE", 0.8f) / 2, y0 - 10, "PAUSE", 0.8f, 0xFFC0C0C0);
+        for (i = 0; i < SM_N; i++)
+            pc_ui_text(320 - pc_ui_text_w(sm_names[i], 0.7f) / 2, y0 + 30 + 32 * i, sm_names[i], 0.7f, i == sm.sel ? pulse() : 0xFF808080);
+    } else {
+        static const char* const q = "RETURN TO TITLE?", * const q2 = "Progress not saved is lost.";
+        pc_ui_text(320 - pc_ui_text_w(q, 0.7f) / 2, y0, q, 0.7f, 0xFFFFFFFF);
+        pc_ui_text(320 - pc_ui_text_w(q2, 0.5f) / 2, y0 + 30, q2, 0.5f, 0xFFC0C0C0);
+        pc_ui_text(320 - pc_ui_text_w("YES", 0.7f) / 2, y0 + 66, "YES", 0.7f, sm.ask == 1 ? pulse() : 0xFF808080);
+        pc_ui_text(320 - pc_ui_text_w("NO", 0.7f) / 2, y0 + 98, "NO", 0.7f, sm.ask == 2 ? pulse() : 0xFF808080);
+    }
+    return 1;
 }

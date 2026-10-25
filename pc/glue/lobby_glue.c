@@ -48,6 +48,9 @@ extern const char PlyFlip[23];
 
 enum { BTN_START = 0x800, BTN_UP = 0x1000, BTN_RIGHT = 0x2000, BTN_DOWN = 0x4000, BTN_LEFT = 0x8000 };   /* Pad[] bits */
 #define TITLE_MP 4                      /* ModeCommandId of the MULTIPLAYER row */
+#define TITLE_EXIT 5                    /* vr145: ... of the EXIT row (SAIR, to the desktop) */
+void pc_quit_desktop(void);             /* settings.c */
+static int exit_armed;                  /* vr145: EXIT pressed once - the second press quits */
 
 /* ---------------------------------------------------------------- text */
 #define PRI_TEXT -1.0f
@@ -146,11 +149,85 @@ static const struct { short u, v, w; } mp_letters[] = {
     { 67, 320, 23 },  /* R of NORMAL */
 };
 
+/* vr151: the Brazilian translation's plate texture (the same rows, other words: CARREGAR PARTIDA 64, NOVA PARTIDA 96,
+   OPÇÕES 128, MUSEU DE SOM 192, MUITO FÁCIL 256, NORMAL 320, STEVE 352; measured from the disc). It has no Y: the top
+   half of STEVE's V over the bottom half of MUITO's I (bu/bv/bw). */
+typedef struct { short u, v, w, bu, bv, bw; } PlateLetter;
+static const PlateLetter mp_letters_br[] = {
+    { 144, 192, 24 }, /* M of MUSEU */
+    { 171, 192, 21 }, /* U of MUSEU */
+    { 141, 320, 19 }, /* L of NORMAL */
+    { 88, 352, 19 },  /* T of STEVE */
+    { 50, 256, 10 },  /* I of MUITO */
+    { 225, 128, 19 }, /* P of OPÇÕES */
+    { 141, 320, 19 }, /* L */
+    { 117, 320, 22 }, /* A of NORMAL */
+    { 131, 352, 22, 50, 256, 10 }, /* Y: V of STEVE over I of MUITO */
+    { 110, 352, 18 }, /* E of STEVE */
+    { 68, 320, 21 },  /* R of NORMAL */
+};
+static const PlateLetter exit_letters_br[] = {
+    { 69, 352, 16 },  /* S of STEVE */
+    { 117, 320, 22 }, /* A of NORMAL */
+    { 50, 256, 10 },  /* I of MUITO */
+    { 68, 320, 21 },  /* R of NORMAL */
+};
+static const PlateLetter exit_letters_us[] = {
+    { 130, 192, 20 }, /* S of SOUND (its place estimated from the U next to it) */
+    { 286, 64, 24 },  /* A of GAME */
+    { 268, 128, 12 }, /* I of OPTION */
+    { 67, 320, 23 },  /* R of NORMAL */
+};
+
+/* which plate texture the title has: seen on the disc when it opens (font_glue.c plates_from_iso) */
+extern int g_plates_br;
+static int plates_lang = -1;            /* -1 not logged yet, 0 the US texture (aikatore's letters), 1 Brazilian */
+static void plates_check(void)
+{
+    if (plates_lang >= 0) return;
+    plates_lang = g_plates_br != 0;
+    host_log("title: plate texture %s\n", plates_lang ? "Brazilian - its own letters" : "US - aikatore's letters");
+}
+
+static void plate_word(const PlateLetter* L, int n, float x, float y, unsigned int col, unsigned int shadow, float scale)
+{
+    QUAD q;
+    for (int i = 0; i < n; i++) {
+        if (L[i].bw) {   /* two halves: the top of one letter over the bottom of another, centred */
+            SetQuadPos(x, y, L[i].w * scale, 18.0f * scale, &q);   /* vr153: the V down to 18 (it was cut at 16) */
+            SetQuadUv2(L[i].u, L[i].v, L[i].w, 18.0f, 1, &q);
+            AdvEasyDrawTextureS(1, col, &q, 0.5f, 1, shadow);
+            SetQuadPos(x + (L[i].w - L[i].bw) * scale / 2, y + 17.0f * scale, L[i].bw * scale, 16.0f * scale, &q);   /* (one row over) */
+            SetQuadUv2(L[i].bu, L[i].bv + 17, L[i].bw, 16.0f, 1, &q);
+            AdvEasyDrawTextureS(1, col, &q, 0.5f, 1, shadow);
+        } else {
+            SetQuadPos(x, y, L[i].w * scale, 33.0f * scale, &q);
+            SetQuadUv2(L[i].u, L[i].v, L[i].w, 33.0f, 1, &q);
+            AdvEasyDrawTextureS(1, col, &q, 0.5f, 1, shadow);
+        }
+        x += (L[i].w + 1) * scale;
+    }
+}
+static float plate_w(const PlateLetter* L, int n, float scale) { float w = 0; for (int i = 0; i < n; i++) w += (L[i].w + 1) * scale; return w; }
+
+static void exit_word(float x1, float y, unsigned int col, unsigned int shadow, float scale)
+{
+    const PlateLetter* L = plates_lang == 1 ? exit_letters_br : exit_letters_us;
+    plates_check();
+    plate_word(L, 4, x1 - plate_w(L, 4, scale), y, col, shadow, scale);
+}
+
 static void mp_word(float cx, float y, unsigned int col, unsigned int shadow, float scale)
 {
     float w = 0, x;
     int i;
     QUAD q;
+    plates_check();
+    if (plates_lang == 1) {   /* vr151 */
+        int n = (int)(sizeof(mp_letters_br) / sizeof(mp_letters_br[0]));
+        plate_word(mp_letters_br, n, cx - plate_w(mp_letters_br, n, scale) / 2, y, col, shadow, scale);
+        return;
+    }
     for (i = 0; i < (int)(sizeof(mp_letters) / sizeof(mp_letters[0])); i++) w += (mp_letters[i].w + 1) * scale;
     x = cx - w / 2;
     for (i = 0; i < (int)(sizeof(mp_letters) / sizeof(mp_letters[0])); i++) {
@@ -179,8 +256,48 @@ void pc_title_menu_init(void)
     n = ap->CursorMax[0];
     ap->ModeCommandId[n] = TITLE_MP;
     ap->CursorFlag[0][n] = 1;
-    ap->CursorMax[0] = n + 1;
+    ap->ModeCommandId[n + 1] = TITLE_EXIT;   /* vr145: SAIR, small at the right under MULTIPLAYER (not a row of its own) */
+    ap->CursorFlag[0][n + 1] = 1;
+    ap->CursorMax[0] = n + 2;
+    exit_armed = 0;
 }
+
+/* vr153: SAIR's "press again" line in letters of our own (5x7 blocks as rectangles, no texture) */
+static const struct { char c; unsigned char row[7]; } block_font[] = {
+    { 'A', { 14, 17, 17, 31, 17, 17, 17 } }, { 'D', { 30, 17, 17, 17, 17, 17, 30 } }, { 'E', { 31, 16, 16, 30, 16, 16, 31 } },
+    { 'I', { 14, 4, 4, 4, 4, 4, 14 } },      { 'L', { 16, 16, 16, 16, 16, 16, 31 } }, { 'M', { 17, 27, 21, 21, 17, 17, 17 } },
+    { 'N', { 17, 25, 21, 19, 17, 17, 17 } }, { 'O', { 14, 17, 17, 17, 17, 17, 14 } }, { 'P', { 30, 17, 17, 30, 16, 16, 16 } },
+    { 'R', { 30, 17, 17, 30, 20, 18, 17 } }, { 'S', { 15, 16, 16, 14, 1, 1, 30 } },    { 'T', { 31, 4, 4, 4, 4, 4, 4 } },
+    { 'U', { 17, 17, 17, 17, 17, 17, 14 } }, { 'V', { 17, 17, 17, 17, 17, 10, 4 } },  { 'Y', { 17, 17, 10, 4, 4, 4, 4 } },
+    { '?', { 14, 17, 1, 2, 4, 0, 4 } },
+};
+static float block_w(const char* s, float px) { return (float)strlen(s) * 6.0f * px - px; }
+static void block_text(float x, float y, const char* s, float px, unsigned int argb)
+{
+    unsigned int shadow = (argb & 0xFF000000) >> 1 & 0xFF000000;
+    for (int pass = 0; pass < 2; pass++)
+        for (const char* p = s; *p; p++) {
+            float cx = x + (float)(p - s) * 6.0f * px + (pass ? 0.0f : px * 0.6f), cy = y + (pass ? 0.0f : px * 0.6f);
+            for (int k = 0; k < (int)(sizeof(block_font) / sizeof(block_font[0])); k++) {
+                if (block_font[k].c != *p) continue;
+                for (int r = 0; r < 7; r++)
+                    for (int c = 0; c < 5; c++)
+                        if (block_font[k].row[r] & (16 >> c))
+                            rect(cx + c * px, cy + r * px, cx + (c + 1) * px, cy + (r + 1) * px, pass ? argb : shadow, Z_FRONT);
+                break;
+            }
+        }
+}
+/* vr145: adv.c, SAIR confirmed - the first press asks (it blinks red), the second quits */
+void pc_title_exit(void)
+{
+    if (!exit_armed) { exit_armed = 1; CallSystemSe(0, 3); host_log("title: exit asked\n"); return; }
+    host_log("title: exit to the desktop\n");
+    CallSystemSe(0, 3);
+    pc_quit_desktop();
+}
+
+void pc_title_font_leave(void) {}   /* (vr146-149's title font is gone; adv.c still calls it) */
 
 /* DisplayGameModePlate with the MULTIPLAYER row (the game's 3 or 4 rows moved up to make room) */
 void pc_title_plates(int cursor, int n, float fade, int flag)
@@ -190,11 +307,19 @@ void pc_title_plates(int cursor, int n, float fade, int flag)
     int i, extra = ap->ExtraFlag != 0;
     for (i = 0; i < n; i++) {
         unsigned int alpha = fade, col = 0x7F7F7F;
-        float y = title_row_y(i, n);
+        float y = title_row_y(i < n - 1 ? i : n - 2, n - 1);   /* vr150: SAIR is not a row of its own */
         if (i == cursor) { alpha += (unsigned int)ap->FlushCount2; col = ap->FontBaseColor; }
         alpha <<= 24;
         if (flag == 0) alpha = 0xFF000000;
         if (ap->ModeCommandId[i] == TITLE_MP) mp_word(320.0f, y, alpha | col, fade, 1.0f);
+        else if (ap->ModeCommandId[i] == TITLE_EXIT) {
+            exit_word(560.0f, y + 24.0f, alpha | (exit_armed && i == cursor ? 0x7F2010 : col), fade, 0.6f);
+            if (exit_armed && i == cursor) {   /* vr153: say so (the red alone was not seen) */
+                static const char* const m = "APERTE DE NOVO PARA SAIR";
+                njColorBlendingMode(0, 8); njColorBlendingMode(1, 6);
+                block_text(500.0f - block_w(m, 1.6f), y + 32.0f, m, 1.6f, (alpha & 0xFF000000) | 0xFF6040);
+            }
+        }
         else {
             QUAD q;
             SetQuadPos(64.0f, y, 513.0f, 33.0f, &q);
@@ -202,6 +327,7 @@ void pc_title_plates(int cursor, int n, float fade, int flag)
             AdvEasyDrawTextureS(1, alpha | col, &q, 0.5f, 1, fade);
         }
     }
+    if (ap->ModeCommandId[cursor] != TITLE_EXIT) exit_armed = 0;   /* vr145: moved away - asked again */
     FlushPlate();
     DisplayTitleBg();
 }
@@ -237,10 +363,11 @@ void pc_title_mouse(int level, int flag)
     menu_mouse_take(&mt);
     for (i = 0; i < n; i++) {
         float x0, y0, w;
-        if (level == 0) { x0 = 140; w = 360; y0 = title_row_y(i, n); }
+        if (level == 0 && AdvWork.ModeCommandId[i] == TITLE_EXIT) { x0 = 500; w = 60; y0 = title_row_y(n - 2, n - 1) + 24; }   /* vr150 */
+        else if (level == 0) { x0 = 140; w = 360; y0 = title_row_y(i, n - 1); }
         else if (level == 1) { x0 = 224; w = 193; y0 = 304.0f + 32.0f * i; }   /* DisplayNewGamePlate, DisplayExtraGamePlate */
         else { x0 = 64.0f + 256.0f * i; w = 256; y0 = 352; }
-        if (mt.x >= x0 && mt.x < x0 + w && mt.y >= y0 && mt.y < y0 + (level == 0 && n >= 5 ? 30 : 32)) hit = i;
+        if (mt.x >= x0 && mt.x < x0 + w && mt.y >= y0 && mt.y < y0 + (level == 0 && n - 1 >= 5 ? 30 : 32)) hit = i;
     }
     if (hit >= 0 && (!ap->CursorFlag[level][hit] || (level == 0 && hit == 0 && !flag))) hit = -1;   /* not selectable now */
     if (hit >= 0 && (mt.moved || mt.left) && hit != ap->Cursor[level]) {

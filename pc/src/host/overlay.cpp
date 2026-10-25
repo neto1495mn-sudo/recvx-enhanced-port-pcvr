@@ -766,7 +766,7 @@ static const char* const ltext[3][L_N] = {
         "Show this launcher when the game starts",
         "BACK",
         "DEFAULT",
-        "New version available: %s  -  click to download",
+        "Download update %s",
         "VR %s  \xC2\xB7  VR mod by neto1495mn-sudo",
         "PC port: aikatore  \xC2\xB7  decompilation: AshfordFamily",
         "Smooth",
@@ -800,7 +800,7 @@ static const char* const ltext[3][L_N] = {
         "Mostrar este launcher ao abrir o jogo",
         "VOLTAR",
         "PADR\xC3\x83O",
-        "Nova vers\xC3\xA3o dispon\xC3\xADvel: %s  -  clique para baixar",
+        "Baixar atualiza\xC3\xA7\xC3\xA3o %s",
         "VR %s  \xC2\xB7  mod VR por neto1495mn-sudo",
         "port PC: aikatore  \xC2\xB7  decompila\xC3\xA7\xC3\xA3o: AshfordFamily",
         "Suave",
@@ -834,7 +834,7 @@ static const char* const ltext[3][L_N] = {
         "Mostrar este launcher al iniciar el juego",
         "VOLVER",
         "PREDETERMINADO",
-        "Nueva versi\xC3\xB3n disponible: %s  -  haz clic para descargar",
+        "Descargar actualizaci\xC3\xB3n %s",
         "VR %s  \xC2\xB7  mod VR por neto1495mn-sudo",
         "port de PC: aikatore  \xC2\xB7  descompilaci\xC3\xB3n: AshfordFamily",
         "Suave",
@@ -1128,15 +1128,36 @@ extern "C" int overlay_launcher(void)
         }
         {   /* the foot: a newer release, the version and credits */
             float x = rx + 20.0f;
-            if (g_update_newer) {
+            if (g_update_newer) {   /* vr144: a green button - under Options/Exit, or at the end of Back/Default */
                 char line[128];
                 SDL_snprintf(line, sizeof line, L(L_UPDATE), g_update_tag);
-                ImGui::PushFont(lf_bold, 16.0f);
-                ImGui::SetCursorScreenPos(ImVec2(x, options ? 118.0f + 14.0f : 400.0f));
-                ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(255, 200, 70, 255));
-                if (ImGui::Selectable(line, false, 0, ImGui::CalcTextSize(line))) SDL_OpenURL("https://github.com/neto1495mn-sudo/recvx-enhanced-port-pcvr/releases/latest");
-                ImGui::PopStyleColor();
+                float fs = options ? 17.0f : 19.0f;
+                ImGui::PushFont(lf_bold, fs);
+                ImVec2 ts = ImGui::CalcTextSize(line);
+                ImVec2 sz(ds.x - x - 60.0f, 48.0f), pos(x, 384.0f);
+                if (options) {   /* what's left of the row after Default; too narrow for the words = only the version */
+                    float dw = ImGui::CalcTextSize(L(L_DEFAULT)).x * 20.0f / fs + 44.0f;
+                    pos = ImVec2(x + 194 + (dw > 160.0f ? dw : 160.0f) + 14, ds.y - 80.0f);
+                    sz = ImVec2(ds.x - 40.0f - pos.x, 46.0f);
+                    if (ts.x + 64.0f > sz.x) { SDL_strlcpy(line, g_update_tag, sizeof line); ts = ImGui::CalcTextSize(line); }
+                }
                 ImGui::PopFont();
+                ImGui::SetCursorScreenPos(pos);
+                if (ImGui::InvisibleButton("##update", sz)) SDL_OpenURL("https://github.com/neto1495mn-sudo/recvx-enhanced-port-pcvr/releases/latest");
+                bool hov = ImGui::IsItemHovered(), held = ImGui::IsItemActive();
+                ImVec2 b(pos.x + sz.x, pos.y + sz.y);
+                if (hov) dl->AddRectFilled(ImVec2(pos.x - 4, pos.y - 4), ImVec2(b.x + 4, b.y + 4), IM_COL32(60, 200, 100, 50), 6.0f);   /* glow */
+                dl->AddRectFilled(pos, b, hov ? IM_COL32(39, 168, 71, 255) : IM_COL32(31, 138, 58, 255));
+                dl->AddRect(pos, b, IM_COL32(111, 224, 140, held ? 255 : 200), 0.0f, 0, 1.5f);
+                float cx = pos.x + (sz.x - ts.x - 44.0f) * 0.5f, cy = pos.y + sz.y * 0.5f;
+                float a = 0.6f + 0.4f * SDL_sinf((float)ImGui::GetTime() * 4.5f);   /* the dot blinks slowly */
+                dl->AddCircleFilled(ImVec2(cx + 4, cy), 4.5f, IM_COL32(184, 255, 203, (int)(a * 255)));
+                ImU32 ic = IM_COL32(255, 250, 245, 255);   /* the download arrow, drawn: the fonts have no icons */
+                float ix = cx + 25;
+                dl->AddLine(ImVec2(ix, cy - 8), ImVec2(ix, cy + 3), ic, 2.0f);
+                dl->AddTriangleFilled(ImVec2(ix - 5, cy), ImVec2(ix + 5, cy), ImVec2(ix, cy + 6), ic);
+                dl->AddLine(ImVec2(ix - 7, cy + 9), ImVec2(ix + 7, cy + 9), ic, 2.0f);
+                l_text(dl, lf_bold, fs, ImVec2(cx + 44, cy - ts.y * 0.5f), ic, line);
             }
             if (!options) {
                 char f1[128];

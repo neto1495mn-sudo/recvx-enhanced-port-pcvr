@@ -26,7 +26,7 @@ decompilation by AshfordFamily. All credit for the PC port goes to them.
 
 ### How to play in VR
 
-1. Download `RE-Code-Veronica-X-PC-Port-VR-v1.3-windows.zip` from the [Releases](https://github.com/neto1495mn-sudo/recvx-enhanced-port-pcvr/releases)
+1. Download `RE-Code-Veronica-X-PC-Port-VR-v1.3.1-windows.zip` from the [Releases](https://github.com/neto1495mn-sudo/recvx-enhanced-port-pcvr/releases)
    page and unpack it anywhere.
 2. Start your OpenXR runtime (tested only on a Quest 2 through Virtual Desktop / VDXR).
 3. Run `recvx_vr.exe` (or `PLAY_VR.bat`). On the first start, pick your own `.iso` of the game (PS2, NTSC-U,
@@ -38,6 +38,16 @@ decompilation by AshfordFamily. All credit for the PC port goes to them.
 
 When a newer version is out, the game says so when it starts (see "Update check" below).
 
+### What's new in 1.3.1
+
+- **Smooth turn is truly smooth**: it follows the headset's own timing.
+- **Select menu** in game: Continue, Options or Return to title; **Exit** on the title screen.
+- **Title and options in Portuguese** discs show MULTIPLAYER, SAIR and MAIS AJUSTES correctly.
+- **Poison no longer sways the view**.
+- **Update button** in the launcher is now green and easy to spot.
+- Closing the game no longer freezes the window; new game icon.
+- Movie sound follows the pause; co-op guest no longer crashes against Alexia's second form.
+
 ### What's new in 1.3
 
 - **Fan translations show their text right**: the letter widths now come from your own disc, so
@@ -45,7 +55,6 @@ When a newer version is out, the game says so when it starts (see "Update check"
 - **Crossbow**: the bolt flies where the laser points (it used to leave along the body's direction).
 - **Life 0 is still alive** (as in the game): at 0 the VR movement, danger/poison edges and the knife
   no longer switch off (the stick used to turn into tank controls).
-- Smaller log (the game's per-frame `TICK` line is gone).
 - The update check understands versions like 1.3.1.
 
 ### What's new in 1.2

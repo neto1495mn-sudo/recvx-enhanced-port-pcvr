@@ -9,6 +9,7 @@
  *
  * Enabled with --vr or vr = 1 in recvx.ini. Windows only for now (OpenGL on WGL).
  */
+#include <stdint.h>
 #ifndef RECVX_XR_H
 #define RECVX_XR_H
 #include "vr_view.h"
@@ -24,6 +25,7 @@ extern int g_vr_screen_angle;   /* ini vr_screen_angle (degrees) */         /* i
 
 int    xr_init(void);           /* after the GL context is current; 1 if a VR session was created */
 int    xr_active(void);         /* a VR session exists (it may not be visible yet) */
+int64_t xr_display_time_ns(void);   /* vr142: when the headset shows the frame begun last (OpenXR time, ns; 0 if unknown) */
 double xr_display_hz(void);     /* the headset's refresh rate (0 if unknown) */
 void   xr_recenter(void);       /* the screen in front of the head, the game's forward where the head looks */
 void   xr_shutdown(void);

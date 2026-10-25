@@ -47,6 +47,7 @@ typedef struct {
     int   laser_ok[2];          /* vr77: the laser sight of each hand's gun (world): muzzle -> hit */
     float laser_a[2][3], laser_b[2][3];
     float step[3], step_prev[3]; /* vr72/73: the player's own move (the stick; its position, not the swaying body) this frame and the one before (world) */
+    int   turn_at;              /* vr141: g_vr_turn_total as this frame took it (the renderer shows the rest) */
     float turn;                 /* vr120: the view's smooth turn this frame (radians, the change of vr_yaw; 0 for a snap turn) */
 } VrView;
 enum { VRMK_DOT = 0, VRMK_BUTTON = 1, VRMK_NUMBER = 2 };   /* aiming dot, the "A" over what the action button would use, the holster's ammo count */
