@@ -1,0 +1,26 @@
+# build output
+/build*/
+__pycache__/
+
+# game data: never commit disc images or anything extracted from them
+/ISO/
+*.iso
+/gamedata/
+
+# local/user data
+/save/
+/saves/
+/mods/
+/scratch/
+
+# local tools and SDKs (not redistributable)
+/PS2 SDK/
+/RE4PortTest/
+/XTool/
+
+# editor state
+/.claude/
+
+# Diario do VR (so local, nunca vai para o GitHub)
+docs/VR_MUDANCAS*.md
+docs/VR_FUTURO.md

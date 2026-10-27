@@ -1,0 +1,1337 @@
+{
+  "format": "recvx-material-map-1",
+  "description": "Previewed retail donor candidates with provisional geometry-based material classes. All source uses require review. Opacity is unresolved cutout semantics, not approval to replace foliage with ironwork. Null donors block conversion.",
+  "texture_reference_fields": "room, list, texture (zero-based)",
+  "classes": {
+    "ground": {
+      "room": "5810",
+      "list": 0,
+      "texture": 20
+    },
+    "wood": {
+      "room": "0120",
+      "list": 0,
+      "texture": 26
+    },
+    "stone": {
+      "room": "7150",
+      "list": 0,
+      "texture": 29
+    },
+    "plaster": {
+      "room": "0030",
+      "list": 0,
+      "texture": 72
+    },
+    "roof": {
+      "room": "0030",
+      "list": 0,
+      "texture": 18
+    },
+    "foliage": {
+      "room": "1100",
+      "list": 0,
+      "texture": 4
+    },
+    "water": {
+      "room": "1040",
+      "list": 0,
+      "texture": 11
+    },
+    "metal": {
+      "room": "5810",
+      "list": 0,
+      "texture": 1
+    },
+    "unknown": null,
+    "opacity": {
+      "room": "1000",
+      "list": 0,
+      "texture": 22
+    },
+    "ceramic": {
+      "room": "0030",
+      "list": 0,
+      "texture": 6,
+      "uv_rect": [
+        0.035,
+        0.035,
+        0.465,
+        0.465
+      ]
+    }
+  },
+  "materials": {
+    "ROOM_MATERIAL_000": {
+      "class": "unknown",
+      "retail_texture": null,
+      "review_required": true,
+      "review_reasons": [
+        "axis_scale_and_local_floor_unverified",
+        "visual_confirmation_required",
+        "mixed_surface_roles_use_group_overrides",
+        "retail_donor_unresolved"
+      ]
+    },
+    "ROOM_MATERIAL_001": {
+      "class": "opacity",
+      "retail_texture": {
+        "room": "1000",
+        "list": 0,
+        "texture": 22
+      },
+      "review_required": true,
+      "review_reasons": [
+        "axis_scale_and_local_floor_unverified",
+        "visual_confirmation_required",
+        "wall_shell_or_prop_ambiguous_stone_wood_plaster_unresolved",
+        "opacity_map_or_transparency_requires_review",
+        "cutout_semantics_unresolved_fence_foliage_or_decal"
+      ]
+    },
+    "ROOM_MATERIAL_002": {
+      "class": "opacity",
+      "retail_texture": {
+        "room": "1000",
+        "list": 0,
+        "texture": 22
+      },
+      "review_required": true,
+      "review_reasons": [
+        "axis_scale_and_local_floor_unverified",
+        "visual_confirmation_required",
+        "opacity_map_or_transparency_requires_review",
+        "cutout_semantics_unresolved_fence_foliage_or_decal"
+      ]
+    },
+    "ROOM_MATERIAL_003": {
+      "class": "foliage",
+      "retail_texture": {
+        "room": "1100",
+        "list": 0,
+        "texture": 4
+      },
+      "review_required": true,
+      "review_reasons": [
+        "axis_scale_and_local_floor_unverified",
+        "visual_confirmation_required",
+        "mixed_surface_roles_use_group_overrides",
+        "opacity_map_or_transparency_requires_review",
+        "in_game_2026_10_07_low_plant_clumps_rendered_as_ironwork"
+      ]
+    },
+    "ROOM_MATERIAL_004": {
+      "class": "opacity",
+      "retail_texture": {
+        "room": "1000",
+        "list": 0,
+        "texture": 22
+      },
+      "review_required": true,
+      "review_reasons": [
+        "axis_scale_and_local_floor_unverified",
+        "visual_confirmation_required",
+        "opacity_map_or_transparency_requires_review",
+        "cutout_semantics_unresolved_fence_foliage_or_decal"
+      ]
+    },
+    "ROOM_MATERIAL_005": {
+      "class": "opacity",
+      "retail_texture": {
+        "room": "1000",
+        "list": 0,
+        "texture": 22
+      },
+      "review_required": true,
+      "review_reasons": [
+        "axis_scale_and_local_floor_unverified",
+        "visual_confirmation_required",
+        "opacity_map_or_transparency_requires_review",
+        "cutout_semantics_unresolved_fence_foliage_or_decal"
+      ]
+    },
+    "ROOM_MATERIAL_006": {
+      "class": "opacity",
+      "retail_texture": {
+        "room": "1000",
+        "list": 0,
+        "texture": 22
+      },
+      "review_required": true,
+      "review_reasons": [
+        "axis_scale_and_local_floor_unverified",
+        "visual_confirmation_required",
+        "opacity_map_or_transparency_requires_review",
+        "cutout_semantics_unresolved_fence_foliage_or_decal"
+      ]
+    },
+    "ROOM_MATERIAL_007": {
+      "class": "foliage",
+      "retail_texture": {
+        "room": "1100",
+        "list": 0,
+        "texture": 4
+      },
+      "review_required": true,
+      "review_reasons": [
+        "axis_scale_and_local_floor_unverified",
+        "visual_confirmation_required",
+        "opacity_map_or_transparency_requires_review",
+        "in_game_2026_10_07_small_leaf_clusters_rendered_as_ironwork"
+      ]
+    },
+    "ROOM_MATERIAL_008": {
+      "class": "opacity",
+      "retail_texture": {
+        "room": "1000",
+        "list": 0,
+        "texture": 22
+      },
+      "review_required": true,
+      "review_reasons": [
+        "axis_scale_and_local_floor_unverified",
+        "visual_confirmation_required",
+        "mixed_surface_roles_use_group_overrides",
+        "opacity_map_or_transparency_requires_review",
+        "cutout_semantics_unresolved_fence_foliage_or_decal"
+      ]
+    },
+    "ROOM_MATERIAL_009": {
+      "class": "opacity",
+      "retail_texture": {
+        "room": "1000",
+        "list": 0,
+        "texture": 22
+      },
+      "review_required": true,
+      "review_reasons": [
+        "axis_scale_and_local_floor_unverified",
+        "visual_confirmation_required",
+        "mixed_surface_roles_use_group_overrides",
+        "wall_shell_or_prop_ambiguous_stone_wood_plaster_unresolved",
+        "opacity_map_or_transparency_requires_review",
+        "cutout_semantics_unresolved_fence_foliage_or_decal"
+      ]
+    },
+    "ROOM_MATERIAL_010": {
+      "class": "opacity",
+      "retail_texture": {
+        "room": "1000",
+        "list": 0,
+        "texture": 22
+      },
+      "review_required": true,
+      "review_reasons": [
+        "axis_scale_and_local_floor_unverified",
+        "visual_confirmation_required",
+        "wall_shell_or_prop_ambiguous_stone_wood_plaster_unresolved",
+        "opacity_map_or_transparency_requires_review",
+        "cutout_semantics_unresolved_fence_foliage_or_decal"
+      ]
+    },
+    "ROOM_MATERIAL_011": {
+      "class": "foliage",
+      "retail_texture": {
+        "room": "1100",
+        "list": 0,
+        "texture": 4
+      },
+      "review_required": true,
+      "review_reasons": [
+        "axis_scale_and_local_floor_unverified",
+        "visual_confirmation_required",
+        "opacity_map_or_transparency_requires_review",
+        "in_game_2026_10_07_tree_or_vine_cards_rendered_as_ironwork"
+      ]
+    },
+    "ROOM_MATERIAL_012": {
+      "class": "opacity",
+      "retail_texture": {
+        "room": "1000",
+        "list": 0,
+        "texture": 22
+      },
+      "review_required": true,
+      "review_reasons": [
+        "axis_scale_and_local_floor_unverified",
+        "visual_confirmation_required",
+        "wall_shell_or_prop_ambiguous_stone_wood_plaster_unresolved",
+        "opacity_map_or_transparency_requires_review",
+        "cutout_semantics_unresolved_fence_foliage_or_decal"
+      ]
+    },
+    "ROOM_MATERIAL_013": {
+      "class": "opacity",
+      "retail_texture": {
+        "room": "1000",
+        "list": 0,
+        "texture": 22
+      },
+      "review_required": true,
+      "review_reasons": [
+        "axis_scale_and_local_floor_unverified",
+        "visual_confirmation_required",
+        "wall_shell_or_prop_ambiguous_stone_wood_plaster_unresolved",
+        "opacity_map_or_transparency_requires_review",
+        "cutout_semantics_unresolved_fence_foliage_or_decal"
+      ]
+    },
+    "ROOM_MATERIAL_014": {
+      "class": "foliage",
+      "retail_texture": {
+        "room": "1100",
+        "list": 0,
+        "texture": 4
+      },
+      "review_required": true,
+      "review_reasons": [
+        "axis_scale_and_local_floor_unverified",
+        "visual_confirmation_required",
+        "opacity_map_or_transparency_requires_review",
+        "in_game_2026_10_07_single_grass_cards_rendered_as_ironwork"
+      ]
+    },
+    "ROOM_MATERIAL_015": {
+      "class": "unknown",
+      "retail_texture": null,
+      "review_required": true,
+      "review_reasons": [
+        "axis_scale_and_local_floor_unverified",
+        "visual_confirmation_required",
+        "mixed_surface_roles_use_group_overrides",
+        "wall_shell_or_prop_ambiguous_stone_wood_plaster_unresolved",
+        "retail_donor_unresolved"
+      ]
+    },
+    "ROOM_MATERIAL_016": {
+      "class": "wood",
+      "retail_texture": {
+        "room": "0120",
+        "list": 0,
+        "texture": 26
+      },
+      "review_required": true,
+      "review_reasons": [
+        "axis_scale_and_local_floor_unverified",
+        "visual_confirmation_required",
+        "in_game_2026_10_07_posts_rails_beams_939_thin_components_not_stone"
+      ]
+    },
+    "ROOM_MATERIAL_017": {
+      "class": "wood",
+      "retail_texture": {
+        "room": "0120",
+        "list": 0,
+        "texture": 26
+      },
+      "review_required": true,
+      "review_reasons": [
+        "axis_scale_and_local_floor_unverified",
+        "visual_confirmation_required",
+        "in_game_2026_10_07_log_pile_cylinders_not_stone"
+      ]
+    },
+    "ROOM_MATERIAL_018": {
+      "class": "unknown",
+      "retail_texture": null,
+      "review_required": true,
+      "review_reasons": [
+        "axis_scale_and_local_floor_unverified",
+        "visual_confirmation_required",
+        "mixed_surface_roles_use_group_overrides",
+        "wall_shell_or_prop_ambiguous_stone_wood_plaster_unresolved",
+        "retail_donor_unresolved"
+      ]
+    },
+    "ROOM_MATERIAL_019": {
+      "class": "stone",
+      "retail_texture": {
+        "room": "7150",
+        "list": 0,
+        "texture": 29
+      },
+      "review_required": true,
+      "review_reasons": [
+        "axis_scale_and_local_floor_unverified",
+        "visual_confirmation_required",
+        "wall_shell_or_prop_ambiguous_stone_wood_plaster_unresolved"
+      ]
+    },
+    "ROOM_MATERIAL_020": {
+      "class": "unknown",
+      "retail_texture": null,
+      "review_required": true,
+      "review_reasons": [
+        "axis_scale_and_local_floor_unverified",
+        "visual_confirmation_required",
+        "mixed_surface_roles_use_group_overrides",
+        "retail_donor_unresolved"
+      ]
+    },
+    "ROOM_MATERIAL_021": {
+      "class": "unknown",
+      "retail_texture": null,
+      "review_required": true,
+      "review_reasons": [
+        "axis_scale_and_local_floor_unverified",
+        "visual_confirmation_required",
+        "mixed_surface_roles_use_group_overrides",
+        "wall_shell_or_prop_ambiguous_stone_wood_plaster_unresolved",
+        "retail_donor_unresolved"
+      ]
+    },
+    "ROOM_MATERIAL_022": {
+      "class": "wood",
+      "retail_texture": {
+        "room": "0120",
+        "list": 0,
+        "texture": 26
+      },
+      "review_required": true,
+      "review_reasons": [
+        "axis_scale_and_local_floor_unverified",
+        "visual_confirmation_required",
+        "in_game_2026_10_07_thin_boards_shutters_not_stone"
+      ]
+    },
+    "ROOM_MATERIAL_023": {
+      "class": "wood",
+      "retail_texture": {
+        "room": "0120",
+        "list": 0,
+        "texture": 26
+      },
+      "review_required": true,
+      "review_reasons": [
+        "visual_confirmation_required",
+        "Indoor floors and timber; height alone must not select dirt."
+      ]
+    },
+    "ROOM_MATERIAL_024": {
+      "class": "roof",
+      "retail_texture": {
+        "room": "0030",
+        "list": 0,
+        "texture": 18
+      },
+      "review_required": true,
+      "review_reasons": [
+        "axis_scale_and_local_floor_unverified",
+        "visual_confirmation_required",
+        "mixed_surface_roles_use_group_overrides",
+        "upper_sloped_surface_context_provisional"
+      ]
+    },
+    "ROOM_MATERIAL_025": {
+      "class": "plaster",
+      "retail_texture": {
+        "room": "0030",
+        "list": 0,
+        "texture": 72
+      },
+      "review_required": true,
+      "review_reasons": [
+        "visual_confirmation_required",
+        "Provisional plaster facade substitute; retain stone on other wall materials."
+      ]
+    },
+    "ROOM_MATERIAL_026": {
+      "class": "opacity",
+      "retail_texture": {
+        "room": "1000",
+        "list": 0,
+        "texture": 22
+      },
+      "review_required": true,
+      "review_reasons": [
+        "axis_scale_and_local_floor_unverified",
+        "visual_confirmation_required",
+        "wall_shell_or_prop_ambiguous_stone_wood_plaster_unresolved",
+        "opacity_map_or_transparency_requires_review",
+        "cutout_semantics_unresolved_fence_foliage_or_decal"
+      ]
+    },
+    "ROOM_MATERIAL_027": {
+      "class": "unknown",
+      "retail_texture": null,
+      "review_required": true,
+      "review_reasons": [
+        "axis_scale_and_local_floor_unverified",
+        "visual_confirmation_required",
+        "mixed_surface_roles_use_group_overrides",
+        "retail_donor_unresolved"
+      ]
+    },
+    "ROOM_MATERIAL_028": {
+      "class": "metal",
+      "retail_texture": {
+        "room": "5810",
+        "list": 0,
+        "texture": 1
+      },
+      "review_required": true,
+      "review_reasons": [
+        "visual_confirmation_required",
+        "Reviewed chandelier geometry; opaque metal substitute."
+      ]
+    },
+    "ROOM_MATERIAL_029": {
+      "class": "stone",
+      "retail_texture": {
+        "room": "7150",
+        "list": 0,
+        "texture": 29
+      },
+      "review_required": true,
+      "review_reasons": [
+        "axis_scale_and_local_floor_unverified",
+        "visual_confirmation_required",
+        "wall_shell_or_prop_ambiguous_stone_wood_plaster_unresolved"
+      ]
+    },
+    "ROOM_MATERIAL_030": {
+      "class": "opacity",
+      "retail_texture": {
+        "room": "1000",
+        "list": 0,
+        "texture": 22
+      },
+      "review_required": true,
+      "review_reasons": [
+        "axis_scale_and_local_floor_unverified",
+        "visual_confirmation_required",
+        "wall_shell_or_prop_ambiguous_stone_wood_plaster_unresolved",
+        "opacity_map_or_transparency_requires_review",
+        "cutout_semantics_unresolved_fence_foliage_or_decal"
+      ]
+    },
+    "ROOM_MATERIAL_031": {
+      "class": "stone",
+      "retail_texture": {
+        "room": "7150",
+        "list": 0,
+        "texture": 29
+      },
+      "review_required": true,
+      "review_reasons": [
+        "axis_scale_and_local_floor_unverified",
+        "visual_confirmation_required",
+        "wall_shell_or_prop_ambiguous_stone_wood_plaster_unresolved"
+      ]
+    },
+    "ROOM_MATERIAL_032": {
+      "class": "stone",
+      "retail_texture": {
+        "room": "7150",
+        "list": 0,
+        "texture": 29
+      },
+      "review_required": true,
+      "review_reasons": [
+        "axis_scale_and_local_floor_unverified",
+        "visual_confirmation_required",
+        "wall_shell_or_prop_ambiguous_stone_wood_plaster_unresolved"
+      ]
+    },
+    "ROOM_MATERIAL_033": {
+      "class": "unknown",
+      "retail_texture": null,
+      "review_required": true,
+      "review_reasons": [
+        "axis_scale_and_local_floor_unverified",
+        "visual_confirmation_required",
+        "mixed_surface_roles_use_group_overrides",
+        "retail_donor_unresolved"
+      ]
+    },
+    "ROOM_MATERIAL_034": {
+      "class": "unknown",
+      "retail_texture": null,
+      "review_required": true,
+      "review_reasons": [
+        "axis_scale_and_local_floor_unverified",
+        "visual_confirmation_required",
+        "mixed_surface_roles_use_group_overrides",
+        "retail_donor_unresolved"
+      ]
+    },
+    "ROOM_MATERIAL_035": {
+      "class": "opacity",
+      "retail_texture": {
+        "room": "1000",
+        "list": 0,
+        "texture": 22
+      },
+      "review_required": true,
+      "review_reasons": [
+        "axis_scale_and_local_floor_unverified",
+        "visual_confirmation_required",
+        "opacity_map_or_transparency_requires_review",
+        "cutout_semantics_unresolved_fence_foliage_or_decal"
+      ]
+    },
+    "ROOM_MATERIAL_036": {
+      "class": "opacity",
+      "retail_texture": {
+        "room": "1000",
+        "list": 0,
+        "texture": 22
+      },
+      "review_required": true,
+      "review_reasons": [
+        "axis_scale_and_local_floor_unverified",
+        "visual_confirmation_required",
+        "wall_shell_or_prop_ambiguous_stone_wood_plaster_unresolved",
+        "opacity_map_or_transparency_requires_review",
+        "cutout_semantics_unresolved_fence_foliage_or_decal"
+      ]
+    },
+    "ROOM_MATERIAL_037": {
+      "class": "ground",
+      "retail_texture": {
+        "room": "5810",
+        "list": 0,
+        "texture": 20
+      },
+      "review_required": true,
+      "review_reasons": [
+        "axis_scale_and_local_floor_unverified",
+        "visual_confirmation_required"
+      ]
+    },
+    "ROOM_MATERIAL_038": {
+      "class": "ground",
+      "retail_texture": {
+        "room": "5810",
+        "list": 0,
+        "texture": 20
+      },
+      "review_required": true,
+      "review_reasons": [
+        "axis_scale_and_local_floor_unverified",
+        "visual_confirmation_required"
+      ]
+    },
+    "ROOM_MATERIAL_039": {
+      "class": "ground",
+      "retail_texture": {
+        "room": "5810",
+        "list": 0,
+        "texture": 20
+      },
+      "review_required": true,
+      "review_reasons": [
+        "axis_scale_and_local_floor_unverified",
+        "visual_confirmation_required"
+      ]
+    },
+    "ROOM_MATERIAL_040": {
+      "class": "ground",
+      "retail_texture": {
+        "room": "5810",
+        "list": 0,
+        "texture": 20
+      },
+      "review_required": true,
+      "review_reasons": [
+        "axis_scale_and_local_floor_unverified",
+        "visual_confirmation_required"
+      ]
+    },
+    "ROOM_MATERIAL_041": {
+      "class": "ground",
+      "retail_texture": {
+        "room": "5810",
+        "list": 0,
+        "texture": 20
+      },
+      "review_required": true,
+      "review_reasons": [
+        "axis_scale_and_local_floor_unverified",
+        "visual_confirmation_required",
+        "in_game_2026_10_07_only_in_terrain_group_SMD_021_rendered_as_planks"
+      ]
+    },
+    "ROOM_MATERIAL_042": {
+      "class": "ground",
+      "retail_texture": {
+        "room": "5810",
+        "list": 0,
+        "texture": 20
+      },
+      "review_required": true,
+      "review_reasons": [
+        "axis_scale_and_local_floor_unverified",
+        "visual_confirmation_required"
+      ]
+    },
+    "ROOM_MATERIAL_043": {
+      "class": "ground",
+      "retail_texture": {
+        "room": "5810",
+        "list": 0,
+        "texture": 20
+      },
+      "review_required": true,
+      "review_reasons": [
+        "axis_scale_and_local_floor_unverified",
+        "visual_confirmation_required",
+        "in_game_2026_10_07_only_in_terrain_group_SMD_021_rendered_as_planks"
+      ]
+    },
+    "ROOM_MATERIAL_044": {
+      "class": "ground",
+      "retail_texture": {
+        "room": "5810",
+        "list": 0,
+        "texture": 20
+      },
+      "review_required": true,
+      "review_reasons": [
+        "axis_scale_and_local_floor_unverified",
+        "visual_confirmation_required",
+        "mixed_surface_roles_use_group_overrides",
+        "in_game_2026_10_07_only_in_terrain_group_SMD_021_rendered_as_planks"
+      ]
+    },
+    "ROOM_MATERIAL_045": {
+      "class": "ground",
+      "retail_texture": {
+        "room": "5810",
+        "list": 0,
+        "texture": 20
+      },
+      "review_required": true,
+      "review_reasons": [
+        "axis_scale_and_local_floor_unverified",
+        "visual_confirmation_required",
+        "in_game_2026_10_07_only_in_terrain_group_SMD_021_rendered_as_planks"
+      ]
+    },
+    "ROOM_MATERIAL_046": {
+      "class": "ground",
+      "retail_texture": {
+        "room": "5810",
+        "list": 0,
+        "texture": 20
+      },
+      "review_required": true,
+      "review_reasons": [
+        "axis_scale_and_local_floor_unverified",
+        "visual_confirmation_required"
+      ]
+    },
+    "ROOM_MATERIAL_047": {
+      "class": "roof",
+      "retail_texture": {
+        "room": "0030",
+        "list": 0,
+        "texture": 18
+      },
+      "review_required": true,
+      "review_reasons": [
+        "visual_confirmation_required",
+        "Second roof donor still wanted: 0050:0:73 rejected in game 2026-10-08 (56% transparent grate, roofs showed sky through it); uses the tested roof donor."
+      ]
+    },
+    "ROOM_MATERIAL_048": {
+      "class": "stone",
+      "retail_texture": {
+        "room": "7150",
+        "list": 0,
+        "texture": 29
+      },
+      "review_required": true,
+      "review_reasons": [
+        "axis_scale_and_local_floor_unverified",
+        "visual_confirmation_required",
+        "wall_shell_or_prop_ambiguous_stone_wood_plaster_unresolved"
+      ]
+    },
+    "ROOM_MATERIAL_049": {
+      "class": "unknown",
+      "retail_texture": null,
+      "review_required": true,
+      "review_reasons": [
+        "axis_scale_and_local_floor_unverified",
+        "visual_confirmation_required",
+        "class_changes_with_local_floor_grid_size",
+        "retail_donor_unresolved"
+      ]
+    },
+    "ROOM_MATERIAL_050": {
+      "class": "stone",
+      "retail_texture": {
+        "room": "7150",
+        "list": 0,
+        "texture": 29
+      },
+      "review_required": true,
+      "review_reasons": [
+        "axis_scale_and_local_floor_unverified",
+        "visual_confirmation_required",
+        "wall_shell_or_prop_ambiguous_stone_wood_plaster_unresolved"
+      ]
+    },
+    "ROOM_MATERIAL_051": {
+      "class": "unknown",
+      "retail_texture": null,
+      "review_required": true,
+      "review_reasons": [
+        "axis_scale_and_local_floor_unverified",
+        "visual_confirmation_required",
+        "retail_donor_unresolved"
+      ]
+    },
+    "ROOM_MATERIAL_052": {
+      "class": "unknown",
+      "retail_texture": null,
+      "review_required": true,
+      "review_reasons": [
+        "axis_scale_and_local_floor_unverified",
+        "visual_confirmation_required",
+        "retail_donor_unresolved",
+        "class_changes_with_local_floor_grid_size"
+      ]
+    },
+    "ROOM_MATERIAL_053": {
+      "class": "stone",
+      "retail_texture": {
+        "room": "7150",
+        "list": 0,
+        "texture": 29
+      },
+      "review_required": true,
+      "review_reasons": [
+        "axis_scale_and_local_floor_unverified",
+        "visual_confirmation_required",
+        "wall_shell_or_prop_ambiguous_stone_wood_plaster_unresolved"
+      ]
+    },
+    "ROOM_MATERIAL_054": {
+      "class": "stone",
+      "retail_texture": {
+        "room": "7150",
+        "list": 0,
+        "texture": 29
+      },
+      "review_required": true,
+      "review_reasons": [
+        "axis_scale_and_local_floor_unverified",
+        "visual_confirmation_required",
+        "wall_shell_or_prop_ambiguous_stone_wood_plaster_unresolved"
+      ]
+    },
+    "ROOM_MATERIAL_055": {
+      "class": "stone",
+      "retail_texture": {
+        "room": "7150",
+        "list": 0,
+        "texture": 29
+      },
+      "review_required": true,
+      "review_reasons": [
+        "axis_scale_and_local_floor_unverified",
+        "visual_confirmation_required",
+        "wall_shell_or_prop_ambiguous_stone_wood_plaster_unresolved"
+      ]
+    },
+    "ROOM_MATERIAL_056": {
+      "class": "stone",
+      "retail_texture": {
+        "room": "7150",
+        "list": 0,
+        "texture": 29
+      },
+      "review_required": true,
+      "review_reasons": [
+        "axis_scale_and_local_floor_unverified",
+        "visual_confirmation_required",
+        "wall_shell_or_prop_ambiguous_stone_wood_plaster_unresolved"
+      ]
+    },
+    "ROOM_MATERIAL_057": {
+      "class": "unknown",
+      "retail_texture": null,
+      "review_required": true,
+      "review_reasons": [
+        "axis_scale_and_local_floor_unverified",
+        "visual_confirmation_required",
+        "mixed_surface_roles_use_group_overrides",
+        "retail_donor_unresolved"
+      ]
+    },
+    "ROOM_MATERIAL_058": {
+      "class": "roof",
+      "retail_texture": {
+        "room": "0030",
+        "list": 0,
+        "texture": 18
+      },
+      "review_required": true,
+      "review_reasons": [
+        "visual_confirmation_required",
+        "Second roof donor still wanted: 0050:0:73 rejected in game 2026-10-08 (56% transparent grate, roofs showed sky through it); uses the tested roof donor."
+      ]
+    },
+    "ROOM_MATERIAL_059": {
+      "class": "stone",
+      "retail_texture": {
+        "room": "7150",
+        "list": 0,
+        "texture": 29
+      },
+      "review_required": true,
+      "review_reasons": [
+        "axis_scale_and_local_floor_unverified",
+        "visual_confirmation_required",
+        "wall_shell_or_prop_ambiguous_stone_wood_plaster_unresolved"
+      ]
+    },
+    "ROOM_MATERIAL_060": {
+      "class": "stone",
+      "retail_texture": {
+        "room": "7150",
+        "list": 0,
+        "texture": 29
+      },
+      "review_required": true,
+      "review_reasons": [
+        "axis_scale_and_local_floor_unverified",
+        "visual_confirmation_required",
+        "wall_shell_or_prop_ambiguous_stone_wood_plaster_unresolved"
+      ]
+    },
+    "ROOM_MATERIAL_061": {
+      "class": "unknown",
+      "retail_texture": null,
+      "review_required": true,
+      "review_reasons": [
+        "axis_scale_and_local_floor_unverified",
+        "visual_confirmation_required",
+        "mixed_surface_roles_use_group_overrides",
+        "retail_donor_unresolved"
+      ]
+    },
+    "ROOM_MATERIAL_062": {
+      "class": "stone",
+      "retail_texture": {
+        "room": "7150",
+        "list": 0,
+        "texture": 29
+      },
+      "review_required": true,
+      "review_reasons": [
+        "axis_scale_and_local_floor_unverified",
+        "visual_confirmation_required",
+        "wall_shell_or_prop_ambiguous_stone_wood_plaster_unresolved"
+      ]
+    },
+    "ROOM_MATERIAL_063": {
+      "class": "roof",
+      "retail_texture": {
+        "room": "0030",
+        "list": 0,
+        "texture": 18
+      },
+      "review_required": true,
+      "review_reasons": [
+        "axis_scale_and_local_floor_unverified",
+        "visual_confirmation_required"
+      ]
+    },
+    "ROOM_MATERIAL_064": {
+      "class": "stone",
+      "retail_texture": {
+        "room": "7150",
+        "list": 0,
+        "texture": 29
+      },
+      "review_required": true,
+      "review_reasons": [
+        "axis_scale_and_local_floor_unverified",
+        "visual_confirmation_required",
+        "wall_shell_or_prop_ambiguous_stone_wood_plaster_unresolved"
+      ]
+    },
+    "ROOM_MATERIAL_065": {
+      "class": "unknown",
+      "retail_texture": null,
+      "review_required": true,
+      "review_reasons": [
+        "axis_scale_and_local_floor_unverified",
+        "visual_confirmation_required",
+        "mixed_surface_roles_use_group_overrides",
+        "wall_shell_or_prop_ambiguous_stone_wood_plaster_unresolved",
+        "retail_donor_unresolved"
+      ]
+    },
+    "ROOM_MATERIAL_066": {
+      "class": "stone",
+      "retail_texture": {
+        "room": "7150",
+        "list": 0,
+        "texture": 29
+      },
+      "review_required": true,
+      "review_reasons": [
+        "axis_scale_and_local_floor_unverified",
+        "visual_confirmation_required",
+        "wall_shell_or_prop_ambiguous_stone_wood_plaster_unresolved"
+      ]
+    },
+    "ROOM_MATERIAL_067": {
+      "class": "stone",
+      "retail_texture": {
+        "room": "7150",
+        "list": 0,
+        "texture": 29
+      },
+      "review_required": true,
+      "review_reasons": [
+        "axis_scale_and_local_floor_unverified",
+        "visual_confirmation_required",
+        "wall_shell_or_prop_ambiguous_stone_wood_plaster_unresolved"
+      ]
+    },
+    "ROOM_MATERIAL_068": {
+      "class": "opacity",
+      "retail_texture": {
+        "room": "1000",
+        "list": 0,
+        "texture": 22
+      },
+      "review_required": true,
+      "review_reasons": [
+        "axis_scale_and_local_floor_unverified",
+        "visual_confirmation_required",
+        "wall_shell_or_prop_ambiguous_stone_wood_plaster_unresolved",
+        "opacity_map_or_transparency_requires_review",
+        "cutout_semantics_unresolved_fence_foliage_or_decal"
+      ]
+    },
+    "ROOM_MATERIAL_069": {
+      "class": "stone",
+      "retail_texture": {
+        "room": "7150",
+        "list": 0,
+        "texture": 29
+      },
+      "review_required": true,
+      "review_reasons": [
+        "axis_scale_and_local_floor_unverified",
+        "visual_confirmation_required",
+        "wall_shell_or_prop_ambiguous_stone_wood_plaster_unresolved"
+      ]
+    },
+    "ROOM_MATERIAL_070": {
+      "class": "unknown",
+      "retail_texture": null,
+      "review_required": true,
+      "review_reasons": [
+        "axis_scale_and_local_floor_unverified",
+        "visual_confirmation_required",
+        "mixed_surface_roles_use_group_overrides",
+        "retail_donor_unresolved"
+      ]
+    },
+    "ROOM_MATERIAL_071": {
+      "class": "stone",
+      "retail_texture": {
+        "room": "7150",
+        "list": 0,
+        "texture": 29
+      },
+      "review_required": true,
+      "review_reasons": [
+        "axis_scale_and_local_floor_unverified",
+        "visual_confirmation_required",
+        "wall_shell_or_prop_ambiguous_stone_wood_plaster_unresolved"
+      ]
+    },
+    "ROOM_MATERIAL_072": {
+      "class": "stone",
+      "retail_texture": {
+        "room": "7150",
+        "list": 0,
+        "texture": 29
+      },
+      "review_required": true,
+      "review_reasons": [
+        "axis_scale_and_local_floor_unverified",
+        "visual_confirmation_required",
+        "wall_shell_or_prop_ambiguous_stone_wood_plaster_unresolved"
+      ]
+    },
+    "ROOM_MATERIAL_073": {
+      "class": "stone",
+      "retail_texture": {
+        "room": "7150",
+        "list": 0,
+        "texture": 29
+      },
+      "review_required": true,
+      "review_reasons": [
+        "axis_scale_and_local_floor_unverified",
+        "visual_confirmation_required",
+        "wall_shell_or_prop_ambiguous_stone_wood_plaster_unresolved"
+      ]
+    },
+    "ROOM_MATERIAL_074": {
+      "class": "stone",
+      "retail_texture": {
+        "room": "7150",
+        "list": 0,
+        "texture": 29
+      },
+      "review_required": true,
+      "review_reasons": [
+        "axis_scale_and_local_floor_unverified",
+        "visual_confirmation_required",
+        "wall_shell_or_prop_ambiguous_stone_wood_plaster_unresolved"
+      ]
+    },
+    "ROOM_MATERIAL_075": {
+      "class": "stone",
+      "retail_texture": {
+        "room": "7150",
+        "list": 0,
+        "texture": 29
+      },
+      "review_required": true,
+      "review_reasons": [
+        "axis_scale_and_local_floor_unverified",
+        "visual_confirmation_required",
+        "wall_shell_or_prop_ambiguous_stone_wood_plaster_unresolved"
+      ]
+    },
+    "ROOM_MATERIAL_076": {
+      "class": "unknown",
+      "retail_texture": null,
+      "review_required": true,
+      "review_reasons": [
+        "axis_scale_and_local_floor_unverified",
+        "visual_confirmation_required",
+        "mixed_surface_roles_use_group_overrides",
+        "wall_shell_or_prop_ambiguous_stone_wood_plaster_unresolved",
+        "retail_donor_unresolved"
+      ]
+    },
+    "ROOM_MATERIAL_077": {
+      "class": "stone",
+      "retail_texture": {
+        "room": "7150",
+        "list": 0,
+        "texture": 29
+      },
+      "review_required": true,
+      "review_reasons": [
+        "axis_scale_and_local_floor_unverified",
+        "visual_confirmation_required",
+        "wall_shell_or_prop_ambiguous_stone_wood_plaster_unresolved"
+      ]
+    },
+    "ROOM_MATERIAL_078": {
+      "class": "unknown",
+      "retail_texture": null,
+      "review_required": true,
+      "review_reasons": [
+        "axis_scale_and_local_floor_unverified",
+        "visual_confirmation_required",
+        "retail_donor_unresolved"
+      ]
+    },
+    "ROOM_MATERIAL_079": {
+      "class": "wood",
+      "retail_texture": {
+        "room": "0120",
+        "list": 0,
+        "texture": 26
+      },
+      "review_required": true,
+      "review_reasons": [
+        "axis_scale_and_local_floor_unverified",
+        "visual_confirmation_required",
+        "wall_shell_or_prop_ambiguous_stone_wood_plaster_unresolved",
+        "in_game_2026_10_08_open_wooden_box_on_legs_rendered_as_granite"
+      ]
+    },
+    "ROOM_MATERIAL_080": {
+      "class": "stone",
+      "retail_texture": {
+        "room": "7150",
+        "list": 0,
+        "texture": 29
+      },
+      "review_required": true,
+      "review_reasons": [
+        "axis_scale_and_local_floor_unverified",
+        "visual_confirmation_required",
+        "wall_shell_or_prop_ambiguous_stone_wood_plaster_unresolved"
+      ]
+    },
+    "ROOM_MATERIAL_081": {
+      "class": "unknown",
+      "retail_texture": null,
+      "review_required": true,
+      "review_reasons": [
+        "axis_scale_and_local_floor_unverified",
+        "visual_confirmation_required",
+        "retail_donor_unresolved"
+      ]
+    },
+    "ROOM_MATERIAL_082": {
+      "class": "stone",
+      "retail_texture": {
+        "room": "7150",
+        "list": 0,
+        "texture": 29
+      },
+      "review_required": true,
+      "review_reasons": [
+        "visual_confirmation_required",
+        "Reviewed retaining-wall geometry."
+      ]
+    },
+    "ROOM_MATERIAL_083": {
+      "class": "unknown",
+      "retail_texture": null,
+      "review_required": true,
+      "review_reasons": [
+        "axis_scale_and_local_floor_unverified",
+        "visual_confirmation_required",
+        "retail_donor_unresolved"
+      ]
+    },
+    "ROOM_MATERIAL_084": {
+      "class": "stone",
+      "retail_texture": {
+        "room": "7150",
+        "list": 0,
+        "texture": 29
+      },
+      "review_required": true,
+      "review_reasons": [
+        "axis_scale_and_local_floor_unverified",
+        "visual_confirmation_required",
+        "wall_shell_or_prop_ambiguous_stone_wood_plaster_unresolved"
+      ]
+    },
+    "ROOM_MATERIAL_085": {
+      "class": "stone",
+      "retail_texture": {
+        "room": "7150",
+        "list": 0,
+        "texture": 29
+      },
+      "review_required": true,
+      "review_reasons": [
+        "axis_scale_and_local_floor_unverified",
+        "visual_confirmation_required",
+        "wall_shell_or_prop_ambiguous_stone_wood_plaster_unresolved"
+      ]
+    },
+    "ROOM_MATERIAL_086": {
+      "class": "ceramic",
+      "retail_texture": {
+        "room": "0030",
+        "list": 0,
+        "texture": 6,
+        "uv_rect": [
+          0.035,
+          0.035,
+          0.465,
+          0.465
+        ]
+      },
+      "review_required": true,
+      "review_reasons": [
+        "visual_confirmation_required",
+        "Vessels; provisional ceramic atlas crop, not granite."
+      ]
+    },
+    "ROOM_MATERIAL_087": {
+      "class": "unknown",
+      "retail_texture": null,
+      "review_required": true,
+      "review_reasons": [
+        "axis_scale_and_local_floor_unverified",
+        "visual_confirmation_required",
+        "mixed_surface_roles_use_group_overrides",
+        "retail_donor_unresolved"
+      ]
+    },
+    "ROOM_MATERIAL_088": {
+      "class": "ceramic",
+      "retail_texture": {
+        "room": "0030",
+        "list": 0,
+        "texture": 6,
+        "uv_rect": [
+          0.035,
+          0.035,
+          0.465,
+          0.465
+        ]
+      },
+      "review_required": true,
+      "review_reasons": [
+        "visual_confirmation_required",
+        "Small tableware; provisional ceramic atlas crop, not granite."
+      ]
+    },
+    "ROOM_MATERIAL_089": {
+      "class": "unknown",
+      "retail_texture": null,
+      "review_required": true,
+      "review_reasons": [
+        "axis_scale_and_local_floor_unverified",
+        "visual_confirmation_required",
+        "mixed_surface_roles_use_group_overrides",
+        "wall_shell_or_prop_ambiguous_stone_wood_plaster_unresolved",
+        "retail_donor_unresolved"
+      ]
+    },
+    "ROOM_MATERIAL_090": {
+      "class": "unknown",
+      "retail_texture": null,
+      "review_required": true,
+      "review_reasons": [
+        "axis_scale_and_local_floor_unverified",
+        "visual_confirmation_required",
+        "mixed_surface_roles_use_group_overrides",
+        "wall_shell_or_prop_ambiguous_stone_wood_plaster_unresolved",
+        "retail_donor_unresolved"
+      ]
+    },
+    "ROOM_MATERIAL_091": {
+      "class": "stone",
+      "retail_texture": {
+        "room": "7150",
+        "list": 0,
+        "texture": 29
+      },
+      "review_required": true,
+      "review_reasons": [
+        "axis_scale_and_local_floor_unverified",
+        "visual_confirmation_required",
+        "wall_shell_or_prop_ambiguous_stone_wood_plaster_unresolved"
+      ]
+    }
+  },
+  "group_overrides": {},
+  "donor_provenance": {
+    "catalogue": "pc/tools/area/village_assets.json",
+    "current_overrides": "pc/tools/build_village.py GROUND, PLANKS, FIELDSTONE",
+    "note": "Catalogue identifies wood/stone/dirt classes but old donor indices are superseded by builder references. Roof-tagged model nodes are not verified roof texture references."
+  },
+  "class_notes": {
+    "plaster": "Previewed weathered grey render; provisional wall finish.",
+    "roof": "Previewed dark roof surface; verify UV density and seams in game. Rejected second donor 0050:0:73: alpha grate, not tiles.",
+    "foliage": "Previewed broadleaf shrub cutout 1100:0:4; binary alpha preserved, source card UVs still provisional.",
+    "water": "Previewed blue mottled surface, opaque static surrogate only; native use and water rendering unverified. Not approved for transparent water.",
+    "metal": "Previewed dark metal panel. Opaque donor; not a fence cutout.",
+    "opacity": "Previewed decorative iron cutout with binary alpha. Provisional fence donor, not suitable for every opacity material. Use foliage after group review.",
+    "ceramic": "0030:0:6 upper-left circular tableware region; verify cropped atlas appearance on vessels."
+  }
+}

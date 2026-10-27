@@ -1,0 +1,19 @@
+{
+  "description": "Hand-curated retail references; no extracted bytes. Nodes are zero-based room MLB nodes.",
+  "assets": [
+    {"room":"0030","nodes":[23],"tags":["house","brick","roof","two-storey"]},
+    {"room":"0030","nodes":[9,22],"tags":["barn","house","roof","stone"]},
+    {"room":"0050","nodes":[38],"tags":["cottage","wood","roof"]},
+    {"room":"0030","nodes":[87,88,90],"tags":["church surrogate","roof","masonry"]},
+    {"room":"0020","nodes":[21],"tags":["tower","watchtower"]},
+    {"room":"0050","nodes":[27,34,9],"tags":["crate","planks","timber bench"]},
+    {"room":"0020","nodes":[3,29],"tags":["grave","gravestone","grille","fence"]},
+    {"room":"1000","nodes":[79,82,115],"tags":["tree","lamp"]},
+    {"room":"0030","nodes":[3],"tags":["rubble","stone"]},
+    {"room":"0050","list":0,"textures":[0,4],"tags":["dirt","wood"]},
+    {"room":"0020","list":0,"textures":[31],"tags":["stone","masonry"]},
+    {"room":"0060","items":[0,2],"tags":["handgun ammunition","green herb"]},
+    {"room":"0060","enemies":[0],"tags":["zombie","model 1","sound bank 60"]},
+    {"archive":"MRY.AFS","entry":93,"door_type":22,"tags":["door","model","animation","wood"]}
+  ]
+}

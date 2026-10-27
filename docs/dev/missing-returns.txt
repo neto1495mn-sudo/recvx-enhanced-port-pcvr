@@ -1,0 +1,51 @@
+# Non-void decomp functions that can fall off their end or return no value (GCC -Wreturn-type /
+# -Wreturn-mismatch), by file and function; pc/tools/decomp_warnings.py writes this file.
+# MWCC returned whatever was in v0. Fixed against retail (TARGET_PC, no longer listed): en01.c
+# bhEne01_SetLinkEnemy, adxwrap.c GetAdxStatus, en03.c bhEne03_GetWallDir, en17.c
+# bhEne17_PlayerDGCheck, en22.c bhEne22_GetDengekiColorAddr (returns NULL; its two stores check it).
+# The rest: value unused by callers, or only reached for invalid inputs (retail returns a stale register).
+door.c CompareFloat: control reaches end of non-void function
+en01.c bhEne01_ActionModeCheck: 'return' with no value, in function returning non-void
+en09.c bhEne09_DmgCheck: 'return' with no value, in function returning non-void
+en17.c bhEne17_CameraControl: 'return' with no value, in function returning non-void
+en17.c bhEne17_DmgChk: control reaches end of non-void function
+en26.c bhEne26_ActionModeCheck: control reaches end of non-void function
+event.c Common_controll: control reaches end of non-void function
+event.c Event_init: control reaches end of non-void function
+event.c Obj_controll: 'return' with no value, in function returning non-void
+event.c Player_controll: control reaches end of non-void function
+event.c Sub_controll: control reaches end of non-void function
+event.c bhCmpB: control reaches end of non-void function
+event.c bhCmpW: control reaches end of non-void function
+event.c bhDieEventCk: control reaches end of non-void function
+event.c bhEventScheduler2: control reaches end of non-void function
+event.c bhFlagSet: control reaches end of non-void function
+event.c bhSet: control reaches end of non-void function
+map.c MapFuncIns: no return statement in function returning non-void
+njloop.c recvx_game_main: control reaches end of non-void function
+ps2_NaGraphics3D.c CalcIntersectionCone: control reaches end of non-void function
+ps2_NaMatrix.c njPopMatrixEx: control reaches end of non-void function
+ps2_NaMatrix.c njPushMatrixEx: control reaches end of non-void function
+ps2_NaSystem.c vsync_func: control reaches end of non-void function
+ps2_NaTextureFunction.c njGetPaletteMode: control reaches end of non-void function
+ps2_NaTextureFunction.c njReleaseTexture: control reaches end of non-void function
+ps2_NaTextureFunction.c njSetTexture: control reaches end of non-void function
+ps2_NaTextureFunction.c njSetTextureNum: control reaches end of non-void function
+ps2_NaTextureFunction.c njSetTextureNumG: control reaches end of non-void function
+ps2_NaTextureFunction.c njSetTextureNumSys: control reaches end of non-void function
+ps2_NaTextureFunction.c ring_check: 'return' with no value, in function returning non-void
+ps2_dummy.c Ps2Alpha4to8: control reaches end of non-void function
+ps2_dummy.c Ps2AlphaIsHalf: control reaches end of non-void function
+ps2_dummy.c Ps2GlobalIndexTexLoad: control reaches end of non-void function
+ps2_loadtim2.c Send_1024_Clut_data: control reaches end of non-void function
+ps2_sfd_mw.c mwPlyCalcWorkSofdec: control reaches end of non-void function
+ps2_sfd_mw.c mwPlyGetBright: control reaches end of non-void function
+ps2_sfd_mw.c ps2mwPlyGetOutVol: control reaches end of non-void function
+ps2_sg_gd.c gdFsOpen: control reaches end of non-void function
+ps2_sg_pdvib.c pdVibMxStart: control reaches end of non-void function
+ps2_sg_sd.c sndr_trans_func: control reaches end of non-void function
+ps2_sg_sycfg.c syCfgExit: control reaches end of non-void function
+ps2_sg_sycfg.c syCfgInit: control reaches end of non-void function
+ps2_sg_sycfg.c syCfgSetSoundMode: control reaches end of non-void function
+ps2_sg_sytmr.c syTmrGetCount: control reaches end of non-void function
+sdfunc.c GetPlayerActionSeSlotNo: control reaches end of non-void function

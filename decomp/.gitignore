@@ -1,0 +1,41 @@
+// ignored folders
+__pycache__
+.splache
+.venv
+.wineprefix
+build
+context
+elf
+iso
+include/recvx-decomp-ps2_sdk
+include/recvx-decomp-ps2_sdk303
+
+// ignored files 
+compile_config.json
+dwarfdump.txt
+objdiff.exe
+objdiff.json
+
+// ignored files from config 
+config/.venv
+config/asm
+config/assets
+config/include
+config/src
+config/SLUS_201.84
+config/SLUS_201.84.ld
+config/SLPM_650.22
+config/SLPM_650.22.ld
+config/SLPM_650.22.undefined_funcs_auto.txt
+config/SLPM_650.22.undefined_syms_auto.txt
+config/TSNDDRV.IRX
+config/TSNDDRV.IRX.ld
+config/TSNDDRV.IRX.undefined_funcs_auto.txt
+config/TSNDDRV.IRX.undefined_syms_auto.txt
+config/undefined_funcs_auto.txt
+config/undefined_syms_auto.txt
+
+// exceptions
+!iso/.gitkeep
+!include/recvx-decomp-ps2_sdk/.gitkeep
+!include/recvx-decomp-ps2_sdk303/.gitkeep

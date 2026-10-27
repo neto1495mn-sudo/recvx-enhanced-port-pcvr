@@ -1,0 +1,13791 @@
+#include "../../../ps2/veronica/prog/event.h"
+#include "../../../ps2/veronica/prog/MdlPut.h"
+#include "../../../ps2/veronica/prog/Motion.h"
+#include "../../../ps2/veronica/prog/cut.h"
+#include "../../../ps2/veronica/prog/effect.h"
+#include "../../../ps2/veronica/prog/effsub3.h"
+#include "../../../ps2/veronica/prog/en02.h"
+#include "../../../ps2/veronica/prog/en11.h"
+#include "../../../ps2/veronica/prog/eneset.h"
+#include "../../../ps2/veronica/prog/face.h"
+#include "../../../ps2/veronica/prog/hitchk.h"
+#include "../../../ps2/veronica/prog/message.h"
+#include "../../../ps2/veronica/prog/player.h"
+#include "../../../ps2/veronica/prog/ps2_NaColi.h"
+#include "../../../ps2/veronica/prog/ps2_NaFog.h"
+#include "../../../ps2/veronica/prog/ps2_NaMath.h"
+#include "../../../ps2/veronica/prog/ps2_NaView.h"
+#include "../../../ps2/veronica/prog/ps2_dummy.h"
+#include "../../../ps2/veronica/prog/ps2_texture.h"
+#include "../../../ps2/veronica/prog/pwksub.h"
+#include "../../../ps2/veronica/prog/room.h"
+#include "../../../ps2/veronica/prog/screen.h"
+#include "../../../ps2/veronica/prog/sdfunc.h"
+#include "../../../ps2/veronica/prog/sub1.h"
+#include "../../../ps2/veronica/prog/system.h"
+#include "../../../ps2/veronica/prog/zonzon.h"
+#include "../../../ps2/veronica/prog/main.h"
+
+#pragma optimization_level 4 // TODO: remove this pragma and compile the file passing the -O4,p flag instead 
+
+unsigned char* bhScePtr;
+unsigned short* bhScdPtr;
+unsigned short* bhScd2Ptr;
+unsigned char* bhEvdPtr;
+unsigned int* G_Sp;
+int bhIfelFlg;
+BH_SCEWORK* bhCetask;
+BH_SCEWORK bhEtask[16];
+unsigned int Event_T_timer;
+float GameNear;
+float GameFar;
+
+BP_WORK evnt_BldTbl = 
+{
+    0.0f, 0.1f, 0.0f,
+    0,
+    0.0f, 0.08f,
+    1.0f, 0.8f, 1.0f, 0.8f, 0.0f,
+    0, 4, 8, 12, 0
+};
+BP_WORK evnt_BldTbl2 = 
+{
+    0.0f, 0.1f, 0.0f,
+    0,
+    0.0f, 0.07f,
+    1.0f, 0.2f, 0.5f, 0.8f, 0.0f,
+    1, 4, 12, 15, 0
+};
+unsigned int (*bhScenarioJmpT[256])() = 
+{
+	bhEnd, 
+	bhIfelCk, 
+	bhElseCk, 
+	bhEndif, 
+	bhCk, 
+	bhSet, 
+	bhCmpB, 
+	bhCmpW, 
+	bhSv, 
+	bhSvW, 
+	bhWalAtariSet, 
+	bhEtcAtariSet, 
+	bhFlrAtariSet, 
+	bhDieCk, 
+	bhItmCk, 
+	bhUseItemClear, 
+	bhUseItemCheck, 
+	bhPlItemCheck, 
+	bhCineSet, 
+	bhCamSet, 
+	bhEvtOn, 
+	bhBgmOn, 
+	bhBgmOff, 
+	bhSeOn, 
+	bhSeOff, 
+	bhVoiceOn, 
+	bhVoiceOff, 
+	bhAdxCk, 
+	bhBGSeOn, 
+	bhBGSeOff, 
+	bhAdxTimeCk, 
+	bhMessageSet, 
+	bhSetDispObj, 
+	bhDieEventCk, 
+	bhEneSetCk, 
+	bhItmSetCk, 
+	bhInitModelSet, 
+	bhEtcAtariSet2, 
+	bhArmsItemCheck, 
+	bhArmsItemChange, 
+	bhSubStatus, 
+	bhCamPauseSet, 
+	bhCamSet2, 
+	bhMotionPauseSet, 
+	bhEffectSet, 
+	bhInitMotionPause, 
+	bhMotionPauseSetPly, 
+	bhInitSetKage, 
+	bhInitMotionPauseEx, 
+	bhPlItemLost, 
+	bhObjLinkSet, 
+	bhSetDoorCall, 
+	bhObjLinkSetPly, 
+	bhLightSet, 
+	bhFadeSet, 
+	bhRoomCaseNo, 
+	bhFrameCheck, 
+	bhCamInfoSet, 
+	bhMutekiSetPl, 
+	bhDefModelSet, 
+	bhMaskSet, 
+	bhLipSet, 
+	bhMaskStart, 
+	bhLipStart, 
+	bhLookGsetPlStart, 
+	bhLookGsetPlStop, 
+	bhItmAspdSet, 
+	bhEffDispSet, 
+	bhEffAmbSet, 
+	bhDelObjSe, 
+	bhSetNextRoomBgm, 
+	bhSetNextRoomBgSe, 
+	bhFootSeCall, 
+	bhWeaponSeCall, 
+	bhYakkyouSet, 
+	bhLightTypeSet, 
+	bhFogColorSet, 
+	bhPlItemBlockCk, 
+	bhEffBloodSet, 
+	bhCyoutenHenkeiSet, 
+	bhSetObjMotion, 
+	bhObjLinkSetObjEne, 
+	bhObjLinkSetObjItem, 
+	bhObjLinkSetEneItem, 
+	bhObjLinkSetEneEne, 
+	bhCyoutenHenkeiStart, 
+	bhEffBloodPoolSet, 
+	bhFixEventCamPly, 
+	bhEffBloodPoolSet2, 
+	bhObjLinkSetObjObj, 
+	bhCamYureSet, 
+	bhInitCamSet, 
+	bhMesDispEndSet, 
+	bhPadCheck, 
+	bhMovieStart, 
+	bhMovieStop, 
+	bhTFrameCheck, 
+	bhEventTimerClr, 
+	bhCamCheck, 
+	bhRandamSet, 
+	bhPlCtr, 
+	bhLoadWork, 
+	bhObjCtr, 
+	bhSubCtr, 
+	bhLoadWork2, 
+	bhCommonCtr, 
+	bhEventSkipSet, 
+	bhDelYakkyou, 
+	bhObjAlphaSet, 
+	bhCyodanSet, 
+	bhHEffectSet, 
+	bhObjLinkSetObjPly, 
+	bhEffPush, 
+	bhEffPop, 
+	bhAreaSearchObj, 
+	bhLightParameterCSet, 
+	bhLightParameterStart, 
+	bhInitMidiSlotSet, 
+	bh3dSoundFlagSet, 
+	bhSoundVolumeSet, 
+	bhLightParameterSet, 
+	bhEneSeOn, 
+	bhEneSeOff, 
+	bhWalAtariSet2, 
+	bhFlrAtariSet2, 
+	bhMotionPosSetEnePly, 
+	bhKageSwSet, 
+	bhSoundPanSet, 
+	bhInitPonySet, 
+	bhSubMapBusyCk, 
+	bhSetDebugLoopEx, 
+	bhSoundFadeOut, 
+	bhCyoutenHenkeiSetEX, 
+	bhCyoutenHenkeiStartEX, 
+	bhEasySESet, 
+	bhSoundFlagReSet, 
+	bhEffUVSet, 
+	bhPlayerChangeSet, 
+	bhPlayerPoisonCk, 
+	bhAddObjSe, 
+	bhRandTest, 
+	bhEvtComSet, 
+	bhZombieUpDieCk, 
+	bhFacePauseSet, 
+	bhFaceReSet, 
+	bhEffModeSet, 
+	bhBGSeOff2, 
+	bhBgmOff2, 
+	bhBGSeOn2, 
+	bhBgmOn2, 
+	bhEffectSensyaSet, 
+	bhEffectKokuenSet, 
+	bhEffectSandSet, 
+	bhEnemyHpUp, 
+	bhFaceRep, 
+	bhMovieCk, 
+	bhSetItmMotion, 
+	bhObjAspdSet, 
+	bhPuruPuruFlagSet, 
+	bhPuruPuruStart, 
+	bhMapSystemOn, 
+	bhTrapDamageSet, 
+	bhEvtLighterFireSet, 
+	bhObjLinkSetPlyItem, 
+	bhPlayerKaidanMotion, 
+	bhEneRenderSet, 
+	bhBgmOnEx, 
+	bhBgmOn2Ex, 
+	bhFogParameterCSet, 
+	bhFogParameterStart, 
+	bhEffUVSet2, 
+	bhBGColorSet, 
+	bhMovieTimeCk, 
+	bhEffTypeSet, 
+	bhPlayerPoison2Cr, 
+	bhPlyHandChange, 
+	bhHEffectSet2, 
+	bhObjDposCk, 
+	bhItemGetGet, 
+	bhEtcAtariEnePosSet, 
+	bhEtcAtariEvtPosSet, 
+	bhLoadWorkEx, 
+	bhRoomSoundCase, 
+	bhItemPlToSBox, 
+	bhItemSBoxToIBox, 
+	bhGrdPosSet, 
+	bhGrdPosMoveCSet, 
+	bhGrdPosMoveStart, 
+	bhEvtKill, 
+	bhReTryPointSet, 
+	bhPlyDposCk, 
+	bhPlItemLostEx, 
+	bhCyodanSetEx, 
+	bhArmsItemSet, 
+	bhItemGetGetEx, 
+	bhEffectSandSetMatsumoto, 
+	bhVoiceWait, 
+	bhVoiceStart, 
+	bhGameOverSet, 
+	bhPlItemChangeM, 
+	bhEffBakuDrmSet, 
+	bhPlItemTamaSet, 
+	bhEffClearEvt, 
+	bhEvtTimerSet, 
+	bhEneLookFlgSet, 
+	bhReturnTitleEvt, 
+	bhSyukanModeSet, 
+	bhExGameItemInit, 
+	bhEneLifeSetM, 
+	bhEffSSizeSet, 
+	bhEffLinkOffsetSet, 
+	bhRankingCall, 
+	bhCallSysSe, 
+	dm0, 
+	dm0, 
+	dm0, 
+	dm0, 
+	dm0, 
+	dm0, 
+	dm0, 
+	dm0, 
+	dm0, 
+	dm0, 
+	dm0, 
+	dm0, 
+	dm0, 
+	dm0, 
+	dm0, 
+	dm0, 
+	dm0, 
+	dm0, 
+	dm0, 
+	dm0, 
+	dm0, 
+	dm0, 
+	dm0, 
+	dm0, 
+	dm0, 
+	dm0, 
+	dm0, 
+	dm0, 
+	dm0, 
+	dm0, 
+	bhEwhile2, 
+	bhComNext, 
+	dm0, 
+	dm0, 
+	dm0, 
+	bhSleep, 
+	bhSleeping, 
+	bhFor, 
+	bhNext, 
+	bhWhile, 
+	bhEwhile, 
+	bhEvtNext, 
+	bhEvtEnd
+};
+/*unsigned char G_Mess_flag;
+unsigned int Event_T_timer_bak;
+unsigned int Event_C_timer;
+unsigned int bhCetask_w[308];
+unsigned int* G_Ework_ptr;
+_anon23 bhEventWork2;
+unsigned short* G_Pl_life;
+unsigned short* G_Timer;
+unsigned char bhEventWork[16];
+unsigned int G_Common_flg[16];
+unsigned int* G_Sp9;
+unsigned int* G_Sp8;
+unsigned int* G_Sp7;
+unsigned int* G_Sp6;
+unsigned int* G_Sp5;
+unsigned int* G_Sp4;
+unsigned int* G_Sp3;
+unsigned int* G_Sp2;
+unsigned int* G_Sp1;*/
+
+// 100% matching!
+void bhInitEvent()
+{
+    unsigned int v6;
+
+    for (v6 = 0; v6 < 16; v6++) 
+    {
+        bhEtask[v6].status = 0;
+        
+        bhEtask[v6].wpnl_no = 0;
+    }
+    
+    SendSoundCommand(3);
+    
+    bhControlEnemy();
+
+    bhScdPtr = rom->evtp->scd0;
+    bhScd2Ptr = rom->evtp->scd1;
+    
+    bhEvdPtr = (unsigned char*)rom->evtp->evd;
+    
+    bhCetask = bhEtask;
+    
+    bhIfelFlg = 0;
+    
+    Event_T_timer = 0;
+
+    swork.pip = &sys->itm[sys->ply_id * 16];
+
+    bhScenarioCheck((unsigned char*)bhScdPtr);
+    
+    sys->sp_flg |= 0x10;
+    
+    bhEventScheduler2();
+    
+    sys->sp_flg &= ~0x10;
+    
+    SendSoundCommand(4);
+}
+
+// 100% matching!
+void bhControlEvent()
+{
+#ifdef TARGET_PC
+    if (coop_on)
+    {
+        coop_scd1(); /* the same per-frame script, traced: world events shared with the partner */
+    }
+    else
+#endif
+    bhScenarioCheck((unsigned char*)bhScd2Ptr);
+    
+    bhEventScheduler2();
+}
+
+// 100% matching!
+unsigned int bhEnd()
+{
+	bhIfelFlg = 0;
+
+	return 0;
+}
+
+// 100% matching!
+unsigned int bhIfelCk()
+{
+    unsigned int v0; 
+
+    v0 = *(unsigned short*)bhScePtr;
+    
+    bhScePtr += 2;
+    
+    G_Sp = (unsigned int*)((int)bhScePtr + (v0 >> 8));
+    
+    G_Sp++;
+
+    bhIfelFlg++;
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhElseCk()
+{
+    G_Sp--;
+    
+    bhIfelFlg--;
+    
+    bhScePtr = &bhScePtr[bhScePtr[1]];
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhEndif()
+{
+    G_Sp--;
+    
+    bhIfelFlg--;
+    
+    bhScePtr += 2;
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int dm0()
+{
+	return 0;
+}
+
+// 100% matching! 
+unsigned int bhCk()
+{
+    int* v0;     
+    int v1;           
+    unsigned int v2, v3;  
+    unsigned char v4;  
+    unsigned char* a0; 
+    
+    a0 = bhScePtr;
+    
+    v2 = *(unsigned short*)bhScePtr;
+    
+    bhScePtr += 2;
+    
+    switch (v2 >> 8)
+    {
+    case 1:
+        v0 = (int*)sys->ev_flg; 
+        break;
+    case 2:
+        v0 = (int*)sys->ky_flg; 
+        break;
+    case 3:
+        v0 = (int*)sys->ed_flg; 
+        break;
+    case 4:
+        v0 = (int*)&sys->rm_flg; 
+        break;
+    case 5:
+        v0 = (int*)&sys->st_flg; 
+        break;
+    case 6:
+        v0 = (int*)&sys->sp_flg; 
+        break;
+    case 7:
+        v0 = (int*)sys->it_flg; 
+        break;
+    case 8:
+        v0 = (int*)sys->mp_flg; 
+        break;
+    case 9:
+        v0 = (int*)sys->ic_flg; 
+        break;
+    case 11:
+        v0 = (int*)&sys->gm_flg; 
+        break;
+    case 12:
+        v0 = (int*)&sys->ts_flg; 
+        break;
+    case 10:
+        v0 = (int*)&sys->cb_flg;
+
+        a0 += 4;
+        
+        v4 = *a0;
+
+        a0 -= 2;
+        
+        switch (*a0) 
+        {                        
+        case 23:                                    
+            if (sys->etc_idx != v4) 
+            {
+                bhScePtr += 4;
+                
+                return 0;
+            }
+            
+            break;
+        case 22:                                    
+            if (sys->flr_idx != v4) 
+            {
+                bhScePtr += 4;
+                
+                return 0;
+            }
+            
+            break;
+        }
+        
+        break;
+    case 13:
+        v0 = (int*)&plp->flg; 
+        break;
+    case 14:
+        v0 = (int*)&plp->stflg; 
+        break;
+    case 15:                                        
+        v0 = (int*)&plp->flg2; 
+        break;
+    case 16:
+        v0 = (int*)&sys->ssd_flg; 
+        break; 
+    }
+    
+    v3 = *(unsigned short*)bhScePtr;
+    
+    v2 = v0[(v3 & 0x3FF) >> 5];
+    
+    bhScePtr += 2;
+    
+    v1 = *(unsigned short*)bhScePtr;
+    
+    bhScePtr += 2;
+    
+    v1 >>= 8;
+    
+    return v1 ^ (((int)(v2 << (v3 & 0x1F))) < 0);
+}
+
+// 100% matching!
+unsigned int bhSet()
+{
+    int v0;             
+    int* a0;            
+    unsigned int v1;   
+    unsigned short* a1; 
+    
+    a1 = (unsigned short*)bhScePtr;
+
+    a1 += 3;
+    
+    bhScePtr = (unsigned char*)a1;
+
+    a1 -= 3;
+    
+    switch (*a1 >> 8) 
+    {                              
+    case 1:                                         
+        a0 = (int*)&sys->ev_flg; 
+		break;
+    case 2:                                         
+        a0 = (int*)&sys->ky_flg; 
+		break;
+    case 3:                                         
+        a0 = (int*)&sys->ed_flg; 
+		break;
+    case 4:                                         
+        a0 = (int*)&sys->rm_flg; 
+		break; 
+    case 5:                                         
+        a0 = (int*)&sys->st_flg; 
+		break;
+    case 6:                                         
+        a0 = (int*)&sys->sp_flg; 
+		break;
+    case 7:
+        a0 = (int*)sys->it_flg; 
+		break;
+    case 8:
+        a0 = (int*)sys->mp_flg; 
+		break;
+    case 9:
+        a0 = (int*)sys->ic_flg; 
+		break;
+    case 11:
+        a0 = (int*)&sys->gm_flg; 
+		break;
+    case 12:
+        a0 = (int*)&sys->ts_flg; 
+		break;
+    case 10:
+        a0 = (int*)&sys->cb_flg; 
+		break;
+    case 13:
+        a0 = (int*)plp; 
+		break;
+    case 14:
+        a0 = (int*)&plp->stflg; 
+		break;
+    case 15:
+        a0 = (int*)&plp->flg2; 
+		break;
+    case 16:
+        a0 = (int*)&sys->ssd_flg; 
+		break;
+    case 0:
+        break;
+    }
+
+    a1++; 
+    
+    v1 = *a1;
+    
+    a0 += (v1 & 0x3E0) >> 5;
+    
+    v0 = v1 & 0x1F;
+    
+    a1++;
+    
+    v1 = *a1;
+    
+    switch (v1 >> 8) 
+    {                            
+    case 0:                                         
+        *a0 |= 0x80000000 >> v0;
+        
+        return 1;
+    case 1:                                         
+        *a0 &= ~(0x80000000 >> v0);
+        
+        return 1;
+    case 2:                                         
+        *a0 ^= 0x80000000 >> v0;
+        
+        return 1;
+    case 3:                                         
+        *a0 |= 0xFFFFFFFF >> v0;
+        
+        return 1;
+    case 4:                                         
+        *a0 &= ~(0xFFFFFFFF >> v0);
+        
+        return 1;
+    case 5:                                         
+        *a0 ^= 0xFFFFFFFF >> v0;
+        
+        return 1;
+    }
+}
+
+// 100% matching!
+unsigned int bhCmpB()
+{
+    unsigned int v0, v1, v2, v3; 
+    
+    bhScePtr++;
+    
+    v3 = *bhScePtr;
+    
+    bhScePtr++;
+    
+    v2 = *bhScePtr;
+    
+    bhScePtr++;
+    
+    v1 = *bhScePtr;
+    
+    bhScePtr++;
+
+    switch (v3) 
+    {
+    case 0: 
+        v0 = sys->stg_no; 
+        break;
+    case 1: 
+        v0 = sys->rom_no; 
+        break;
+    case 2: 
+        v0 = cam.ncut; 
+        break;
+    case 15: 
+        v0 = sys->pos_no; 
+        break;
+    case 8: 
+        v0 = sys->sb_id; 
+        break;
+    case 17: 
+        v0 = bhEtask->wpnl_no; 
+        break;
+    case 21: 
+        v0 = sys->rcase; 
+        break;
+    case 23: 
+        v0 = sys->gm_mode; 
+        break;
+    case 24: 
+        v0 = sys->ply_id;
+        break;
+    case 25: 
+        v0 = sys->costume; 
+        break;
+    }
+
+    switch (v2)
+    {
+    case 0: 
+        return v0 == v1; 
+    case 1: 
+        return v0 > v1; 
+    case 2: 
+        return v0 >= v1; 
+    case 3: 
+        return v0 < v1; 
+    case 4: 
+        return v0 <= v1; 
+    case 5: 
+        return v0 != v1; 
+    }
+}
+
+// 100% matching! 
+unsigned int bhCmpW()
+{
+    int v0, v1, v2, v3, v4;
+    ETTY_WORK* enep; // not from DWARF
+    BH_PWORK* e_ep;  // not from DWARF
+
+    bhScePtr++;
+    
+    v4 = *bhScePtr;
+    
+    bhScePtr++;
+    
+    v3 = *bhScePtr;
+    
+    bhScePtr++;
+    
+    v2 = *bhScePtr;
+    
+    bhScePtr++;
+    
+    v1 = *(unsigned short*)bhScePtr;
+    
+    bhScePtr += 2;
+    
+    switch (v3) 
+    {                              
+    case 5:          
+        v0 = plp->hp;
+        break;
+    case 7:    
+        v0 = sys->mes_sel;
+        break;
+    case 9:       
+        v0 = sys->stv_tm;  
+        break;
+    case 10:                
+        enep = &rom->enep[v4];
+        e_ep = &ene[enep->wrk_no];
+        
+        v0 = e_ep->hp;
+        break;
+    }
+    
+    switch (v2) 
+    {                              
+    case 0:                                         
+        return v0 == v1;
+    case 1:                                         
+        return v1 < v0;
+    case 2:                                         
+        return v0 >= v1;
+    case 3:                                         
+        return v0 < v1;
+    case 4:                                         
+        return v1 >= v0;
+    case 5:                                         
+        return v0 != v1; 
+    }
+}
+
+// 100% matching!
+unsigned int bhSv()
+{   
+    unsigned int v0, v1;
+
+    bhScePtr++;
+    
+    v0 = *bhScePtr;
+
+    bhScePtr++;
+    
+    v1 = *bhScePtr;
+    
+    bhScePtr += 2;
+    
+    switch (v0) 
+    {
+    case 0:
+        sys->stg_no = v1;
+        break;
+    case 1:
+        sys->rom_no = v1;
+        break;
+    case 2:
+        cam.ncut = v1;
+        break;
+    case 16:
+        plp->flr_no = v1;
+        break;
+    case 8:
+        sys->sb_id = v1;
+        break;
+    case 18:
+        plp->wpnr_no = v1;
+        
+        sys->ply_wno[sys->ply_id] = v1;
+        break;
+    case 15:
+        sys->pos_no = v1;
+        break;
+    case 19:
+        sys->ef_slow = v1;
+        break;
+    case 20:
+        sys->etc_idx = v1;
+        break;
+    case 21:
+        sys->rcase = v1;
+        break;
+    case 22:
+        sys->itm[sys->ply_id * 16] = v1;
+        break;
+    case 25:
+        sys->costume = v1;
+        break;
+    }
+    
+    return 1;
+}
+
+// 100% matching! 
+unsigned int bhSvW() 
+{
+    int v0, v1;  
+    BH_PWORK* enep; // not from DWARF
+
+    bhScePtr++;
+    
+    v0 = *bhScePtr;
+    
+    bhScePtr++;
+    
+    v1 = *(unsigned short*)bhScePtr;
+    
+    bhScePtr += 2;
+    
+    switch (v0) 
+    {
+    case 5: 
+        plp->hp = v1;
+        break;
+    case 9: 
+        sys->stv_tm = v1; 
+        break;
+    case 11:
+        v1 *= -1;
+        
+        enep = &ene[rom->enep[0].wrk_no]; 
+        
+        enep->hp = v1;
+        break;
+    case 12:
+        v1 *= -1;
+        
+        enep = &ene[rom->enep[1].wrk_no];
+        
+        enep->hp = v1;
+        break;
+    case 13:
+        v1 *= -1;
+        
+        enep = &ene[rom->enep[2].wrk_no]; 
+        
+        enep->hp = v1;
+        break;
+    case 14:
+        v1 *= -1;
+        
+        enep = &ene[rom->enep[3].wrk_no];
+        
+        enep->hp = v1;
+        break;
+    case 15:
+        v1 *= -1;
+        
+        enep = &ene[rom->enep[4].wrk_no]; 
+        
+        enep->hp = v1;
+        break;
+    }
+
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhEvtOn()
+{
+    unsigned int v0;
+
+    bhScePtr += 2;
+    
+    v0 = *(unsigned short*)bhScePtr;
+    
+    Event_exec(v0 & 0xFF, v0 >> 8);
+    
+    bhScePtr += 2;
+    
+    return 1;
+}
+
+// 99.88% matching
+unsigned int bhCamSet()
+{
+	unsigned int v0, v1, v2;
+
+    cam.flg &= ~0x46;
+    
+    bhScePtr++;
+    
+    v0 = *bhScePtr;
+    
+    bhScePtr++;
+    
+    v1 = *bhScePtr;
+    
+    bhScePtr++;
+    
+    v2 = *bhScePtr;
+    
+    bhScePtr++;
+    
+    switch (v0) 
+    {     
+    case 0:
+        cam.evc_no = v1;
+        cam.keyf_no = v2;
+        
+        bhSetEventCamera(v1, v2);
+        
+        bhChangeViewClip(sys->stg_no, sys->rom_no, sys->rcase, cam.evc_no);
+        bhChangeClipVolume(sys->stg_no, sys->rom_no, sys->rcase, cam.evc_no);
+        break;
+    case 1:
+        sys->st_flg &= ~0x1;
+        
+        bhCheckCut(1);
+        
+        if ((sys->ts_flg & 0x200))
+        {
+            if ((sys->gm_flg & 0x40)) 
+            {
+                njClipZ(-1.0f, -20000.0f);
+            } 
+            else 
+            {
+                njClipZ(GameNear, GameFar);
+            }
+        } 
+        else 
+        {
+            njClipZ(-1.0f, -99.0f);
+        }
+        
+        break;
+    }
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhCamSet2()
+{
+    unsigned int v0, v1;
+	
+    cam.flg &= ~0x46;
+    
+    bhScePtr++;
+    
+    v0 = *bhScePtr;
+    
+    bhScePtr++;
+    
+    v1 = *bhScePtr;
+    
+    bhScePtr++;
+    bhScePtr++;
+    
+    switch (v0) 
+    { 
+    case 0:
+        sys->st_flg |= 0x1;
+        sys->gm_flg |= 0x1000;
+        
+        sys->fixcno = v1;
+        
+        bhSetFixedCut(sys->fixcno);
+        break;
+    case 1:
+        sys->st_flg &= ~0x1;
+        sys->gm_flg &= ~0x1000;
+        break;
+    }
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhCamPauseSet()
+{
+    unsigned int v0;
+    
+    bhScePtr++;
+    
+    v0 = *bhScePtr;
+    
+    bhScePtr++;
+    
+    switch (v0)
+    {                      
+    case 0:
+        cam.mode0 = 3;
+        break;
+    case 1:
+        cam.mode0 = 1;
+        break;
+    }
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhMessageSet()
+{
+	unsigned int v0, v1, v2;
+    
+    bhScePtr++;
+    
+    v0 = *bhScePtr;
+    
+    bhScePtr++;
+    
+    v1 = *bhScePtr;
+    
+    bhScePtr++;
+
+    v2 = *bhScePtr;
+    
+    if (v0 == 0) 
+    {
+        if (v2 == 0)
+        {
+            sys->sp_flg &= ~0x7;
+        }
+        
+        bhSetMessage(0, v1);
+    } 
+    else 
+    {
+        sys->sp_flg |= 0x7;
+    }
+
+    bhScePtr++;
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhBgmOn()
+{
+    int v0, v1;
+    
+    bhScePtr++;
+    
+    v0 = *bhScePtr;
+    
+    bhScePtr++;
+    
+    v1 = *bhScePtr;
+
+    v1 *= 10;
+    
+    bhScePtr++;
+    bhScePtr++;
+    
+    PlayBgm(v0, v1);
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhBgmOff() 
+{
+    unsigned int v0;
+    
+    bhScePtr++;
+    
+    v0 = *bhScePtr;
+    
+    bhScePtr++;
+    
+    StopBgm(v0 * 10);
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhSeOn()
+{
+    unsigned int v0, v1, v2, v3, v4; 
+    NJS_POINT3 pPos; 
+    BH_PWORK* e_ep; 
+    ETTY_WORK* enep; // not from DWARF
+
+    bhScePtr++;
+    
+    v0 = *bhScePtr;
+    
+    bhScePtr++;
+    
+    v1 = *bhScePtr;
+    
+    bhScePtr++;
+    
+    v2 = *bhScePtr;
+    
+    bhScePtr++;
+    
+    v3 = *(unsigned short*)bhScePtr;
+    
+    bhScePtr += 2;
+    
+    v4 = *bhScePtr;
+    
+    bhScePtr += 2;
+    
+    switch (v1)
+    {
+    case 0:
+        pPos.x = plp->mlwP->owP->mtx[12];
+        pPos.y = plp->mlwP->owP->mtx[13];
+        pPos.z = plp->mlwP->owP->mtx[14];
+        break;
+    case 1:
+        enep = &rom->enep[v2];
+        
+        e_ep = &ene[enep->wrk_no];
+        
+        pPos.x = e_ep->mlwP->owP->mtx[12];
+        pPos.y = e_ep->mlwP->owP->mtx[13];
+        pPos.z = e_ep->mlwP->owP->mtx[14];
+        break;
+    case 2:
+        e_ep = (BH_PWORK*)&sys->obwp[v2];
+    
+        pPos.x = e_ep->mlwP->owP->mtx[12];
+        pPos.y = e_ep->mlwP->owP->mtx[13];
+        pPos.z = e_ep->mlwP->owP->mtx[14];
+        break;
+    }
+    
+    CallNativeEventSe(v0, &pPos, v3, v4);
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhSeOff()
+{
+    unsigned char v0;
+
+    bhScePtr++;
+    
+    v0 = *bhScePtr;
+    
+    bhScePtr++;
+    
+    StopNativeEventSe(v0);
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhBGSeOn()
+{
+    unsigned int v0, v1, v2;
+
+    bhScePtr++;
+    
+    v0 = *bhScePtr;
+    
+    bhScePtr++;
+    
+    v1 = *(unsigned short*)bhScePtr;
+    
+    bhScePtr += 2;
+    
+    v2 = *bhScePtr;
+    
+    bhScePtr += 2;
+    
+    CallBackGroundSeEx(v0, v1, v2 * 10);
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhBGSeOff()
+{
+	unsigned char v0;
+    unsigned int v2;
+
+    bhScePtr++;
+    
+    v0 = *bhScePtr;
+    
+    bhScePtr++;
+    
+    v2 = *bhScePtr;
+    
+    bhScePtr += 2;
+    
+    StopBackGroundSeEx(v0, v2 * 10);
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhUseItemCheck()
+{
+    unsigned char v0;
+
+    bhScePtr++;
+    
+    v0 = *bhScePtr;
+    
+    bhScePtr++;
+    
+    if ((sys->cb_flg & 0x400)) 
+    {
+        return sys->sb_id == v0;
+    }
+    
+    return 0;
+}
+
+// 100% matching!
+unsigned int bhArmsItemCheck()
+{
+    int v0;
+
+    bhScePtr++;
+    
+    v0 = *bhScePtr;
+    
+    bhScePtr++;
+    
+    return plp->wpnr_no == v0;
+}
+
+// 100% matching!
+unsigned int bhArmsItemChange()
+{
+    int v0;
+
+    bhScePtr++;
+    
+    v0 = *bhScePtr;
+    
+    bhScePtr++;
+    
+    plp->wpnr_no = v0;
+    
+    sys->ply_wno[sys->ply_id] = v0;
+    
+    *(int*)&sys->mn_mode0 = 3;
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhPlItemLost()
+{
+    unsigned int cnt;
+    int v0;
+    
+    bhScePtr++;
+    
+    v0 = *bhScePtr;
+    
+    bhScePtr++;
+
+    for (cnt = (sys->ply_id * 16) + 2; cnt < ((sys->ply_id * 16) + 12); cnt++) 
+    {
+        if (v0 == (unsigned char)(sys->itm[cnt] >> 16)) 
+        {
+            sys->itm[cnt] = 0;
+            
+            if (((cnt - (sys->ply_id * 16)) <= sys->itm[sys->ply_id * 16]) && (sys->itm[sys->ply_id * 16] != 0)) 
+            {
+                if (sys->itm[sys->ply_id * 16] == cnt) 
+                {
+                    sys->itm[sys->ply_id * 16] = 0;
+                } 
+                else
+                {
+                    sys->itm[sys->ply_id * 16]--;
+                }
+            }
+            
+            for ( ; cnt < ((sys->ply_id * 16) + 12); cnt++) 
+            {
+                sys->itm[cnt] = sys->itm[cnt + 1];
+            }
+            
+            return 1;
+        }
+    }
+    
+    return 1;
+}
+
+// 100% matching! 
+unsigned int bhUseItemClear()
+{
+	bhScePtr += 2;
+
+	sys->cb_flg &= ~0x400;
+
+	return 0;
+}
+
+// 100% matching!
+unsigned int bhPlItemCheck()
+{
+    unsigned int cnt;
+    unsigned char v0;         
+
+    bhScePtr++;
+    
+    v0 = *bhScePtr;
+    
+    bhScePtr++;
+
+#ifdef TARGET_PC
+    /* PC option: the typewriters' ink ribbon check passes without one (pc/glue/coop_glue.c); not in 0/9,
+       where the metal detector's script checks the same item (ink ribbons count as metal there) */
+    if ((v0 == 31) && (pc_no_ink_ribbon() != 0) && !((sys->stg_no == 0) && (sys->rom_no == 9)))
+    {
+        return 1;
+    }
+    
+#endif
+    for (cnt = (sys->ply_id * 16) + 1; cnt < ((sys->ply_id * 16) + 12); cnt++) 
+    {
+        if (v0 == (unsigned char)(sys->itm[cnt] >> 16)) 
+        {
+            if (((unsigned char)(sys->itm[cnt] >> 16) == 72) && ((sys->itm[cnt] >> 16) != 72)) 
+            {
+                sys->rm_flg |= 0x10000;
+            }
+            
+            return 1;
+        }
+    }
+    
+    return 0;
+}
+
+// 100% matching!
+unsigned int bhMovieStart()
+{
+    unsigned int v0;
+
+    bhScePtr++;
+    
+    v0 = *bhScePtr;
+    
+    bhScePtr++;
+    
+    bhScePtr += 2;
+    
+    sys->mvi_no = v0;
+    
+    sys->cb_flg |= 0x4000000;
+    
+    return 1;
+}
+
+// 100% matching! 
+unsigned int bhMovieStop()
+{
+	bhScePtr += 2;
+
+	sys->cb_flg &= ~0x4000000;
+
+	return 1;
+}
+
+// 100% matching!
+unsigned int bhVoiceOn()
+{
+	unsigned int v0, v1, v2, v3, v4;
+	NJS_POINT3 pPos;
+    BH_PWORK* e_ep;
+    ETTY_WORK* enep; // not from DWARF
+
+    bhScePtr++;
+    
+    v0 = *bhScePtr;    
+    
+    bhScePtr++;
+    
+    v1 = *(unsigned short*)bhScePtr;
+    
+    bhScePtr += 2;
+    
+    v2 = *bhScePtr;
+    
+    bhScePtr++;
+    
+    v3 = *bhScePtr;
+    
+    v3 *= 10;
+    
+    bhScePtr++;
+    
+    v4 = *bhScePtr;
+    
+    bhScePtr += 2;
+    
+    if (bhCetask->mode2 != 0) 
+    {
+        bhCetask->mode2 = 0;
+        
+        StopVoice(0);
+    }
+    
+    switch (v0) 
+    {
+    case 0:
+        pPos.x = plp->mlwP->owP->mtx[12];
+        pPos.y = plp->mlwP->owP->mtx[13];
+        pPos.z = plp->mlwP->owP->mtx[14];
+        break;
+    case 1:
+        enep = &rom->enep[v4];
+        e_ep = &ene[enep->wrk_no];  
+        
+        pPos.x = e_ep->mlwP->owP->mtx[12];
+        pPos.y = e_ep->mlwP->owP->mtx[13];
+        pPos.z = e_ep->mlwP->owP->mtx[14];
+        break;
+    case 2:
+        e_ep = (BH_PWORK*)&sys->obwp[v4];
+        
+        pPos.x = e_ep->mlwP->owP->mtx[12];
+        pPos.y = e_ep->mlwP->owP->mtx[13];
+        pPos.z = e_ep->mlwP->owP->mtx[14];
+        break;
+    }
+    
+    bhCetask->mode2 = 1;
+    
+    PlayVoice(v1, &pPos, v2, v3);
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhVoiceOff()
+{
+    unsigned int v0;
+
+    bhScePtr++;
+    
+    v0 = *bhScePtr;
+    
+    bhScePtr++;
+    
+    bhCetask->mode2 = 0;
+    
+    StopVoice(v0 * 10);
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhAdxCk() 
+{
+    unsigned int v1;
+    unsigned int ret;
+
+    bhScePtr++;
+    bhScePtr++;
+    
+    v1 = *bhScePtr;
+    
+    bhScePtr += 2;
+    
+    ret = *bhScePtr;
+    
+    bhScePtr += 2;
+    
+    return CheckPlayEndAdx(v1);
+}
+
+// 100% matching!
+unsigned int bhAdxTimeCk() 
+{
+	unsigned int v0, v1, v2;
+    unsigned int ret;
+    
+    bhScePtr++;
+    
+    v0 = *bhScePtr;
+    
+    bhScePtr++;
+    
+    v1 = *(unsigned short*)bhScePtr;
+    
+    bhScePtr += 2;
+    
+    v2 = *bhScePtr;
+    
+    bhScePtr += 2;
+    
+    ret = GetTimeAdx(v0);
+    
+    switch (v2) 
+    {
+    case 0:
+        if (ret == v1) 
+        {
+            ret = 0;
+        }
+        else
+        {
+            ret = 1;
+        }
+        
+        break;
+    case 1:
+        if (ret > v1) 
+        {
+            ret = 0;
+        }
+        else 
+        {
+            ret = 1;
+        }
+        
+        break;
+    case 2:
+        if (ret >= v1) 
+        {
+            ret = 0;
+        }
+        else 
+        {
+            ret = 1;
+        }
+        
+        break;
+    case 3:
+        if (ret < v1) 
+        {
+            ret = 0;
+        }
+        else 
+        {
+            ret = 1;
+        }
+        
+        break;
+    case 4:
+        if (ret > v1) 
+        {
+            ret = 1;
+        }
+        else
+        {
+            ret = 0;
+        }
+        
+        break;
+    case 5:
+        if (ret != v1)
+        {
+            ret = 0;
+        }
+        else 
+        {
+            ret = 1;
+        }
+        
+        break;
+    }
+    
+    return ret;
+}
+
+// 100% matching!
+unsigned int bhCineSet()
+{
+    unsigned int v0;
+  
+    bhScePtr++;
+    
+    v0 = *bhScePtr;
+
+    bhScePtr++;
+    
+    switch (v0)
+    {
+    case 0:
+        sys->cb_flg &= ~0x40;
+        sys->cb_flg |= 0x4;
+        
+        sys->st_flg |= 0x4;
+        break;
+    case 1:
+        if ((sys->cb_flg & 0x40))
+        {
+            sys->cine_ap = 0;
+            sys->cine_an = 0;
+        }
+        
+        sys->cb_flg &= ~0x4;
+        sys->st_flg &= ~0x4;
+        
+        sys->sp_flg |= ~0;
+        break;
+    case 2:
+        sys->cb_flg &= ~0x4;
+        sys->st_flg &= ~0x4;
+        
+        sys->cine_ap = 0;
+        sys->cine_an = 0;
+        break;
+    case 3:
+        sys->cb_flg |= 0x4;
+        sys->cb_flg |= 0x40;
+        
+        sys->st_flg |= 0x4;
+        break;
+    case 4:
+        sys->cb_flg &= ~0x40;
+        sys->cb_flg &= ~0x4;
+        
+        sys->st_flg &= ~0x4;
+        sys->sp_flg |= ~0;
+        
+        sys->cine_ap = 0;
+        sys->cine_an = 0;
+        break;
+    case 5:
+        sys->cb_flg &= ~0x40;
+        sys->cb_flg |= 0x4;
+        
+        sys->st_flg |= 0x4;
+        
+        sys->cine_ap = 0;
+        sys->cine_an = 0;
+    }
+    
+    return 1;
+}
+
+// 100% matching! 
+unsigned int bhWalAtariSet()
+{
+    unsigned int v0, v1;
+    ATR_WORK* e_walp;
+
+    bhScePtr++;
+    
+    v0 = *bhScePtr;    
+    
+    bhScePtr++;
+    
+    v1 = *bhScePtr;
+    
+    bhScePtr += 2;
+    
+    e_walp = rom->walp;
+    
+    e_walp += v0;
+    
+    if (v1 != 0) 
+    {
+        e_walp->flg &= ~0x1;
+    }
+    else 
+    {
+        e_walp->flg |= 0x1;
+    }
+    
+    return 1;
+}
+
+// 100% matching! 
+unsigned int bhEtcAtariSet() 
+{
+    unsigned int v0, v1;
+    ATR_WORK* e_etcp;
+
+    bhScePtr++;
+    
+    v0 = *bhScePtr;    
+    
+    bhScePtr++;
+    
+    v1 = *bhScePtr;
+    
+    bhScePtr += 2;
+    
+    e_etcp = rom->etcp;
+    
+    e_etcp += v0;
+    
+    if (v1 != 0) 
+    {
+        e_etcp->flg &= ~0x1;
+    }
+    else 
+    {
+        e_etcp->flg |= 0x1;
+    }
+    
+    return 1;
+}
+
+// 100% matching! 
+unsigned int bhFlrAtariSet()
+{
+    unsigned int v0, v1;
+    ATR_WORK* e_flrp;
+
+    bhScePtr++;
+    
+    v0 = *bhScePtr;    
+    
+    bhScePtr++;
+    
+    v1 = *bhScePtr;
+    
+    bhScePtr += 2;
+    
+    e_flrp = rom->flrp;
+    
+    e_flrp += v0;
+    
+    if (v1 != 0) 
+    {
+        e_flrp->flg &= ~0x1;
+    }
+    else 
+    {
+        e_flrp->flg |= 0x1;
+    }
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhSubStatus()
+{
+    bhScePtr += 2;
+    
+    sys->ts_flg |= 0x200;
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhMotionPauseSet()
+{
+    unsigned int v0;
+
+    bhScePtr++;
+    
+    v0 = *bhScePtr;
+    
+    bhScePtr++;
+    
+    switch (v0) 
+    {
+    case 0:
+        bhCetask->work->mode3 = 4;
+        
+        if (bhCetask->work->id == 1)
+        {
+            ((BH_PWORK*)bhCetask->work->exp1)->mode3 = 4;
+        }
+        
+        break;
+    case 1:
+        bhCetask->work->mode3 = 1;
+        
+        if (bhCetask->work->id == 1) 
+        {
+            ((BH_PWORK*)bhCetask->work->exp1)->mode3 = 1;
+        }
+
+        break;
+    }
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhMotionPauseSetPly()
+{
+    unsigned int v0;
+
+    bhScePtr++;
+    
+    v0 = *bhScePtr;
+    
+    bhScePtr++;
+    
+    switch (v0) 
+    {
+    case 0:
+        sys->sp_flg &= ~0x1;
+        break;
+    case 1:
+        sys->sp_flg |= 0x1;
+        break;
+    }
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhInitMotionPause()
+{
+    unsigned int v0;
+    BH_PWORK* e_ep;
+    ETTY_WORK* enep; // not from DWARF
+
+    bhScePtr++;
+    
+    v0 = *bhScePtr;
+    
+    bhScePtr++;
+
+    enep = &rom->enep[v0];
+    e_ep = &ene[enep->wrk_no];
+    
+    e_ep->mode0 = 5;
+    e_ep->mode3 = 4;
+    
+    if (e_ep->id == 1) 
+    {
+        ((BH_PWORK*)e_ep->exp1)->mode0 = 5;
+        ((BH_PWORK*)e_ep->exp1)->mode3 = 4;
+    }
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhInitMotionPauseEx()
+{
+    unsigned int v0, v1;
+    BH_PWORK* e_ep;
+    ETTY_WORK* enep; // not from DWARF
+
+    bhScePtr++;
+    
+    v0 = *bhScePtr;
+    
+    bhScePtr++;
+    
+    v1 = *bhScePtr;
+    
+    bhScePtr += 2;
+
+    enep = &rom->enep[v0];
+    e_ep = &ene[enep->wrk_no];
+    
+    e_ep->mode0 = 5;
+    e_ep->mode3 = 4;
+    
+    e_ep->frm_no = 0;
+    e_ep->mtn_no = v1;
+    
+    e_ep->mnwP = sys->rmthp;
+    
+    if (e_ep->id == 1) 
+    {
+        ((BH_PWORK*)e_ep->exp1)->mode0 = 5;
+        ((BH_PWORK*)e_ep->exp1)->mode3 = 4;
+        
+        ((BH_PWORK*)e_ep->exp1)->frm_no = 0;
+        ((BH_PWORK*)e_ep->exp1)->mtn_no = v1;
+    }
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhEffectSet()
+{
+	unsigned int v0, v1;
+    POINT pnt;
+
+    bhScePtr++;
+    
+    v0 = *bhScePtr;
+    
+    bhScePtr++;
+    
+    v1 = *(unsigned short*)bhScePtr;
+    
+    bhScePtr++;
+    bhScePtr++;
+    
+    switch (v0) 
+    {                      
+    case 0:
+        pnt.pz = 0;
+        pnt.py = 0;
+        pnt.px = 0;
+        
+        pnt.oz = 0;
+        pnt.oy = 0;
+        pnt.ox = 0;
+        
+        bhCetask->ev_eff_no = bhSetEffect(v1, &pnt, NULL, 0);
+        break;
+    case 1:
+        pnt.pz = 0;
+        pnt.py = 0;
+        pnt.px = 0;
+        
+        pnt.oz = 0;
+        pnt.oy = 0;
+        pnt.ox = 0;
+        
+        bhCetask->ev_eff_no = bhSetEffect(v1, &pnt, NULL, 0);
+        break;
+    }
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhEffectSensyaSet()
+{
+    POINT pnt;
+
+    pnt.pz = 0;
+    pnt.py = 0;
+    pnt.px = 0;
+    
+    pnt.oz = 0;
+    pnt.oy = 0;
+    pnt.ox = 0;
+    
+    bhScePtr++;
+    bhScePtr++;
+    
+    bhCetask->ev_eff_no = bhSetEffect(120, &pnt, (unsigned char*)bhCetask->work, 0);
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhEffectKokuenSet()
+{
+    int v0;
+
+    sys->ef.id = 2;
+    
+    sys->ef.flg = 1;
+    
+    sys->ef.mdlver = 0;
+    
+    sys->ef.type = 1;
+    
+    sys->ef.flr_no = 0;
+    
+    sys->ef.sx = 4.0f;
+    sys->ef.sy = 4.0f;
+    sys->ef.sz = 4.0f;
+    
+    bhScePtr++;
+    
+    v0 = *bhScePtr;
+    
+    bhScePtr++;
+    
+    if (bhCetask->bpx == 0) 
+    {
+        sys->ef.px = (*(unsigned short*)bhScePtr / 100.0f) + bhEtask[v0].work->mlwP->objP->pos[0];
+    } 
+    else 
+    {
+        sys->ef.px = (-1.0f * (*(unsigned short*)bhScePtr / 100.0f)) + bhEtask[v0].work->mlwP->objP->pos[0];
+    }
+    
+    bhScePtr += 2;
+    
+    if (bhCetask->bpy == 0) 
+    {
+        sys->ef.py = *(unsigned short*)bhScePtr / 100.0f;
+    } 
+    else 
+    {
+        sys->ef.py = -1.0f * (*(unsigned short*)bhScePtr / 100.0f);
+    }
+    
+    bhScePtr += 2;
+    
+    if (bhCetask->bpz == 0)
+    {
+        sys->ef.pz = (*(unsigned short*)bhScePtr / 100.0f) + bhEtask[v0].work->mlwP->objP->pos[2];
+    } 
+    else 
+    {
+        sys->ef.pz = (-1.0f * (*(unsigned short*)bhScePtr / 100.0f)) + bhEtask[v0].work->mlwP->objP->pos[2];
+    }
+    
+    bhScePtr += 2;
+    
+    sys->ef.ay = 0;
+    
+    bhSetEffectTb(&sys->ef, NULL, NULL, 0);
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhDieCk() 
+{
+    int* v0;
+    unsigned int v2;
+    unsigned char* a0;
+    ETTY_WORK* e_enep;
+    int v1; // not from DWARF
+
+    a0 = bhScePtr;
+    
+    bhScePtr++;
+    bhScePtr++;
+    
+    v2 = *(unsigned short*)bhScePtr;
+
+    v0 = (int*)&sys->ed_flg;
+
+    if (((v0[(v2 & 0x3FF) >> 5] << (v2 & 0x1F)) < 0) ^ 1)
+    {
+        e_enep = &rom->enep[*++a0]; 
+
+        if ((ene[e_enep->wrk_no].flg & 0x2)) 
+        {
+            v1 = v2 & 0x1F;
+            
+            v0[(v2 & 0x3E0) >> 5] |= 0x80000000 >> v1;
+            
+            bhScePtr += 2;
+            
+            return 1;
+        }
+    }
+    
+    bhScePtr += 2;
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhItmCk() 
+{
+    int* v0;
+    int v1;
+    unsigned int v2, v4, v5; 
+    ATR_WORK* e_etcp;
+    O_WRK* op; // not from DWARF
+    
+    bhScePtr++; 
+    bhScePtr++;
+    
+    v2 = *(unsigned short*)bhScePtr;
+    
+    bhScePtr += 2;
+    
+    v4 = *bhScePtr;
+    
+    bhScePtr++;
+    
+    v5 = *bhScePtr;
+    
+    (void)&sys->cb_flg;
+    
+    bhScePtr++;
+    
+    if (sys->etc_idx != v4) 
+    {
+        return 1;
+    }
+    
+    if ((sys->cb_flg & 0x800)) 
+    { 
+        v0 = (int*)&sys->it_flg;
+        
+        if (((v0[(v2 & 0x3FF) >> 5] << (v2 & 0x1F)) < 0) ^ 1) 
+        {
+            e_etcp = rom->etcp;
+            
+            e_etcp += v4;
+            
+            if (v5 == 0) 
+            {
+                e_etcp->flg &= ~0x1;
+            }
+            
+            op = &sys->itwp[e_etcp->prm0];
+            
+            op->stflg |= 0x1000000;
+            
+            v0 = (int*)&sys->it_flg;
+          
+            v0 += (v2 & 0x3E0) >> 5;
+            
+            v1 = v2 & 0x1F;
+            
+            *v0 |= 0x80000000 >> v1;
+            
+#ifdef TARGET_PC
+            if (coop_on)
+            {
+                coop_item_taken(v2 & 0x1FF, v4); /* co-op: an important item's pickup stays ours (shared loot, pc/glue/coop_glue.c) */
+            }
+            
+#endif
+            v0 = (int*)&sys->ic_flg;
+            
+            v0 += (v2 & 0x1E0) >> 5;
+            
+            v1 = v2 & 0x1F;
+            
+            *v0 &= ~(0x80000000 >> v1);
+        }
+#ifdef TARGET_PC
+        else if (coop_on)
+        {
+            coop_item_late(v2 & 0x1FF); /* co-op: the partner took this spot while our "take it?" was open (shared loot, pc/glue/coop_glue.c) */
+        }
+#endif
+    }
+    else 
+    { 
+        v0 = (int*)&sys->it_flg;
+        
+        if (((v0[(v2 & 0x3FF) >> 5] << (v2 & 0x1F)) < 0) ^ 1)
+        {
+            v0 = (int*)&sys->ic_flg;
+            
+            v0 += (v2 & 0x3E0) >> 5;
+            
+            v1 = v2 & 0x1F;
+            
+            *v0 |= 0x80000000 >> v1;
+        }
+    }
+    
+    sys->cb_flg &= ~0x800;
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhObjLinkSet()
+{
+    int v1;
+    int v0, v2;      // not from DWARF
+    BH_PWORK* e_ep;  // not from DWARF
+    ETTY_WORK* enep; // not from DWARF
+    
+    bhScePtr++;
+    
+    v0 = *bhScePtr;    
+    
+    bhScePtr++; 
+    
+    v1 = *bhScePtr;
+   
+    enep = &rom->enep[v0];
+    e_ep = &ene[enep->wrk_no];
+    
+    sys->obwp[v1].lkwkp = (unsigned char*)e_ep;
+    
+    bhScePtr++;
+    
+    v2 = *bhScePtr;
+    
+    sys->obwp[v1].lkono = v2;
+    
+    bhScePtr++;
+    
+    v2 = *bhScePtr;
+    
+    if (v2 == 0)
+    {
+        sys->obwp[v1].flg |= 0x80;
+    } 
+    else 
+    {
+        sys->obwp[v1].flg &= ~0x80;
+    }
+    
+    bhScePtr++;
+    
+    v2 = *bhScePtr;
+    
+    bhScePtr++;
+ 
+    if ((v2 & 0x1)) 
+    {
+        sys->obwp[v1].lox = -1.0f * (*(unsigned short*)bhScePtr / 100.0f);
+    } 
+    else
+    {
+        sys->obwp[v1].lox = *(unsigned short*)bhScePtr / 100.0f;
+    }
+    
+    bhScePtr += 2;
+
+    if ((v2 & 0x2))
+    {
+        sys->obwp[v1].loy = -1.0f * (*(unsigned short*)bhScePtr / 100.0f);
+    } 
+    else 
+    {
+        sys->obwp[v1].loy = *(unsigned short*)bhScePtr / 100.0f;
+    }
+    
+    bhScePtr += 2;
+    
+    if ((v2 & 0x4)) 
+    {
+        sys->obwp[v1].loz = -1.0f * (*(unsigned short*)bhScePtr / 100.0f);
+    } 
+    else
+    {
+        sys->obwp[v1].loz = *(unsigned short*)bhScePtr / 100.0f;
+    }
+    
+    bhScePtr += 2;
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhSetObjMotion()
+{
+    BH_PWORK* ob_ep;
+    unsigned char* a0;
+
+    a0 = bhScePtr;
+
+    bhScePtr++;
+    bhScePtr++;
+
+    ob_ep = (BH_PWORK*)&sys->obwp[*++a0];
+    
+    if ((ob_ep->mode3 == 1) && ((sys->sp_flg & 0x4)))
+    {
+        bhSetMotion(ob_ep, (int)ob_ep->mtn_add, ob_ep->mtn_md, ob_ep->mtn_tp);
+        
+        bhCalcModel(ob_ep);
+    }
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhSetDispObj()
+{
+    int v0, v1, v2;
+    BH_PWORK* e_workp;
+    ETTY_WORK* enep; // not from DWARF
+    
+    bhScePtr++;
+    
+    v0 = *bhScePtr;
+    
+    bhScePtr++;
+    
+    v1 = *bhScePtr;
+    
+    bhScePtr++;
+    
+    v2 = *bhScePtr;
+    
+    bhScePtr++;
+    
+    switch (v1) 
+    {
+    case 0:
+        e_workp = plp;
+        break;
+    case 1:
+        enep = &rom->enep[v0];
+        e_workp = &ene[enep->wrk_no];
+        break;
+    case 2:
+        e_workp = (BH_PWORK*)&sys->obwp[v0];
+        break;
+    case 3:
+        e_workp = (BH_PWORK*)&sys->itwp[v0];
+        break;
+    }
+    
+    if (v2 == 0) 
+    {
+        e_workp->mdflg |= 0x1;
+    }
+    else 
+    {
+        e_workp->mdflg &= ~0x1;
+    }
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhSetDoorCall()
+{
+    int v0, v1;
+    unsigned int v2, v3, v4;
+
+    bhScePtr += 2;
+    
+    v0 = *(unsigned short*)bhScePtr;
+    
+    bhScePtr += 2;
+    
+    v1 = *bhScePtr;
+    
+    bhScePtr++;
+    
+    v2 = *bhScePtr;
+    
+    bhScePtr++;
+    
+    v3 = *bhScePtr;
+    
+    bhScePtr++;
+    
+    v4 = *bhScePtr;
+    
+    bhScePtr++;
+    
+    bhSetDoorDemo(v0, v1, v2, v3, v4);
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhDieEventCk() 
+{
+    unsigned int v3;
+    unsigned int v2;
+    unsigned int die_cnt;
+    int* v1;              // not from DWARF
+
+    bhScePtr++;
+    
+    v2 = *bhScePtr; 
+
+    bhScePtr++;
+    
+    v3 = *(unsigned short*)bhScePtr; 
+
+    die_cnt = 0;
+
+    for ( ; v2 != 0; v2--)
+    {
+        v1 = (int*)&sys->ed_flg;
+        
+        if (!(((v1[((v3 + (v2 - 1)) & 0x1FF) >> 5] << ((v3 + (v2 - 1)) & 0x1F)) < 0) ^ 1)) 
+        {
+            die_cnt++;
+        }
+    }
+
+    bhScePtr += 2;
+    
+    v3 = *bhScePtr;
+
+    bhScePtr++;
+    
+    v2 = *bhScePtr;
+
+    bhScePtr++;
+    
+    switch (v3) 
+    {
+    case 0: 
+        return die_cnt == v2; 
+    case 1: 
+        return die_cnt > v2; 
+    case 2: 
+        return die_cnt >= v2; 
+    case 3: 
+        return die_cnt < v2; 
+    case 4: 
+        return die_cnt <= v2;
+    case 5: 
+        return die_cnt != v2; 
+    }
+}
+
+// 100% matching!
+unsigned int bhSetDebugLoopEx()
+{
+    sys->st_flg |= 0x10;
+    
+    bhScePtr += 2;
+    
+    cam.ct0 = *(unsigned short*)bhScePtr;
+    
+    bhScePtr += 2; 
+    
+    cam.frm = 0;
+    
+    cam.mode0 = 1;
+    
+    bhInitEventCamera();
+    
+    sys->gm_flg |= 0x10;
+    
+    bhSetEventHideObjLgt(cam.evc_no, cam.keyf_no);
+    
+    if (!(sys->gm_flg & 0x800)) 
+    {
+        bhCheckCut(0);
+    }
+    else 
+    {
+        bhCheckCut(1);
+    }
+    
+    return 1;
+}
+
+// 98.88% matching (matches on GC)
+unsigned int bhInitSetKage()
+{
+	unsigned int v0, v1;
+    BH_PWORK* e_ep;
+    ETTY_WORK* enep; // not from DWARF
+     
+    bhScePtr++;
+    
+    v0 = *bhScePtr;
+    
+    bhScePtr++;
+    
+    v1 = *bhScePtr;
+    
+    bhScePtr += 2;
+    
+    enep = &rom->enep[v0];
+    e_ep = &ene[enep->wrk_no];
+    
+    if (!(e_ep->flg & 0x800))
+    {
+        e_ep->flg |= 0x800;
+        
+        switch (v1) 
+        {                        
+        case 0:
+            bhSetShadow(NULL, (unsigned char*)e_ep, 1, 4.5f, 4.0f, 3.5f);
+            break;
+        case 1:
+            bhSetShadow(NULL, (unsigned char*)e_ep, 1, 4.5f, 4.0f, 3.5f);
+            break;
+        case 2:
+            bhSetShadow(NULL, (unsigned char*)e_ep, 1, 4.5f, 4.0f, 3.5f);
+            break;
+        case 3:
+            bhSetShadow(NULL, (unsigned char*)e_ep, 1, 4.5f, 4.0f, 3.5f);
+            break;
+        case 4:
+            bhSetShadow(NULL, (unsigned char*)e_ep, 1, 6.5f, 4.0f, 4.5f);
+            break;
+        }
+    }
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhObjLinkSetPly()
+{
+    int v1;
+    int v0; // not from DWARF
+
+    bhScePtr += 2;
+    
+    v0 = *bhScePtr;
+    
+    sys->obwp[v0].lkwkp = (unsigned char*)plp;
+    
+    bhScePtr++;
+    
+    v1 = *bhScePtr;
+    
+    sys->obwp[v0].lkono = v1;
+    
+    bhScePtr++;
+    
+    v1 = *bhScePtr;
+    
+    if (v1 == 0)
+    {
+        sys->obwp[v0].flg |= 0x80;
+    } 
+    else 
+    {
+        sys->obwp[v0].flg &= ~0x80;
+    }
+    
+    bhScePtr++;
+    
+    v1 = *bhScePtr;
+    
+    bhScePtr++;
+    
+    if ((v1 & 0x1)) 
+    {
+        sys->obwp[v0].lox = -1.0f * (*(unsigned short*)bhScePtr / 100.0f);
+    } 
+    else
+    {
+        sys->obwp[v0].lox = *(unsigned short*)bhScePtr / 100.0f;
+    }
+    
+    bhScePtr += 2;
+
+    if ((v1 & 0x2))
+    {
+        sys->obwp[v0].loy = -1.0f * (*(unsigned short*)bhScePtr / 100.0f);
+    } 
+    else 
+    {
+        sys->obwp[v0].loy = *(unsigned short*)bhScePtr / 100.0f;
+    }
+    
+    bhScePtr += 2;
+    
+    if ((v1 & 0x4)) 
+    {
+        sys->obwp[v0].loz = -1.0f * (*(unsigned short*)bhScePtr / 100.0f);
+    } 
+    else
+    {
+        sys->obwp[v0].loz = *(unsigned short*)bhScePtr / 100.0f;
+    }
+    
+    bhScePtr += 2;
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhSetNextRoomBgm()
+{
+    int v0;
+    int v1; // not from DWARF
+
+    bhScePtr++;
+    bhScePtr++;
+
+    v0 = *bhScePtr;
+    
+    NextSoundInfo.ComNextBgm = v0;
+    
+    bhScePtr++;
+
+    v0 = *bhScePtr;
+    
+    NextSoundInfo.PointNextBgm = v0;
+    
+    bhScePtr++;
+    
+    NextSoundInfo.OfsPointBgm = *(unsigned short*)bhScePtr;
+    
+    bhScePtr += 2;
+    
+    NextSoundInfo.NextBgmNo = *bhScePtr;
+    
+    bhScePtr++;
+    
+    v1 = *bhScePtr;
+    
+    bhScePtr++;
+    
+    NextSoundInfo.FadeNextBgm = v1 * 10;
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhSetNextRoomBgSe()
+{
+    int v0, v1;
+
+    bhScePtr++;
+    
+    v0 = *bhScePtr;
+    
+    bhScePtr++;
+    
+    v1 = *bhScePtr;
+    
+    NextSoundInfo.ComNextBgSe[v0] = v1;
+    
+    bhScePtr++;
+    
+    v1 = *bhScePtr;
+    
+    NextSoundInfo.PointNextBgSe[v0] = v1;
+    
+    bhScePtr++;
+    
+    NextSoundInfo.OfsPointBgSe[v0] = *(unsigned short*)bhScePtr;
+    
+    bhScePtr += 2;
+    
+    NextSoundInfo.NextBgSeNo[v0] = *(unsigned short*)bhScePtr;
+    
+    bhScePtr += 2;
+    
+    NextSoundInfo.FadeNextBgSe[v0] = *bhScePtr * 10;
+    
+    bhScePtr++;
+    
+    if (*bhScePtr == 0) 
+    {
+        NextSoundInfo.SetNextBgSeFlag[v0] = 1;
+    }
+    else 
+    {
+        NextSoundInfo.SetNextBgSeFlag[v0] = 0;
+    }
+    
+    bhScePtr++;
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhFootSeCall()
+{
+	int fsnd, flr_no;
+    int v0, v1, v2, v3, v4, v5, v6;
+
+    bhScePtr++;
+    
+    v0 = *bhScePtr;
+    
+    bhScePtr++;
+    
+    v1 = *bhScePtr;
+    
+    bhScePtr++;
+    
+    v2 = *bhScePtr;
+    
+    bhScePtr++;
+    
+    v3 = *bhScePtr;
+    
+    bhScePtr++;
+    
+    v4 = *bhScePtr;
+    
+    bhScePtr++;
+    
+    if (bhCetask->work != NULL)
+    {
+        flr_no = bhCheckFloorNum(bhCetask->work->mlwP->owP[v4].mtx[13]);
+        
+        if (v1 != 0) 
+        {   
+            fsnd = bhCheckFloorSound(bhCetask->work, flr_no, bhCetask->work->mlwP->owP[(int)v4].mtx[12], bhCetask->work->mlwP->owP[(int)v4].mtx[14]);
+        } 
+        else 
+        {
+            fsnd = bhCheckFloorSound(bhCetask->work, flr_no, bhCetask->work->mlwP->owP[v4].mtx[12], bhCetask->work->mlwP->owP[v4].mtx[14]);
+        }
+        
+        v5 = 0;
+        
+        if (v0 == 0) 
+        {
+            v5 = 1;
+        }
+
+        CallPlayerFootStepSeEx(fsnd, v3, v5, v2, (NJS_POINT3*)&bhCetask->work->mlwP->owP[v4].mtx[12]);
+    }
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhEneSetCk()
+{
+	unsigned int v2;
+    unsigned char* a0;
+    ETTY_WORK* e_enep;
+    BH_PWORK* e_ep; // not from DWARF
+    int* v0;        // not from DWARF
+
+    a0 = bhScePtr;
+    
+    bhScePtr = &a0[1];
+    
+    bhScePtr++;
+
+    v0 = (int*)&sys->ed_flg;
+    
+    v2 = *(unsigned short*)bhScePtr;
+ 
+    if (!(((v0[(v2 & 0x1FF) >> 5] << (v2 & 0x1F)) < 0) ^ 1)) 
+    {
+        e_enep = &rom->enep[*++a0];
+        e_ep = &ene[e_enep->wrk_no];
+        
+        e_ep->stflg |= 0x1000000;
+    }
+    
+    bhScePtr += 2;
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhItmSetCk() 
+{
+	unsigned int v2, v3, v4, v5;
+    ATR_WORK* e_etcp;
+    int* v0;   // not from DWARF
+    O_WRK* op; // not from DWARF
+
+    bhScePtr++;
+    
+    v2 = *bhScePtr;
+    
+    bhScePtr++;
+    
+    v3 = *(unsigned short*)bhScePtr;
+    
+    bhScePtr += 2;
+
+    v4 = *bhScePtr;
+    
+    bhScePtr++;
+    
+    v5 = *bhScePtr;
+    
+    bhScePtr++;
+    
+    v0 = (int*)&sys->it_flg;
+        
+    if (!(((v0[(v3 & 0x1FF) >> 5] << (v3 & 0x1F)) < 0) ^ 1)) 
+    {
+        e_etcp = rom->etcp;
+
+		e_etcp += v4;
+        
+        if (v5 == 0) 
+        {
+            e_etcp->flg &= ~0x1;
+        }
+
+        op = &sys->itwp[v2];
+        
+        op->stflg |= 0x1000000;
+    } 
+    else 
+    {
+        e_etcp = rom->etcp;
+
+		e_etcp += v4;
+        
+        e_etcp->flg |= 0x1;
+    }
+    
+    return 1;
+}
+
+// 100% matching! 
+unsigned int bhInitModelSet()
+{
+    unsigned int v2, v3, v4; 
+    BH_PWORK* e_ep;  
+    O_WRK* e_ip;     
+    ETTY_WORK* enep; // not from DWARF
+    
+    bhScePtr++;
+    
+    v2 = *bhScePtr;
+    
+    bhScePtr++;
+    
+    v3 = *bhScePtr;
+    
+    bhScePtr++;
+    
+    v4 = *bhScePtr;
+    
+    bhScePtr++;
+    
+    switch (v2) 
+    {                       
+    case 0:
+        if (v4 == 0) 
+        {
+            plp->stflg |= 0x1000000;
+            
+            if (((sys->stg_no == 9) && (sys->rom_no == 30)) && (sys->rcase == 2)) 
+            {
+                pl_sleep_cnt = 2;
+            }
+        }
+        else 
+        {
+            plp->stflg &= ~0x1000000;
+        }
+        
+        break;
+    case 1:
+        enep = &rom->enep[v3];
+        e_ep = &ene[enep->wrk_no];
+        
+        if (v4 == 0) 
+        {
+            e_ep->stflg |= 0x1000000;
+            e_ep->flg |= 0x8000;
+        } 
+        else
+        {
+            e_ep->stflg &= ~0x1000000;
+            
+            if (!(e_ep->flg & 0x80000000))
+            {
+                e_ep->flg &= ~0x8000;
+            }
+        }
+        
+        break;
+    case 2:
+        e_ip = &sys->obwp[v3];
+        
+        if (v4 == 0) 
+        {
+            e_ip->stflg |= 0x1000000;
+        } 
+        else 
+        {
+            e_ip->stflg &= ~0x1000000;
+        }
+        
+        break;
+    case 3:
+        e_ip = &sys->itwp[v3];
+        
+        if (v4 == 0) 
+        {
+            e_ip->stflg |= 0x1000000;
+        } 
+        else 
+        {
+            e_ip->stflg &= ~0x1000000;
+        }
+        
+        break;
+    }
+    
+    return 1;
+}
+
+// 100% matching! 
+unsigned int bhEtcAtariSet2() 
+{
+	unsigned int v1;
+    ATR_WORK* e_etcp;
+    unsigned int v0; // not from DWARF
+    
+    bhScePtr++;
+    
+    e_etcp = rom->etcp;
+    
+    e_etcp += *bhScePtr;
+    
+    bhScePtr++;
+    
+    v0 = *(unsigned short*)bhScePtr;
+    
+    e_etcp->attr = v0;
+    
+    bhScePtr += 2;
+    
+    v0 = *bhScePtr;
+    
+    e_etcp->prm0 = v0;
+    
+    bhScePtr++;
+    
+    v0 = *bhScePtr;
+    
+    e_etcp->prm1 = v0;
+    
+    bhScePtr++;
+    
+    v0 = *bhScePtr;
+    
+    e_etcp->prm2 = v0;
+    
+    bhScePtr++;
+    
+    v0 = *bhScePtr;
+    
+    e_etcp->prm3 = v0;
+    
+    bhScePtr++;
+    
+    v0 = *bhScePtr;
+    
+    e_etcp->type = v0;
+    
+    bhScePtr += 2;
+    
+    return 1;
+}
+
+// 100% matching! 
+unsigned int bhLightSet()
+{
+	int v0, v1, v2;
+    LGT_WORK* lp;
+    
+    bhScePtr++;
+
+    v2 = *bhScePtr;
+
+    bhScePtr++;
+
+    v1 = *bhScePtr;
+
+    bhScePtr++;
+
+    v0 = *bhScePtr;
+
+    bhScePtr++;
+    
+    if (v0 == 0) 
+	{
+        lp = &rom->lgtp[v1];
+    } 
+	else 
+	{
+        lp = &rom->evlp[v1];
+    }
+    
+    if (v2 == 0) 
+	{
+        lp->flg |= 0x1;
+    } 
+	else 
+	{
+        lp->flg &= ~0x1;
+    }
+
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhWeaponSeCall()
+{
+	int v0, v1, v2, v3, v4, v5, v6, v7, v8;
+    BH_PWORK* e_ep;
+	ETTY_WORK* enep; // not from DWARF
+    
+    bhScePtr++;
+
+    v0 = *bhScePtr;
+
+    bhScePtr++;
+
+    v7 = *bhScePtr;
+
+    bhScePtr++;
+
+    v1 = *bhScePtr;
+
+    bhScePtr++;
+
+    v2 = *bhScePtr;
+
+    bhScePtr++;
+
+    v3 = *bhScePtr;
+
+    bhScePtr++;
+
+    v4 = *bhScePtr;
+
+    bhScePtr++;
+
+    v5 = *bhScePtr;
+
+    bhScePtr++;
+
+    v8 = *bhScePtr;
+
+    bhScePtr += 2;
+    
+    if ((v4 & 0x2)) 
+	{
+        v5 = -v5;
+    }
+
+    v6 = 182.04445f * v5;
+    
+    switch (v0) 
+	{
+	case 0:
+		if (v2 == 0) 
+		{
+			if (WpnTab[plp->wpnr_no].seno0 != 0) 
+			{
+				CallPlayerWeaponSeEx((NJS_POINT3*)&plp->mlwP->owP[13].mtx[12], WpnTab[plp->wpnr_no].seno0, v8);
+			}
+			
+			bhSetGunFire(plp, plp->wpnr_no, 13, v2, v6);
+		} 
+		else 
+		{
+			if (WpnTab[plp->wpnr_no].seno0 != 0) 
+			{
+				CallPlayerWeaponSeEx((NJS_POINT3*)&plp->mlwP->owP[9].mtx[12], WpnTab[plp->wpnr_no].seno0, v8);
+			}
+
+			bhSetGunFire(plp, plp->wpnr_no, 9, v2, v6);
+		}
+
+		break;
+	case 1:
+		enep = &rom->enep[v7];
+		e_ep = &ene[enep->wrk_no];
+
+		if (v2 == 0) 
+		{
+			if (WpnTab[plp->wpnr_no].seno0 != 0) 
+			{
+				CallPlayerWeaponSeEx((NJS_POINT3*)&e_ep->mlwP->owP[v1].mtx[12], WpnTab[plp->wpnr_no].seno0, v8);
+			}
+			
+			bhSetGunFire(e_ep, v3, v1, v2, v6);
+		} 
+		else 
+		{
+			if (WpnTab[plp->wpnr_no].seno0 != 0) 
+			{
+				CallPlayerWeaponSeEx((NJS_POINT3*)&e_ep->mlwP->owP[v1].mtx[12], WpnTab[plp->wpnr_no].seno0, v8);
+			}
+			
+			bhSetGunFire(e_ep, v3, v1, v2, v6);
+		}
+
+		break;
+	case 2:
+		if (v2 == 0) 
+		{
+			bhSetGunFire(plp, plp->wpnr_no, 13, v2, v6);
+		} 
+		else 
+		{
+			bhSetGunFire(plp, plp->wpnr_no, 9, v2, v6);
+		}
+
+		break;
+	case 3:
+		enep = &rom->enep[v7];
+		e_ep = &ene[enep->wrk_no];
+
+		if (v2 == 0) 
+		{
+			bhSetGunFire(e_ep, v3, v1, v2, v6);
+		} 
+		else
+		{
+			bhSetGunFire(e_ep, v3, v1, v2, v6);
+		}
+
+		break;
+    }
+
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhYakkyouSet()
+{
+	int v0, v1, v2, v3, v4, v5, v6, v7;
+	ETTY_WORK* enep; // not from DWARF
+    BH_PWORK* e_ep;
+    
+    bhScePtr++;
+	
+    v0 = *bhScePtr;
+
+    bhScePtr++;
+
+    v4 = *bhScePtr;
+
+    bhScePtr++;
+
+    v1 = *bhScePtr;
+
+    bhScePtr++;
+
+    v2 = *bhScePtr;
+
+    bhScePtr++;
+
+    v3 = *bhScePtr;
+
+    bhScePtr++;
+
+    v7 = *bhScePtr;
+
+    bhScePtr++;
+
+    v5 = *bhScePtr;
+
+    bhScePtr++;
+    
+    if ((v7 & 0x2)) 
+	{
+        v5 = -v5;
+    }
+
+    v6 = 182.04445f * v5;
+    
+    switch (v0)
+	{
+	case 0:
+		if (v2 == 0) 
+		{
+			bhSetYakkyou(plp, plp->wpnr_no, 13, v2, v6);
+		} 
+		else 
+		{
+			bhSetYakkyou(plp, plp->wpnr_no, 9, v2, v6);
+		}
+
+		break;
+	case 1:
+		enep = &rom->enep[v4];
+		e_ep = &ene[enep->wrk_no];
+
+		if (v2 == 0) 
+		{
+			bhSetYakkyou(e_ep, v3, v1, v2, v6);
+		} 
+		else 
+		{
+			bhSetYakkyou(e_ep, v3, v1, v2, v6);
+		}
+
+		break;
+    }
+
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhFadeSet()
+{
+	int v0, v1, v2, v3, v4;
+
+	bhScePtr++;
+
+    v0 = *bhScePtr;
+
+    bhScePtr++;
+
+    v1 = *bhScePtr;
+
+    bhScePtr++;
+
+    v2 = *bhScePtr;
+
+    bhScePtr++;
+
+    v3 = *bhScePtr;
+
+    bhScePtr++;
+
+    v4 = *bhScePtr;
+
+    bhScePtr++;
+    
+    bhSetScreenFade(v3 | ((v2 << 8) | ((v0 << 24) | (v1 << 16))), v4);
+ 
+    return 1;
+}
+
+// 100% matching! 
+unsigned int bhRoomCaseNo()
+{
+	int v0;
+
+	bhScePtr++;
+
+	v0 = *bhScePtr;
+
+	bhScePtr++;
+
+	sys->rcase = v0;
+	
+	return 1;
+}
+
+// 100% matching! 
+unsigned int bhFrameCheck()
+{
+	int v0, v1;
+	unsigned int v2, v3;
+	int v4, v5;
+	O_WRK* e_ip;     // not from DWARF
+    ETTY_WORK* enep; // not from DWARF
+    BH_PWORK* e_ep;  // not from DWARF
+
+    bhScePtr++;
+
+    v0 = *bhScePtr;  
+
+    bhScePtr++;
+
+    v1 = *bhScePtr;
+
+    bhScePtr++;
+
+    v2 = *bhScePtr;
+
+    bhScePtr++;
+
+    v3 = *(unsigned short*)bhScePtr;
+
+    bhScePtr += 2;
+
+    v4 = v3 << 16;
+    
+    if (v2 != 0) 
+	{
+    	v4 += 32767 + 1;
+    }
+    
+    switch (v0) 
+	{
+	case 0:
+		v5 = plp->frm_no;
+		break;
+	case 1:
+		enep = &rom->enep[v1];
+		e_ep = &ene[enep->wrk_no];
+
+		v5 = e_ep->frm_no;
+		break;
+	case 2:
+		e_ip = &sys->obwp[v1];
+
+		v5 = e_ip->frm_no;
+		break;
+    }
+    
+    if (v5 >= v4)
+	{
+		return 0;
+	}
+
+	return 1;
+}
+
+// 100% matching!
+unsigned int bhCamInfoSet()
+{
+	unsigned int v0, v1;
+	CUT_WORK* cp;
+
+	bhScePtr++;
+
+    v0 = *bhScePtr;
+
+    bhScePtr++;
+
+    v1 = *bhScePtr;
+
+    bhScePtr += 2;
+    
+    cp = &rom->cutp[v1];
+    
+    if (v0 == 0) 
+	{
+        cp->flg |= 0x1;
+    } 
+	else 
+	{
+        cp->flg &= ~0x1;
+    }
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhMaskSet()
+{
+	int v1, v2;
+	int v0;          // not from DWARF
+	ETTY_WORK* enep; // not from DWARF
+    BH_PWORK* e_ep;  // not from DWARF
+
+	bhScePtr++;
+
+    v0 = *bhScePtr;
+
+    bhScePtr++;
+
+    v1 = *bhScePtr;
+
+    bhScePtr++;
+
+    v2 = *bhScePtr;
+
+    bhScePtr++;
+
+    enep = &rom->enep[v1];
+    e_ep = &ene[enep->wrk_no];
+
+    bhSetMask(e_ep, v2, 0);
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhLipSet()
+{
+	int v0, v1, v2;
+	BH_PWORK* pp;
+	ETTY_WORK* enep; // not from DWARF
+
+	bhScePtr++;
+
+    v0 = *bhScePtr;
+
+    bhScePtr++;
+
+    v1 = *bhScePtr;
+
+    bhScePtr++;
+
+    v2 = *bhScePtr;
+
+    bhScePtr++;
+
+    enep = &rom->enep[v1];
+    pp = &ene[enep->wrk_no];
+    
+    ((int*)pp->exp0)[4] = v0;
+    
+    bhSetLip(pp, v2);
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhMaskStart()
+{
+	int v1;
+	unsigned int v2;
+	BH_PWORK* pp;
+	int v0;          // not from DWARF
+	ETTY_WORK* enep; // not from DWARF
+	
+	bhScePtr++;
+    
+	v0 = *bhScePtr;
+    
+	bhScePtr++;
+    
+	v1 = *bhScePtr;
+    
+	bhScePtr++;
+    
+	v2 = *bhScePtr;
+
+    bhScePtr++;
+
+    enep = &rom->enep[v1];
+    pp = &ene[enep->wrk_no];
+    
+    if (v2 == 0) 
+	{
+        ((int*)pp->exp0)[0] |= 0x1;
+    } 
+	else 
+	{
+        ((int*)pp->exp0)[0] &= ~0x1;
+    }
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhLipStart()
+{
+	int v1;
+	unsigned int v2;
+	BH_PWORK* pp;
+	int v0;          // not from DWARF
+	ETTY_WORK* enep; // not from DWARF
+	
+	bhScePtr++;
+    
+	v0 = *bhScePtr;
+    
+	bhScePtr++;
+    
+	v1 = *bhScePtr;
+    
+	bhScePtr++;
+    
+	v2 = *bhScePtr;
+
+    bhScePtr++;
+
+    enep = &rom->enep[v1];
+    pp = &ene[enep->wrk_no];
+    
+    if (v2 == 0) 
+	{
+        ((int*)pp->exp0)[0] |= 0x4;
+    } 
+	else 
+	{
+        ((int*)pp->exp0)[0] &= ~0x4;
+    }
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhMutekiSetPl()
+{
+	int v0;
+
+	bhScePtr++;
+
+    v0 = *bhScePtr;
+
+    bhScePtr++;
+    
+    if (v0 == 0) 
+	{
+        plp->flg &= ~0x4;
+    } 
+	else 
+	{
+        plp->flg |= 0x4;
+    }
+
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhLookGsetPlStart()
+{
+	int v1;
+
+	bhScePtr++;
+
+    v1 = *bhScePtr;
+
+    bhScePtr++;
+    
+    ((int*)plp->exp1)[0] |= 0x18;
+
+    ((int*)plp->exp1)[16] = 1;
+    
+    if ((v1 & 0x1)) 
+	{
+        ((float*)plp->exp1)[18] = -1.0f * (*(unsigned short*)bhScePtr / 100.0f);
+    } 
+	else 
+	{
+        ((float*)plp->exp1)[18] = *(unsigned short*)bhScePtr / 100.0f;
+    }
+
+    bhScePtr += 2;
+    
+    if ((v1 & 0x2)) 
+	{
+        ((float*)plp->exp1)[19] = -1.0f * (*(unsigned short*)bhScePtr / 100.0f);
+    } 
+	else
+	{
+        ((float*)plp->exp1)[19] = *(unsigned short*)bhScePtr / 100.0f;
+    }
+
+    bhScePtr += 2;
+    
+    if ((v1 & 0x4)) 
+	{
+        ((float*)plp->exp1)[20] = -1.0f * (*(unsigned short*)bhScePtr / 100.0f);
+    } 
+	else
+	{
+        ((float*)plp->exp1)[20] = *(unsigned short*)bhScePtr / 100.0f;
+    }
+
+    bhScePtr += 2;
+
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhLookGsetPlStop()
+{
+	int* v0; // not from DWARF
+
+	bhScePtr += 2;
+
+	v0 = (int*)plp->exp1;
+	
+	*v0 &= ~0x18;
+
+	return 1;
+}
+
+// 100% matching!
+unsigned int bhSoundFadeOut() 
+{
+    bhScePtr += 2;
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhDefModelSet()
+{
+    int v0, v1;
+	unsigned int v2, v3;
+    BH_PWORK* epw;
+    ETTY_WORK* e_enep; // not from DWARF
+    
+    bhScePtr++;
+    
+    v0 = *bhScePtr;
+    
+    bhScePtr++;
+    
+    v1 = *bhScePtr;
+    
+    bhScePtr++;
+    
+    v2 = *bhScePtr;
+    
+    bhScePtr++;
+    
+    v3 = *bhScePtr;
+    
+    bhScePtr += 2;
+    
+    switch (v0)
+    {                          
+    case 0: 
+        epw = plp;
+        break;
+    case 1:
+        e_enep = &rom->enep[v1];
+        epw = &ene[e_enep->wrk_no];
+        break;
+    case 2:
+        epw = (BH_PWORK*)&sys->obwp[v1];
+        break; 
+    }
+    
+    if (v3 == 0)
+    {
+        epw->mlwP->objP[v2].evalflags |= 0x8;
+    } 
+    else
+    {
+        epw->mlwP->objP[v2].evalflags &= ~0x8; 
+    }
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhItmAspdSet()
+{
+	unsigned int v0, v1;
+	O_WRK* op; // not from DWARF
+
+    bhScePtr++;
+
+    v0 = *bhScePtr;
+
+    bhScePtr++;
+
+    v1 = *bhScePtr;
+
+    bhScePtr += 2;
+    
+    op = &sys->itwp[v0];
+
+    op->aspd = v1;
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhEffDispSet()
+{
+	unsigned int v0, v1;
+	O_WRK* e_ep;
+
+	bhScePtr++;
+
+    v0 = *bhScePtr;
+
+    bhScePtr++;
+
+    v1 = *bhScePtr;
+
+    bhScePtr += 2;
+    
+    e_ep = &eff[sys->efid[v0]];
+
+    if (v1 == 0) 
+	{
+        e_ep->stflg |= 0x1000000;
+    } 
+	else 
+	{
+        e_ep->stflg &= ~0x1000000;
+    }
+
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhEffAmbSet()
+{
+	unsigned int v0, v1, v2, v3;
+    
+    bhScePtr++;
+
+    v0 = *bhScePtr;
+
+    bhScePtr++;
+
+    v1 = *bhScePtr;
+
+    bhScePtr++;
+
+    v2 = *bhScePtr;
+
+    bhScePtr++;
+
+    v3 = *bhScePtr;
+
+    bhScePtr += 2;
+    
+    rom->amb_r[v3] = 0.1f * v0;
+    rom->amb_g[v3] = 0.1f * v1;
+    rom->amb_b[v3] = 0.1f * v2;
+
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhObjLinkSetObjEne()
+{
+	int v0, v1;
+    BH_PWORK* e_ep;
+	int v2;          // not from DWARF
+    ETTY_WORK* enep; // not from DWARF
+    
+    bhScePtr++;
+    
+    v0 = *bhScePtr;    
+    
+    bhScePtr++; 
+    
+    v1 = *bhScePtr;
+
+    enep = &rom->enep[v1];
+
+    e_ep = (BH_PWORK*)&ene[enep->wrk_no];
+    
+    e_ep->lkwkp = (unsigned char*)&sys->obwp[v0]; 
+    
+    bhScePtr++; 
+    
+    v2 = *bhScePtr;
+    
+    e_ep->lkono = v2;
+    
+    bhScePtr++;
+    
+    v2 = *bhScePtr;
+    
+    if (v2 == 0)
+    {
+        e_ep->flg |= 0x80;
+    } 
+    else 
+    {
+        e_ep->flg &= ~0x80;
+    }
+    
+    bhScePtr++;
+    
+    v2 = *bhScePtr;
+    
+    bhScePtr++;
+ 
+    if ((v2 & 0x1)) 
+    {
+        e_ep->lox = -1.0f * (*(unsigned short*)bhScePtr / 100.0f);
+    } 
+    else
+    {
+        e_ep->lox = *(unsigned short*)bhScePtr / 100.0f;
+    }
+    
+    bhScePtr += 2;
+
+    if ((v2 & 0x2))
+    {
+        e_ep->loy = -1.0f * (*(unsigned short*)bhScePtr / 100.0f);
+    } 
+    else 
+    {
+        e_ep->loy = *(unsigned short*)bhScePtr / 100.0f;
+    }
+    
+    bhScePtr += 2;
+    
+    if ((v2 & 0x4)) 
+    {
+        e_ep->loz = -1.0f * (*(unsigned short*)bhScePtr / 100.0f);
+    } 
+    else
+    {
+        e_ep->loz = *(unsigned short*)bhScePtr / 100.0f;
+    }
+    
+    bhScePtr += 2;
+    
+    return 1;
+}
+
+// 100% matching! 
+unsigned int bhObjLinkSetObjItem()
+{
+	int v1;
+	int v0, v2;      // not from DWARF
+    
+    bhScePtr++;
+    
+    v0 = *bhScePtr;    
+    
+    bhScePtr++; 
+    
+    v1 = *bhScePtr;
+    
+    sys->itwp[v1].lkwkp = (unsigned char*)&sys->obwp[v0]; 
+    
+    bhScePtr++;
+    
+    v2 = *bhScePtr;
+    
+    sys->itwp[v1].lkono = v2;
+    
+    bhScePtr++;
+    
+    v2 = *bhScePtr;
+    
+    if (v2 == 0)
+    {
+        sys->itwp[v1].flg |= 0x80;
+    } 
+    else 
+    {
+        sys->itwp[v1].flg &= ~0x80;
+    }
+    
+    bhScePtr++;
+    
+    v2 = *bhScePtr;
+    
+    bhScePtr++;
+ 
+    if ((v2 & 0x1)) 
+    {
+        sys->itwp[v1].lox = -1.0f * (*(unsigned short*)bhScePtr / 100.0f);
+    } 
+    else
+    {
+        sys->itwp[v1].lox = *(unsigned short*)bhScePtr / 100.0f;
+    }
+    
+    bhScePtr += 2;
+
+    if ((v2 & 0x2))
+    {
+        sys->itwp[v1].loy = -1.0f * (*(unsigned short*)bhScePtr / 100.0f);
+    } 
+    else 
+    {
+        sys->itwp[v1].loy = *(unsigned short*)bhScePtr / 100.0f;
+    }
+    
+    bhScePtr += 2;
+    
+    if ((v2 & 0x4)) 
+    {
+        sys->itwp[v1].loz = -1.0f * (*(unsigned short*)bhScePtr / 100.0f);
+    } 
+    else
+    {
+        sys->itwp[v1].loz = *(unsigned short*)bhScePtr / 100.0f;
+    }
+    
+    bhScePtr += 2;
+    
+    return 1;
+}
+
+// 100% matching! 
+unsigned int bhObjLinkSetEneItem()
+{
+	int v1;
+    int v0, v2;      // not from DWARF
+    BH_PWORK* e_ep;  // not from DWARF
+    ETTY_WORK* enep; // not from DWARF
+    
+    bhScePtr++;
+    
+    v0 = *bhScePtr;    
+    
+    bhScePtr++; 
+    
+    v1 = *bhScePtr;
+   
+    enep = &rom->enep[v0];
+    e_ep = &ene[enep->wrk_no];
+    
+    sys->itwp[v1].lkwkp = (unsigned char*)e_ep;
+    
+    bhScePtr++;
+    
+    v2 = *bhScePtr;
+    
+    sys->itwp[v1].lkono = v2;
+    
+    bhScePtr++;
+    
+    v2 = *bhScePtr;
+    
+    if (v2 == 0)
+    {
+        sys->itwp[v1].flg |= 0x80;
+    } 
+    else 
+    {
+        sys->itwp[v1].flg &= ~0x80;
+    }
+    
+    bhScePtr++;
+    
+    v2 = *bhScePtr;
+    
+    bhScePtr++;
+ 
+    if ((v2 & 0x1)) 
+    {
+        sys->itwp[v1].lox = -1.0f * (*(unsigned short*)bhScePtr / 100.0f);
+    } 
+    else
+    {
+        sys->itwp[v1].lox = *(unsigned short*)bhScePtr / 100.0f;
+    }
+    
+    bhScePtr += 2;
+
+    if ((v2 & 0x2))
+    {
+        sys->itwp[v1].loy = -1.0f * (*(unsigned short*)bhScePtr / 100.0f);
+    } 
+    else 
+    {
+        sys->itwp[v1].loy = *(unsigned short*)bhScePtr / 100.0f;
+    }
+    
+    bhScePtr += 2;
+    
+    if ((v2 & 0x4)) 
+    {
+        sys->itwp[v1].loz = -1.0f * (*(unsigned short*)bhScePtr / 100.0f);
+    } 
+    else
+    {
+        sys->itwp[v1].loz = *(unsigned short*)bhScePtr / 100.0f;
+    }
+    
+    bhScePtr += 2;
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhObjLinkSetEneEne()
+{
+    int v0, v1;
+	BH_PWORK* e_ep2;
+	int v2;          // not from DWARF
+    ETTY_WORK* enep; // not from DWARF
+    
+    bhScePtr++;
+    
+    v0 = *bhScePtr;    
+    
+    bhScePtr++; 
+    
+    v1 = *bhScePtr;
+
+    enep = &rom->enep[v1]; 
+
+    e_ep2 = &ene[enep->wrk_no];
+
+    enep = &rom->enep[v0]; 
+    
+    e_ep2->lkwkp = (unsigned char*)&ene[enep->wrk_no]; 
+    
+    bhScePtr++; 
+    
+    v2 = *bhScePtr;
+    
+    e_ep2->lkono = v2;
+    
+    bhScePtr++;
+    
+    v2 = *bhScePtr;
+    
+    if (v2 == 0)
+    {
+        e_ep2->flg |= 0x80;
+    } 
+    else 
+    {
+        e_ep2->flg &= ~0x80;
+    }
+    
+    bhScePtr++;
+    
+    v2 = *bhScePtr;
+    
+    bhScePtr++;
+ 
+    if ((v2 & 0x1)) 
+    {
+        e_ep2->lox = -1.0f * (*(unsigned short*)bhScePtr / 100.0f);
+    } 
+    else
+    {
+        e_ep2->lox = *(unsigned short*)bhScePtr / 100.0f;
+    }
+    
+    bhScePtr += 2;
+
+    if ((v2 & 0x2))
+    {
+        e_ep2->loy = -1.0f * (*(unsigned short*)bhScePtr / 100.0f);
+    } 
+    else 
+    {
+        e_ep2->loy = *(unsigned short*)bhScePtr / 100.0f;
+    }
+    
+    bhScePtr += 2;
+    
+    if ((v2 & 0x4)) 
+    {
+        e_ep2->loz = -1.0f * (*(unsigned short*)bhScePtr / 100.0f);
+    } 
+    else
+    {
+        e_ep2->loz = *(unsigned short*)bhScePtr / 100.0f;
+    }
+    
+    bhScePtr += 2;
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhDelObjSe()
+{
+	int v0;
+
+	bhScePtr++;
+
+	v0 = *bhScePtr;
+
+	bhScePtr++;
+
+	FreeObjectSe(v0);
+
+	return 1;
+}
+
+// 100% matching!
+unsigned int bhLightTypeSet()
+{
+	unsigned int v0, v1, v2;
+    LGT_WORK* lp;
+
+    bhScePtr++;
+    
+    v0 = *bhScePtr;
+
+    bhScePtr++;
+
+    v1 = *bhScePtr;
+
+    bhScePtr++;
+
+    v2 = *bhScePtr;
+
+    bhScePtr++;
+    
+    lp = &rom->lgtp[v0];
+
+    lp->type = v1;
+    lp->aspd = v2;
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhFogColorSet()
+{
+	int v0, v1, v2, v3, v4;
+
+    bhScePtr++;
+
+    v0 = *bhScePtr;
+
+    bhScePtr++;
+
+    v1 = *bhScePtr;
+
+    bhScePtr++;
+
+    v2 = *bhScePtr;
+
+    bhScePtr++;
+
+    v3 = *bhScePtr;
+
+    bhScePtr++;
+
+    v4 = *bhScePtr;
+
+    bhScePtr++;
+
+    if (v4 == 0) 
+    {
+        sys->fog_col = v3 | ((v2 << 8) | ((v0 << 24) | (v1 << 16)));
+
+        sys->st_flg |= 0x100000;
+        sys->gm_flg |= 0x10;
+    } 
+    else 
+    {
+        sys->st_flg &= ~0x100000;
+        sys->gm_flg |= 0x10;
+    }
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhEffectSandSet()
+{
+	unsigned int v0, v1, v2;
+    BH_PWORK* epw; 
+    NJS_POINT3 pos;
+    ETTY_WORK* enep; // not from DWARF
+    float x, y, z;   // not from DWARF
+    
+    bhScePtr++;
+
+    v0 = *bhScePtr;
+
+    bhScePtr++;
+
+    v1 = *bhScePtr;
+
+    bhScePtr++;
+
+    v2 = *bhScePtr;
+
+    bhScePtr++;
+   
+    enep = &rom->enep[v0];
+    epw = &ene[enep->wrk_no];
+
+    if (v2 == 0) 
+    {
+        if ((v1 & 0x1)) 
+        {
+            pos.x = -1.0f * (*(unsigned short*)bhScePtr / 100.0f);
+        } 
+        else 
+        {
+            pos.x = *(unsigned short*)bhScePtr / 100.0f;
+        }
+
+        bhScePtr += 2;
+        
+        if ((v1 & 0x2)) 
+        {
+            pos.y = -1.0f * (*(unsigned short*)bhScePtr / 100.0f);
+        } 
+        else 
+        {
+            pos.y = *(unsigned short*)bhScePtr / 100.0f;
+        }
+
+        bhScePtr += 2;
+        
+        if ((v1 & 0x4)) 
+        {
+            pos.z = -1.0f * (*(unsigned short*)bhScePtr / 100.0f);
+        } 
+        else 
+        {
+            pos.z = *(unsigned short*)bhScePtr / 100.0f;;
+        }
+
+        bhScePtr += 2;
+    } 
+    else 
+    {
+        if ((v1 & 0x1)) 
+        {
+            x = -1.0f * (*(unsigned short*)bhScePtr / 100.0f);
+        } 
+        else 
+        {
+            x = *(unsigned short*)bhScePtr / 100.0f;
+        }
+
+        bhScePtr += 2;
+
+        if ((v1 & 0x2)) 
+        {
+            y = -1.0f * (*(unsigned short*)bhScePtr / 100.0f);
+        } 
+        else 
+        {
+            y = *(unsigned short*)bhScePtr / 100.0f;
+        }
+
+        bhScePtr += 2;
+
+        if ((v1 & 0x4)) 
+        {
+            z = -1.0f * (*(unsigned short*)bhScePtr / 100.0f);
+        } 
+        else 
+        {
+            z = *(unsigned short*)bhScePtr / 100.0f;
+        }
+
+        bhScePtr += 2;
+
+        pos.x = epw->px + x;
+        pos.y = y;
+        pos.z = epw->pz + z;
+    }
+    
+    v1 = *bhScePtr;
+
+    bhScePtr += 2;
+    
+    bhEne02_SetSandEffect(epw, &pos, v1);
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhPlItemBlockCk()
+{
+	unsigned int cnt, icnt, wicnt;
+    int v0, v1;
+
+    bhScePtr += 1;
+
+    v0 = *bhScePtr;
+
+    bhScePtr += 1;
+
+    v1 = *bhScePtr;
+
+    bhScePtr += 2;
+    
+    if ((sys->gm_flg & 0x8000000)) 
+    {
+        for (wicnt = 0, icnt = 0, cnt = (sys->ply_id * 16) + 2; cnt < ((sys->ply_id * 16) + 12); cnt++) 
+        {
+            if (sys->itm[cnt] == 0) 
+            {
+                icnt++;
+            }
+
+            switch ((unsigned char)(sys->itm[cnt] >> 16)) 
+            {
+            case 1:
+            case 2:
+            case 3:
+            case 33:
+            case 34:
+            case 142:
+                wicnt++;
+                break;
+            }
+        }
+    } 
+    else 
+    {
+        for (wicnt = 0, icnt = 0, cnt = (sys->ply_id * 16) + 2; cnt < ((sys->ply_id * 16) + 10); cnt++) 
+        {
+            if (sys->itm[cnt] == 0) 
+            {
+                icnt++;
+            }
+
+            switch ((unsigned char)(sys->itm[cnt] >> 16)) 
+            {
+            case 1:
+            case 2:
+            case 3:
+            case 33:
+            case 34:
+            case 142:
+                wicnt++;
+                break;
+            }
+        }
+    }
+
+    icnt -= wicnt;
+
+    switch (v0) 
+    {
+    case 0: 
+        return icnt == v1;
+    case 1: 
+        return icnt >  v1;
+    case 2: 
+        return icnt >= v1;
+    case 3: 
+        return icnt <  v1;
+    case 4: 
+        return icnt <= v1;
+    case 5: 
+        return icnt != v1;
+    }
+
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhEffBloodSet()
+{
+    int v0, v1, v2;
+    BH_PWORK* epw;
+    NJS_POINT3 ofp;
+    ETTY_WORK* enep; // not from DWARF
+    
+    bhScePtr++;
+    
+    v0 = *bhScePtr;
+    
+    bhScePtr++;
+    
+    v1 = *bhScePtr;
+    
+    bhScePtr++;
+    
+    v2 = *bhScePtr;
+    
+    bhScePtr++;
+    
+    enep = &rom->enep[v0];
+    epw = &ene[enep->wrk_no];
+    
+    epw->djnt_no = v1;
+    
+    if ((v2 & 0x1)) 
+    {
+        ofp.x = -1.0f * (*(unsigned short*)bhScePtr / 100.0f);
+    } 
+    else 
+    {
+        ofp.x = *(unsigned short*)bhScePtr / 100.0f;
+    }
+
+    bhScePtr += 2;
+
+    if ((v2 & 0x2)) 
+    {
+        ofp.y = -1.0f * (*(unsigned short*)bhScePtr / 100.0f);
+    } 
+    else
+    {
+        ofp.y = *(unsigned short*)bhScePtr / 100.0f;
+    }
+
+    bhScePtr += 2;
+    
+    if ((v2 & 0x4)) 
+    {
+        ofp.z = -1.0f * (*(unsigned short*)bhScePtr / 100.0f);
+    } 
+    else 
+    {
+        ofp.z = *(unsigned short*)bhScePtr / 100.0f;
+    }
+
+    bhScePtr += 2;
+    
+    v0 = *bhScePtr;
+
+    bhScePtr++;
+
+    v1 = *bhScePtr;
+
+    bhScePtr++;
+
+    v2 = *bhScePtr;
+
+    bhScePtr += 2;
+    
+    if ((v1 & 0x2)) 
+    {
+        v2 = -v2;
+    } 
+    
+    bhEne_SetBlood2(epw, v0, &ofp, (short)((short)v2 * (65536.0f / 360.0f)) + 0);
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhEffBloodPoolSet()
+{
+	int v0, v1, v2; 
+    BH_PWORK* epw; 
+    NJS_POINT3 gpos; 
+    int ang; 
+    ETTY_WORK* enep; // not from DWARF
+    
+    bhScePtr++;
+
+    v0 = *bhScePtr;
+
+    bhScePtr++;
+
+    v1 = *bhScePtr;
+
+    bhScePtr += 2;
+
+    v2 = *(unsigned short*)bhScePtr;
+
+    bhScePtr += 2;
+    
+    enep = &rom->enep[v0];
+    epw = &ene[enep->wrk_no];
+
+    epw->djnt_no = v1;
+    
+    switch (v1) 
+    { 
+    case 0:
+        ang = (unsigned short)((epw->ay + epw->mlwP->objP[1].ang[1]) + (32767 + 1));
+
+        gpos.x = epw->mlwP->owP->mtx[12] - njSin(ang);
+        gpos.y = epw->mlwP->owP->mtx[13];
+        gpos.z = epw->mlwP->owP->mtx[14] - njCos(ang);
+        
+        bhSetBloodPoolLnk(NULL, &gpos, ang, &evnt_BldTbl2, v2);
+        break;
+    case 1:
+        ang = epw->ay + epw->mlwP->objP[1].ang[1];
+
+        gpos.x = epw->mlwP->owP->mtx[12] - njSin(ang);
+        gpos.y = epw->mlwP->owP->mtx[13];
+        gpos.z = epw->mlwP->owP->mtx[14] - njCos(ang);
+        
+        bhSetBloodPoolLnk(NULL, &gpos, ang, &evnt_BldTbl2, v2);
+        break;
+    case 2:
+        ang = epw->ay + epw->mlwP->objP[1].ang[1];
+
+        gpos.x = epw->mlwP->owP->mtx[12] - njSin(ang);
+        gpos.y = epw->mlwP->owP->mtx[13];
+        gpos.z = epw->mlwP->owP->mtx[14] - njCos(ang);
+
+        bhSetBloodPoolLnk(NULL, &gpos, ang, &evnt_BldTbl, v2);
+        break;
+    }
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhEffBloodPoolSet2()
+{
+	int v0, v1, v2, v3; 
+    NJS_POINT3 gpos; 
+    int ang;
+
+    bhScePtr++;
+
+    v0 = *bhScePtr;
+
+    bhScePtr++;
+    
+    if ((v0 & 0x1)) 
+    {
+        gpos.x = -1.0f * (*(unsigned short*)bhScePtr / 100.0f);
+    } 
+    else 
+    {
+        gpos.x = *(unsigned short*)bhScePtr / 100.0f;
+    }
+
+    bhScePtr += 2;
+
+    if ((v0 & 0x2)) 
+    {
+        gpos.y = -1.0f * (*(unsigned short*)bhScePtr / 100.0f);
+    } 
+    else 
+    {
+        gpos.y = *(unsigned short*)bhScePtr / 100.0f;
+    }
+
+    bhScePtr += 2;
+    
+    if ((v0 & 0x4)) 
+    {
+        gpos.z = -1.0f * (*(unsigned short*)bhScePtr / 100.0f);
+    } 
+    else 
+    {
+        gpos.z = *(unsigned short*)bhScePtr / 100.0f;
+    }
+
+    bhScePtr += 2;
+    bhScePtr++;
+    
+    v1 = *bhScePtr;
+    
+    bhScePtr++;
+    
+    v2 = *bhScePtr;
+    
+    bhScePtr += 2;
+    
+    v3 = *(unsigned short*)bhScePtr;
+    
+    bhScePtr += 2;
+    
+    if ((v1 & 0x2)) 
+    {
+        v2 = -v2;
+    }
+
+    switch (v1) 
+    {
+    case 0:
+        ang = (unsigned short)((short)((short)v2 * (65536.0f / 360.0f)) + (32767 + 1));
+        
+        gpos.x = gpos.x - njSin(ang);
+        gpos.z = gpos.z - njCos(ang);
+        
+        bhSetBloodPoolLnk(NULL, &gpos, ang, &evnt_BldTbl2, v3);
+        break;
+    case 1:
+        ang = (short)((short)v2 * (65536.0f / 360.0f));
+        
+        gpos.x = gpos.x - njSin(ang);
+        gpos.z = gpos.z - njCos(ang);
+
+        bhSetBloodPoolLnk(NULL, &gpos, ang, &evnt_BldTbl2, v3);
+        break;
+    case 2:
+        ang = (short)((short)v2 * (65536.0f / 360.0f));
+
+        gpos.x = gpos.x - njSin(ang);
+        gpos.z = gpos.z - njCos(ang);
+
+        bhSetBloodPoolLnk(NULL, &gpos, ang, &evnt_BldTbl, v3);
+        break;
+    }
+
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhCyoutenHenkeiSet()
+{
+	int v0, v1, v2, v3; 
+    BH_PWORK* epw; 
+    ETTY_WORK* enep; // not from DWARF
+    
+    bhScePtr++;
+
+    v0 = *bhScePtr;
+
+    bhScePtr++;
+
+    v1 = *bhScePtr;
+
+    bhScePtr++;
+
+    v2 = *bhScePtr;
+
+    bhScePtr++;
+
+    v3 = *bhScePtr;
+
+    bhScePtr += 2;
+    
+    switch (v0) 
+    {
+    case 0:
+        epw = plp;
+        break;
+    case 1:
+        enep = &rom->enep[v1];
+        epw = &ene[enep->wrk_no];
+        break;
+    }
+    
+    epw->mlwP->objP = epw->mbp[v2];
+    
+    epw->obj_a = epw->mbp[v2];
+    epw->obj_b = epw->mbp[v3];
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhCyoutenHenkeiStart()
+{
+	bhScePtr++;
+    bhScePtr++;
+    
+    if (bhCetask->work != NULL) 
+    {
+        bhCetask->work->mdflg |= 0x2;
+
+        bhCetask->work->shp_ct = 1000.0f - ((1000.0f / bhCetask->cnt3) * bhCetask->cnt2);
+    }
+    
+    return 0;
+}
+
+// 100% matching!
+unsigned int bhFixEventCamPly()
+{
+	int v0;
+
+    bhScePtr++;
+
+    v0 = *bhScePtr;
+
+    bhScePtr++;
+    
+    if (v0 == 0) 
+    {
+        sys->gm_flg |= 0x20000;
+    } 
+    else 
+    {
+        sys->gm_flg &= ~0x20000;
+    }
+
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhObjLinkSetObjObj()
+{
+	int v0, v1, v4;
+    int v2, v3; // not from DWARF
+
+    bhScePtr++;
+
+    v0 = *bhScePtr;
+
+    bhScePtr++;
+
+    v1 = *bhScePtr;
+
+    bhScePtr++;
+    
+    sys->obwp[v1].lkwkp = (unsigned char*)&sys->obwp[v0];
+    
+    v2 = *bhScePtr;
+
+    sys->obwp[v1].lkono = v2;
+    
+    bhScePtr++;
+
+    v3 = *bhScePtr;
+
+    if (v3 == 0) 
+    {
+        sys->obwp[v1].flg |= 0x80;
+    } 
+    else 
+    {
+        sys->obwp[v1].flg &= ~0x80;
+    }
+
+    bhScePtr++;
+
+    v4 = *bhScePtr;
+    
+    bhScePtr++;
+    
+    if ((v4 & 0x1)) 
+    {
+        sys->obwp[v1].lox = -1.0f * (*(unsigned short*)bhScePtr / 100.0f);
+    } 
+    else 
+    {
+        sys->obwp[v1].lox = *(unsigned short*)bhScePtr / 100.0f;
+    }
+
+    bhScePtr += 2;
+    
+    if ((v4 & 0x2)) 
+    {
+        sys->obwp[v1].loy = -1.0f * (*(unsigned short*)bhScePtr / 100.0f);
+    } 
+    else 
+    {
+        sys->obwp[v1].loy = *(unsigned short*)bhScePtr / 100.0f;
+    }
+
+    bhScePtr += 2;
+    
+    if ((v4 & 0x4)) 
+    {
+        sys->obwp[v1].loz = -1.0f * (*(unsigned short*)bhScePtr / 100.0f);
+    } 
+    else 
+    {
+        sys->obwp[v1].loz = *(unsigned short*)bhScePtr / 100.0f;
+    }
+
+    bhScePtr += 2;
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhCamYureSet()
+{
+	int v0, v1;
+
+    bhScePtr++;
+
+    v0 = *bhScePtr;
+
+    bhScePtr++;
+
+    v1 = *(unsigned short*)bhScePtr;
+
+    bhScePtr += 2;
+    
+    if (v0 == 0) 
+    {
+        cam.ofx = (0.01f * v1) * (-rand() / -2.1474836E9f);
+        cam.ofy = (0.01f * v1) * (-rand() / -2.1474836E9f);
+        cam.ofz = (0.01f * v1) * (-rand() / -2.1474836E9f);
+    } 
+    else 
+    {
+        cam.ofx = 0;
+        cam.ofy = 0;
+        cam.ofz = 0;
+    }
+
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhInitCamSet()
+{
+	bhScePtr += 2;
+    
+    plp->gpx = plp->px;
+    plp->gpy = plp->py;
+    plp->gpz = plp->pz;
+
+    sys->st_flg &= ~0x1;
+    
+    bhCheckCut(1);
+
+    bhControlCamera();
+    bhControlLight();
+
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhMesDispEndSet()
+{
+	bhScePtr += 2;
+
+    sys->mes_ct = 0;
+    sys->mes_tim = 0;
+    sys->mes_fls = 0;
+    sys->mes_sel = 0;
+
+    sys->st_flg &= ~0x200;
+
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhPadCheck()
+{
+	int v0, v1;
+    
+    bhScePtr++;
+
+    v0 = *bhScePtr;
+
+    bhScePtr++;
+
+    v1 = *bhScePtr;
+
+    bhScePtr += 4;
+    
+    if (!(sys->ts_flg & 0x80)) 
+    {
+        switch (v1) 
+        {
+        case 0:
+            if ((sys->pad_ps & (1 << v0)) && (!(sys->pad_ps & 0xE000))) 
+            {
+                return 0;
+            }
+
+            break;
+        case 1:
+            if ((sys->pad_on & (1 << v0)) && (!(sys->pad_ps & 0xE000))) 
+            {
+                return 0;
+            }
+
+            break;
+        case 2:
+            if ((sys->pad_ps & (1 << v0)) && (!(sys->pad_ps & 0xE000))) 
+            {
+                return 0;
+            }
+
+            if ((sys->pad_on & (1 << v0)) && (!(sys->pad_ps & 0xE000))) 
+            {
+                return 0;
+            }
+
+            break;
+        case 3:
+            if ((sys->pad_ps != 0) && (!(sys->pad_ps & 0xE000))) 
+            {
+                return 0;
+            }
+
+            break;
+        case 4:
+            if ((sys->pad_on != 0) && (!(sys->pad_ps & 0xE000))) 
+            {
+                return 0;
+            }
+
+            break;
+        case 5:
+            if ((sys->pad_ps != 0) && (!(sys->pad_ps & 0xE000))) 
+            {
+                return 0;
+            }
+
+            if ((sys->pad_on != 0) && (!(sys->pad_ps & 0xE000))) 
+            {
+                return 0;
+            }
+
+            break;
+        case 6:
+            if (((sys->pad_ps & 0x200)) && (!(sys->pad_on & 0x10)) && (!(sys->pad_ps & 0xE000))) 
+            {
+                return 0;
+            }
+
+            break;
+        }
+    }
+
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhTFrameCheck()
+{
+	int v0;
+
+	bhScePtr += 4;
+
+	v0 = *(unsigned short*)bhScePtr;
+
+	bhScePtr += 2;
+	
+	if (Event_T_timer >= v0) 
+	{
+		return 0;
+	}
+	else 
+	{
+		return 1;
+	}
+}
+
+// 100% matching! 
+unsigned int bhEventTimerClr()
+{
+	Event_T_timer = 0;
+
+	bhScePtr += 2;
+
+	return 1;
+}
+
+// 100% matching!
+unsigned int bhCamCheck()
+{
+	unsigned int v0, v1, v2;
+
+    bhScePtr++;
+
+    v0 = *bhScePtr;
+
+    bhScePtr++;
+
+    v1 = *bhScePtr;
+
+    bhScePtr++;
+
+    v2 = *bhScePtr;
+
+    bhScePtr++;
+    bhScePtr += 2;
+    
+    if (!(sys->sp_flg & 0x40)) 
+    { 
+        return 1;
+    }
+
+    if ((sys->st_flg & 0x1)) 
+    {
+        if ((cam.flg & 0x2)) 
+        {
+            if (cam.evc_no == v0) 
+            {
+                if (v2 != 0) 
+                {
+                    if (cam.keyf_no == v1) 
+                    {
+                        return 0;
+                    }
+                } 
+                else 
+                {
+                    return 0;
+                }
+            }
+        }
+    }
+
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhRandamSet()
+{
+	int v0, v1;
+
+    bhScePtr++;
+
+    v1 = *bhScePtr;
+
+    bhScePtr++;
+    
+    v0 = 100.0f * (-rand() / -2.1474836E9f);
+
+    bhEtask->wpnl_no = v0 % v1;
+
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhEventSkipSet()
+{
+	int v0;
+
+    bhScePtr++;
+
+    v0 = *bhScePtr;
+
+    bhScePtr++;
+    
+    if (v0 == 0) 
+    {
+        sys->gm_flg |= 0x40000000;
+    } 
+    else 
+    {
+        sys->gm_flg &= ~0x40000000;
+    }
+
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhDelYakkyou()
+{
+	bhScePtr += 2;
+
+	bhDeleteYakkyou();
+
+	return 1;
+}
+
+// 100% matching!
+unsigned int bhObjAlphaSet()
+{
+	int v0, v1, v2, v3, v4, v5;
+    O_WRK* op;
+
+    bhScePtr++;
+
+    v0 = *bhScePtr;
+
+    bhScePtr++;
+
+    v1 = *bhScePtr;
+
+    bhScePtr++;
+
+    v2 = *bhScePtr;
+
+    bhScePtr++;
+
+    v3 = *bhScePtr;
+
+    bhScePtr++;
+
+    v4 = *bhScePtr;
+
+    bhScePtr++;
+
+    v5 = *bhScePtr;
+
+    bhScePtr += 2;
+    
+    switch (v0) 
+    {
+    case 2:
+        op = &sys->obwp[v1];
+        break;
+    case 3:
+        op = &sys->itwp[v1];
+        break;
+    }
+
+    bhSetAlphaFadeObject(op, v2, v3, v4, v5);
+
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhCyodanSet()
+{
+	int v0, v1, v2, v3, v4, v5;
+    NJS_POINT3 ps, wps;
+    int wp_hef;
+    
+    bhScePtr++;
+
+    v0 = *bhScePtr;
+
+    bhScePtr++;
+
+    v1 = *bhScePtr;
+
+    bhScePtr++;
+
+    v2 = *bhScePtr;
+
+    bhScePtr++;
+
+    v3 = *bhScePtr;
+
+    bhScePtr++;
+
+    v4 = *bhScePtr;
+
+    bhScePtr++;
+    
+    if ((v4 & 0x1)) 
+    {
+        wps.x = -1.0f * (*(unsigned short*)bhScePtr / 100.0f);
+    } 
+    else 
+    {
+        wps.x = *(unsigned short*)bhScePtr / 100.0f;
+    }
+
+    bhScePtr += 2;
+    
+    if ((v4 & 0x2)) 
+    {
+        wps.y = -1.0f * (*(unsigned short*)bhScePtr / 100.0f);
+    } 
+    else 
+    {
+        wps.y = *(unsigned short*)bhScePtr / 100.0f;
+    }
+
+    bhScePtr += 2;
+
+    if ((v4 & 0x4)) 
+    {
+        wps.z = -1.0f * (*(unsigned short*)bhScePtr / 100.0f);
+    } 
+    else 
+    {
+        wps.z = *(unsigned short*)bhScePtr / 100.0f;
+    }
+
+    bhScePtr += 2;
+
+    v5 = *bhScePtr;
+
+    bhScePtr++;
+
+    wp_hef = WpnTab[v5].hiteff;
+    
+    v4 = *bhScePtr;
+    
+    bhScePtr++;
+    
+    if ((v4 & 0x1)) 
+    {
+        ps.x = -1.0f * (*(unsigned short*)bhScePtr / 100.0f);
+    } 
+    else 
+    {
+        ps.x = *(unsigned short*)bhScePtr / 100.0f;
+    }
+
+    bhScePtr += 2;
+    
+    if ((v4 & 0x2)) 
+    {
+        ps.y = -1.0f * (*(unsigned short*)bhScePtr / 100.0f);
+    } 
+    else 
+    {
+        ps.y = *(unsigned short*)bhScePtr / 100.0f;
+    }
+
+    bhScePtr += 2;
+
+    if ((v4 & 0x4)) 
+    {
+        ps.z = -1.0f * (*(unsigned short*)bhScePtr / 100.0f);
+    } 
+    else 
+    {
+        ps.z = *(unsigned short*)bhScePtr / 100.0f;
+    }
+
+    bhScePtr += 4;
+    
+    bhSetEffParticle(NULL, 0, &wps, &ps, (v0 << 24) | (v1 << 16) | (v2 << 8) | v3, wp_hef);
+
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhHEffectSet()
+{
+    // modified order of local variables in regards to DWARF
+	unsigned int v0, v1;
+    int ax, ay;
+    int v2, v3; 
+    POINT pnt;
+    int v4, v5, v6; // not from DWARF
+    
+    bhScePtr += 2;
+
+    v1 = *bhScePtr;
+
+    bhScePtr++;
+
+    v0 = *bhScePtr;
+
+    bhScePtr++;
+    
+    if ((v0 & 0x1)) 
+    {
+        pnt.px = -1.0f * (*(unsigned short*)bhScePtr / 100.0f);
+    } 
+    else 
+    {
+        pnt.px = *(unsigned short*)bhScePtr / 100.0f;
+    }
+
+    bhScePtr += 2;
+
+    if ((v0 & 0x2)) 
+    {
+        pnt.py = -1.0f * (*(unsigned short*)bhScePtr / 100.0f);
+    } 
+    else 
+    {
+        pnt.py = *(unsigned short*)bhScePtr / 100.0f;
+    }
+
+    bhScePtr += 2;
+
+    if ((v0 & 0x4)) 
+    {
+        pnt.pz = -1.0f * (*(unsigned short*)bhScePtr / 100.0f);
+    }
+    else 
+    {
+        pnt.pz = *(unsigned short*)bhScePtr / 100.0f;
+    }
+    
+    bhScePtr += 2;
+    
+    v2 = *bhScePtr;
+    
+    bhScePtr++;
+
+    v3 = *bhScePtr;
+
+    if ((v2 & 0x1)) 
+    {
+        v3 = -v3;
+    }
+
+    ax = v3 * (65536.0f / 360.0f);
+
+    bhScePtr++;
+    
+    v4 = *bhScePtr;
+
+    if ((v2 & 0x2)) 
+    {
+        v4 = -v4;
+    }
+    
+    ay = v4 * (65536.0f / 360.0f);
+    
+    bhScePtr++;
+    
+    v5 = *bhScePtr;
+    
+    bhScePtr++;
+    
+    if ((v5 & 0x1)) 
+    {
+        pnt.ox = -1.0f * (*(unsigned short*)bhScePtr / 100.0f);
+    } 
+    else 
+    {
+        pnt.ox = *(unsigned short*)bhScePtr / 100.0f;
+    }
+
+    bhScePtr += 2;
+    
+    if ((v5 & 0x2)) 
+    {
+        pnt.oy = -1.0f * (*(unsigned short*)bhScePtr / 100.0f);
+    } 
+    else 
+    {
+        pnt.oy = *(unsigned short*)bhScePtr / 100.0f;
+    }
+
+    bhScePtr += 2;
+    
+    if ((v5 & 0x4)) 
+    {
+        pnt.oz = -1.0f * (*(unsigned short*)bhScePtr / 100.0f);
+    } 
+    else 
+    {
+        pnt.oz = *(unsigned short*)bhScePtr / 100.0f;
+    }
+
+    bhScePtr += 2;
+    
+    v6 = *(unsigned short*)bhScePtr;
+
+    bhScePtr += 2;
+    
+    bhSetEffectEvt(v6, &pnt, v1, ax, ay);
+
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhObjLinkSetObjPly()
+{
+	int v1;
+    int v0; // not from DWARF
+
+	bhScePtr++;
+    
+    v0 = *bhScePtr;
+
+    plp->lkwkp = (unsigned char*)&sys->obwp[v0];
+
+    bhScePtr += 2;
+
+    v1 = *bhScePtr;
+
+    plp->lkono = v1;
+    
+    bhScePtr++;
+
+    v1 = *bhScePtr;
+
+    if (v1 == 0) 
+    {
+        plp->flg |= 0x80;
+    } 
+    else 
+    {
+        plp->flg &= ~0x80;
+    }
+
+    bhScePtr++;
+
+    v1 = *bhScePtr;
+    
+    bhScePtr++;
+    
+    if ((v1 & 0x1)) 
+    {
+        plp->lox = -1.0f * (*(unsigned short*)bhScePtr / 100.0f);
+    } 
+    else 
+    {
+        plp->lox = *(unsigned short*)bhScePtr / 100.0f;
+    }
+
+    bhScePtr += 2;
+    
+    if ((v1 & 0x2)) 
+    {
+        plp->loy = -1.0f * (*(unsigned short*)bhScePtr / 100.0f);
+    } 
+    else 
+    {
+        plp->loy = *(unsigned short*)bhScePtr / 100.0f;
+    }
+
+    bhScePtr += 2;
+    
+    if ((v1 & 0x4)) 
+    {
+        plp->loz = -1.0f * (*(unsigned short*)bhScePtr / 100.0f);
+    } 
+    else 
+    {
+        plp->loz = *(unsigned short*)bhScePtr / 100.0f;
+    }
+
+    bhScePtr += 2;
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhEffPush()
+{
+	bhScePtr += 2;
+
+	bhPushEffectWork();
+
+	return 1;
+}
+
+// 100% matching!
+unsigned int bhEffPop()
+{
+	bhScePtr += 2;
+
+	bhPopEffectWork();
+
+	return 1;
+}
+
+// 100% matching!
+unsigned int bhAreaSearchObj()
+{
+	int v0, v2; 
+    BH_PWORK* e_workp; 
+    float w_px1, w_pz1; 
+    float w_px2, w_pz2; 
+    int v1;          // not from DWARF
+    ETTY_WORK* enep; // not from DWARF
+
+    bhScePtr++;
+    
+    v0 = *bhScePtr;
+    
+    bhScePtr++;
+    
+    v1 = *bhScePtr;
+    
+    switch (v1) 
+    {
+    case 0:
+        e_workp = plp;
+        break;
+    case 1:
+        enep = &rom->enep[v0];
+        e_workp = &ene[enep->wrk_no];
+        break;
+    case 2:
+        e_workp = (BH_PWORK*)&sys->obwp[v0];
+        break;
+    case 3:
+        e_workp = (BH_PWORK*)&sys->itwp[v0];
+        break;
+    }
+    
+    bhScePtr++;
+    
+    v2 = *bhScePtr;
+    
+    bhScePtr++;
+    
+    if ((v2 & 0x1)) 
+    { 
+        w_px1 = -1.0f * (*(unsigned short*)bhScePtr / 100.0f);
+    }
+    else 
+    { 
+        w_px1 = *(unsigned short*)bhScePtr / 100.0f; 
+    }
+
+    bhScePtr += 2;
+
+    if ((v2 & 0x4)) 
+    { 
+        w_pz1 = -1.0f * (*(unsigned short*)bhScePtr / 100.0f);
+    }
+    else 
+    { 
+        w_pz1 = *(unsigned short*)bhScePtr / 100.0f;
+    }
+
+    bhScePtr += 2;
+    bhScePtr++;
+    
+    v2 = *bhScePtr;
+    
+    bhScePtr++;
+
+    if ((v2 & 0x1)) 
+    { 
+        w_px2 = -1.0f * (*(unsigned short*)bhScePtr / 100.0f);
+    }
+    else 
+    { 
+        w_px2 = *(unsigned short*)bhScePtr / 100.0f;
+    }
+
+    bhScePtr += 2;
+    
+    if ((v2 & 0x4)) 
+    { 
+        w_pz2 = -1.0f * (*(unsigned short*)bhScePtr / 100.0f);
+    }
+    else 
+    { 
+        w_pz2 = *(unsigned short*)bhScePtr / 100.0f;
+    }
+
+    bhScePtr += 2;
+
+    if (((w_px1 <= e_workp->px) && (w_px2 > e_workp->px)) && ((w_pz1 <= e_workp->pz) && (w_pz2 > e_workp->pz))) 
+    {
+        return 1;
+    }
+
+    return 0;
+}
+
+// 100% matching!
+unsigned int bhLightParameterCSet()
+{
+	int v0, v1, v2, v3, v4, v5, v6, v7, v8, v9;
+
+    bhScePtr += 2;
+
+    v0 = *(unsigned short*)bhScePtr;
+    
+    bhScePtr += 2;
+
+    v1 = *(unsigned short*)bhScePtr;
+
+    bhScePtr += 2;
+
+    v2 = *(unsigned short*)bhScePtr;
+
+    bhScePtr += 2;
+
+    v3 = *(unsigned short*)bhScePtr;
+
+    bhScePtr += 2;
+
+    v4 = *(unsigned short*)bhScePtr;
+
+    bhScePtr += 2;
+    
+    v5 = *(unsigned short*)bhScePtr;
+
+    bhScePtr += 2;
+
+    v6 = *(unsigned short*)bhScePtr;
+
+    bhScePtr += 2;
+
+    v7 = *(unsigned short*)bhScePtr;
+
+    bhScePtr += 2;
+
+    v8 = *(unsigned short*)bhScePtr;
+
+    bhScePtr += 2;
+
+    v9 = *(unsigned short*)bhScePtr;
+
+    bhScePtr += 2;
+    
+    bhCetask->e_lgt[0][0] = v0 / 100.0f;
+    bhCetask->e_lgt[0][1] = v1 / 100.0f;
+    bhCetask->e_lgt[0][2] = v2 / 100.0f;
+    bhCetask->e_lgt[0][3] = v3 / 100.0f;
+    bhCetask->e_lgt[0][4] = v4 / 100.0f;
+    
+    bhCetask->e_lgt[1][0] = v5 / 100.0f;
+    bhCetask->e_lgt[1][1] = v6 / 100.0f;
+    bhCetask->e_lgt[1][2] = v7 / 100.0f;
+    bhCetask->e_lgt[1][3] = v8 / 100.0f;
+    bhCetask->e_lgt[1][4] = v9 / 100.0f;
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhLightParameterStart()
+{
+	int v0, v1;
+    LGT_WORK* lp;
+    float ips_w[4][3]; 
+    float ans[3]; 
+    float frm; 
+
+    bhScePtr++;
+
+    v0 = *bhScePtr;
+
+    bhScePtr++;
+
+    v1 = *bhScePtr;
+
+    bhScePtr += 2;
+    
+    if (v1 == 0) 
+    {
+        lp = &rom->lgtp[v0];
+    } 
+    else 
+    {
+        lp = &rom->evlp[v0];
+    }
+    
+    ips_w[0][0] = bhCetask->e_lgt[1][0];
+    ips_w[1][0] = bhCetask->e_lgt[0][0];
+    
+    ips_w[0][1] = bhCetask->e_lgt[1][1];
+    ips_w[1][1] = bhCetask->e_lgt[0][1];
+    
+    ips_w[0][2] = bhCetask->e_lgt[1][2];
+    ips_w[1][2] = bhCetask->e_lgt[0][2];
+    
+    frm = (1.0f / bhCetask->cnt3) * bhCetask->cnt2;
+
+    njLinear(ips_w[0], ans, NULL, frm);
+
+    lp->r = ans[0];
+    lp->g = ans[1];
+    lp->b = ans[2];
+    
+    ips_w[0][0] = bhCetask->e_lgt[1][3];
+    ips_w[1][0] = bhCetask->e_lgt[0][3];
+    
+    ips_w[0][1] = bhCetask->e_lgt[1][4];
+    ips_w[1][1] = bhCetask->e_lgt[0][4];
+
+    njLinear(ips_w[0], ans, NULL, frm);
+
+    lp->nr = ans[0];
+    lp->fr = ans[1];
+
+    return 0;
+}
+
+// 100% matching!
+unsigned int bhInitMidiSlotSet()
+{
+	int v0, v1;
+
+    bhScePtr++;
+    
+    v0 = *bhScePtr;
+
+    bhScePtr++;
+
+    v1 = *bhScePtr;
+
+    bhScePtr += 2;
+
+    CustomMidiSlotDef(v0, v1);
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bh3dSoundFlagSet()
+{
+	int v0, v1, v2;
+
+    bhScePtr++;
+
+    v0 = *bhScePtr;
+
+    bhScePtr++;
+
+    v1 = *bhScePtr;
+
+    bhScePtr++;
+
+    v2 = *bhScePtr;
+
+    bhScePtr++;
+
+    Set3dSoundFlag(v0, v1, v2);
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhSoundVolumeSet()
+{
+	int v0, v1, v2, v3, v4;
+
+    bhScePtr++;
+
+    v0 = *bhScePtr;
+
+    bhScePtr++;
+
+    v1 = *bhScePtr;
+
+    bhScePtr++;
+
+    v2 = *bhScePtr;
+
+    v2 *= -1;
+
+    bhScePtr++;
+
+    v3 = *bhScePtr;
+
+    v3 *= -1;
+
+    bhScePtr++;
+
+    v4 = *bhScePtr;
+
+    bhScePtr++;
+    
+    SetUserSoundVolume(v0, v1, v2, v3, v4);
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhLightParameterSet()
+{
+	int v0, v1, v2, v3, v4, v5, v6;
+    LGT_WORK* lp;
+
+    bhScePtr++;
+
+    v0 = *bhScePtr;
+
+    bhScePtr++;
+
+    v1 = *bhScePtr;
+
+    bhScePtr += 2;
+
+    v2 = *(unsigned short*)bhScePtr;
+
+    bhScePtr += 2;
+
+    v3 = *(unsigned short*)bhScePtr;
+
+    bhScePtr += 2;
+
+    v4 = *(unsigned short*)bhScePtr;
+
+    bhScePtr += 2;
+
+    v5 = *(unsigned short*)bhScePtr;
+
+    bhScePtr += 2;
+
+    v6 = *(unsigned short*)bhScePtr;
+
+    bhScePtr += 2;
+
+    if (v1 == 0) 
+    {
+        lp = &rom->lgtp[v0];
+    } 
+    else 
+    {
+        lp = &rom->evlp[v0];
+    }
+    
+    lp->r = v2 / 100.0f;
+    lp->g = v3 / 100.0f;
+    lp->b = v4 / 100.0f;
+
+    lp->nr = v5 / 100.0f;
+    lp->fr = v6 / 100.0f;
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhEneSeOn()
+{
+	int v0, v1, v2, v3;
+    NJS_VECTOR pPos;
+    BH_PWORK* epw;
+    ETTY_WORK* enep; // not from DWARF
+
+    bhScePtr++;
+
+    v0 = *bhScePtr;
+
+    bhScePtr++;
+
+    v1 = *bhScePtr;
+
+    bhScePtr++;
+
+    v2 = *bhScePtr;
+
+    bhScePtr++;
+
+    v3 = *(unsigned short*)bhScePtr;
+
+    bhScePtr += 2;
+    
+    enep = &rom->enep[v1];
+    epw = &ene[enep->wrk_no];
+    
+    pPos.x = epw->mlwP->objP[v2].pos[0];
+    pPos.y = epw->mlwP->objP[v2].pos[1];
+    pPos.z = epw->mlwP->objP[v2].pos[2];
+    
+    CallEnemySe(v0, &pPos, v3);
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhEneSeOff()
+{
+	unsigned char v0;
+
+	bhScePtr++;
+	
+	v0 = *bhScePtr;
+
+	bhScePtr++;
+
+	StopEnemySe(v0);
+
+	return 1;
+}
+
+// 100% matching!
+unsigned int bhWalAtariSet2()
+{
+	unsigned int v1;
+    ATR_WORK* e_walp;
+
+    bhScePtr++;
+    
+    e_walp = rom->walp;
+    e_walp += *bhScePtr;
+    
+    bhScePtr++;
+    v1 = *(unsigned short*)bhScePtr;
+    e_walp->attr = v1;
+    
+    bhScePtr += 2;
+    v1 = *bhScePtr;
+    e_walp->prm0 = v1;
+    
+    bhScePtr++;
+    v1 = *bhScePtr;
+    e_walp->prm1 = v1;
+
+    bhScePtr++;
+    v1 = *bhScePtr;
+    e_walp->prm2 = v1;
+    
+    bhScePtr++;
+    v1 = *bhScePtr;
+    e_walp->prm3 = v1;
+
+    bhScePtr++;
+    v1 = *bhScePtr;
+    e_walp->type = v1;
+
+    bhScePtr += 2;
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhFlrAtariSet2()
+{
+	unsigned int v1;
+    ATR_WORK* e_flrp;
+
+    bhScePtr++;
+    
+    e_flrp = rom->flrp;
+    e_flrp += *bhScePtr;
+    
+    bhScePtr++;
+    v1 = *(unsigned short*)bhScePtr;
+    e_flrp->attr = v1;
+    
+    bhScePtr += 2;
+    v1 = *bhScePtr;
+    e_flrp->prm0 = v1;
+    
+    bhScePtr++;
+    v1 = *bhScePtr;
+    e_flrp->prm1 = v1;
+
+    bhScePtr++;
+    v1 = *bhScePtr;
+    e_flrp->prm2 = v1;
+    
+    bhScePtr++;
+    v1 = *bhScePtr;
+    e_flrp->prm3 = v1;
+
+    bhScePtr++;
+    v1 = *bhScePtr;
+    e_flrp->type = v1;
+
+    bhScePtr += 2;
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhMotionPosSetEnePly()
+{
+	short ay;
+	BH_PWORK* e_workp;
+	int v1;
+	int v0;
+    ETTY_WORK* enep; // not from DWARF
+
+	bhScePtr++;
+
+    v0 = *bhScePtr;
+
+    bhScePtr++;
+
+    v1 = *bhScePtr;
+    
+    enep = &rom->enep[v0];
+    e_workp = &ene[enep->wrk_no];
+    
+    bhScePtr++;
+    bhScePtr++;
+    
+    plp->px = e_workp->mlwP->owP->mtx[12];
+    
+    ((float*)plp->exp0)[18] = plp->pxb = plp->px;
+    
+    plp->py = rom->grand[v1 + 1];
+    plp->pyb = plp->py;
+    
+    plp->flr_no = bhCheckFloorNum(plp->py);
+    
+    plp->pz = e_workp->mlwP->owP->mtx[14];
+
+    ((float*)plp->exp0)[20] = plp->pzb = plp->pz;
+    
+    ay = e_workp->mdl->objP[0].ang[1] - e_workp->mdl->objP[1].ang[1] - e_workp->mdl->objP[2].ang[1] - e_workp->mdl->objP[3].ang[1] - e_workp->mdl->objP[4].ang[1];
+
+    plp->ayb = plp->ay = (short)(ay + (32767 + 1));
+
+    plp->mdl->objP->ang[1] = 0;
+    
+    bhCalcModel(plp);
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhKageSwSet()
+{
+	unsigned int v2, v3, v4;
+    BH_PWORK* e_ep;
+    O_WRK* e_ip;
+    ETTY_WORK* enep; // not from DWARF
+    
+    bhScePtr++;
+
+    v2 = *bhScePtr;
+
+    bhScePtr++;
+
+    v3 = *bhScePtr;
+
+    bhScePtr++;
+
+    v4 = *bhScePtr;
+
+    bhScePtr++;
+    
+    switch (v2) 
+    {
+    case 0:
+        if (v4 == 0) 
+        {
+            plp->stflg |= 0x8;
+        } 
+        else 
+        {
+            plp->stflg &= ~0x8;
+        }
+
+        break;
+    case 1:
+        enep = &rom->enep[v3];
+        e_ep = &ene[enep->wrk_no];
+
+        if (v4 == 0) 
+        {
+            e_ep->stflg |= 0x8;
+        } 
+        else 
+        {
+            e_ep->stflg &= ~0x8;
+        }
+
+        break;
+    case 2:
+        e_ep = (BH_PWORK*)&sys->obwp[v3];
+
+        if (v4 == 0) 
+        {
+            e_ep->stflg |= 0x8;
+        } 
+        else 
+        {
+            e_ep->stflg &= ~0x8;
+        }
+
+        break;
+    case 3:
+        e_ep = (BH_PWORK*)&sys->itwp[v3];
+
+        if (v4 == 0) 
+        {
+            e_ep->stflg |= 0x8;
+        } 
+        else
+        {
+            e_ep->stflg &= ~0x8;
+        }
+
+        break;
+    }
+
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhSoundPanSet()
+{
+	int v0, v1, v2, v3, v4;
+
+    bhScePtr++;
+
+    v0 = *bhScePtr;
+
+    bhScePtr++;
+
+    v1 = *bhScePtr;
+
+    bhScePtr++;
+
+    v2 = *bhScePtr;
+
+    v2 -= 128;
+
+    bhScePtr++;
+
+    v3 = *bhScePtr;
+
+    v3 -= 128;
+
+    bhScePtr++;
+
+    v4 = *bhScePtr;
+
+    bhScePtr++;
+    
+    SetUserSoundPan(v0, v1, v2, v3, v4);
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhInitPonySet()
+{
+	unsigned int v2, v3;
+    BH_PWORK* e_ep;  // not from DWARF
+    ETTY_WORK* enep; // not from DWARF
+
+    bhScePtr++;
+
+    v2 = *bhScePtr;
+
+    bhScePtr++;
+
+    v3 = *bhScePtr;
+
+    bhScePtr += 2;
+    
+    switch (v2) 
+    {
+    case 0:
+        plp->flg2 |= 0x2;
+        break;
+    case 1:
+        enep = &rom->enep[v3];
+        e_ep = &ene[enep->wrk_no];
+
+        e_ep->flg2 |= 0x2;
+        break;
+    }
+
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhCyoutenHenkeiSetEX()
+{
+	int v0, v1, v2, v3, v4;
+    BH_PWORK* epw;
+    ETTY_WORK* enep;
+
+    bhScePtr++;
+
+    v0 = *bhScePtr;
+
+    bhScePtr++;
+
+    v1 = *bhScePtr;
+
+    bhScePtr++;
+
+    v2 = *bhScePtr;
+
+    bhScePtr++;
+
+    v3 = *bhScePtr;
+
+    bhScePtr += 2;
+
+    v4 = *(unsigned short*)bhScePtr;
+
+    bhScePtr += 2;
+    
+    switch (v0) 
+    {
+    case 0:
+        epw = plp;
+        break;
+    case 1:
+        enep = &rom->enep[v1];
+        epw = &ene[enep->wrk_no];
+        break;
+    }
+    
+    epw->mlwP->objP = epw->mbp[v2];
+
+    epw->obj_a = epw->mbp[v2];
+    epw->obj_b = epw->mbp[v3];
+    
+    epw->mdflg |= 0x2;
+
+    epw->shp_ct = v4;
+
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhCyoutenHenkeiStartEX()
+{
+	int v0;
+    float frm0, frm1;
+
+    bhScePtr += 2;
+
+    v0 = *(unsigned short*)bhScePtr;
+
+    bhScePtr += 2;
+
+    frm0 = v0;
+    frm1 = 1000.0f - frm0;
+    
+    if (bhCetask->work != NULL) 
+    {
+        bhCetask->work->mdflg |= 0x2;
+
+        bhCetask->work->shp_ct = frm0 + (frm1 - (bhCetask->cnt2 * (frm1 / bhCetask->cnt3)));
+    }
+
+    return 0;
+}
+
+// 100% matching!
+unsigned int bhEasySESet()
+{
+	int v4, v5, v6, v7, v8;
+    GAME_WORK gp;
+    BH_PWORK* epw;
+    ETTY_WORK* enep; // not from DWARF
+    
+    bhScePtr++;
+
+    gp.Type = *bhScePtr;
+
+    bhScePtr++;
+
+    gp.SlotNo = *bhScePtr;
+
+    bhScePtr++;
+
+    gp.StartVol = *bhScePtr;
+
+    gp.StartVol *= -1;
+
+    bhScePtr++;
+
+    gp.LastVol = *bhScePtr;
+
+    gp.LastVol *= -1;
+
+    bhScePtr++;
+
+    gp.StartPan = *bhScePtr;
+
+    gp.StartPan -= 128;
+
+    bhScePtr++;
+
+    gp.LastPan = *bhScePtr;
+
+    gp.LastPan -= 128;
+
+    bhScePtr++;
+
+    gp.Frame = *bhScePtr;
+
+    bhScePtr++;
+
+    v4 = *bhScePtr;
+
+    bhScePtr++;
+    
+    v5 = *bhScePtr;
+
+    bhScePtr++;
+
+    v6 = *bhScePtr;
+
+    bhScePtr++;
+
+    v7 = *bhScePtr;
+
+    bhScePtr++;
+    
+    switch (v5) 
+    {
+    case 0:
+        epw = plp;
+        break;
+    case 1:
+        enep = &rom->enep[v6];
+        epw = &ene[enep->wrk_no];
+        break;
+    case 2:
+        epw = (BH_PWORK*)&sys->obwp[v6];
+        break;
+    case 3:
+        epw = (BH_PWORK*)&sys->itwp[v6];
+        break;
+    }
+    
+    v8 = *bhScePtr;
+
+    bhScePtr += 2;
+
+    gp.SeNo = *(unsigned short*)bhScePtr;
+
+    bhScePtr += 2;
+
+    PlayGameSe4Event(&gp, (NJS_POINT3*)&epw->mlwP->owP[v7].mtx[12], v4, v8);
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhSoundFlagReSet()
+{
+	bhScePtr += 2;
+
+	Reset3dSoundFlag();
+
+	return 1;
+}
+
+// 100% matching!
+unsigned int bhEffUVSet()
+{
+	int v0, v1, v2, v3, v4;
+    O_WRK* e_ep;
+
+    bhScePtr++;
+
+    v0 = *bhScePtr;
+
+    bhScePtr++;
+
+    v1 = *(unsigned short*)bhScePtr;
+
+    bhScePtr += 2;
+
+    v2 = *(unsigned short*)bhScePtr;
+
+    bhScePtr += 2;
+
+    v3 = *(unsigned short*)bhScePtr;
+
+    bhScePtr += 2;
+
+    v4 = *(unsigned short*)bhScePtr;
+
+    bhScePtr += 2;
+   
+    e_ep = &eff[sys->efid[v0]];
+    
+    e_ep->tv[0].u = v1 / 256.0f;
+    e_ep->tv[0].v = v2 / 256.0f;
+    
+    e_ep->tv[1].u = v3 / 256.0f;
+    e_ep->tv[1].v = v2 / 256.0f;
+    
+    e_ep->tv[2].u = v1 / 256.0f;
+    e_ep->tv[2].v = v4 / 256.0f;
+    
+    e_ep->tv[3].u = v3 / 256.0f;
+    e_ep->tv[3].v = v4 / 256.0f;
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhPlayerChangeSet()
+{
+	int v0;
+
+	bhScePtr++;
+
+    v0 = *bhScePtr;
+
+    bhScePtr++;
+    
+    sys->cng_pid = v0;
+
+    sys->cb_flg |= 0x80;
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhPlayerPoisonCk()
+{
+	int v0;
+
+	bhScePtr++;
+
+    v0 = *bhScePtr;
+
+    bhScePtr++;
+    
+    if ((plp->stflg & 0x200000)) 
+    {
+        if (v0 == 0) 
+        {
+            return 1;
+        } 
+        else 
+        {
+            return 0;
+        }
+    }
+
+    if (v0 == 0) 
+    { 
+        return 0;
+    }
+    else 
+    {
+        return 1;
+    }
+}
+
+// 100% matching!
+unsigned int bhAddObjSe()
+{
+	int v0, v1, v2, v3;
+    NJS_POINT3 pPos;
+
+    bhScePtr++;
+
+    v0 = *bhScePtr;
+
+    bhScePtr++;
+
+    v1 = *bhScePtr;
+
+    bhScePtr++;
+
+    v2 = *bhScePtr;
+
+    bhScePtr++;
+    
+    if ((v2 & 0x1)) 
+    {
+        pPos.x = -1.0f * (*(unsigned short*)bhScePtr / 100.0f);
+    } 
+    else 
+    {
+        pPos.x = *(unsigned short*)bhScePtr / 100.0f;
+    }
+
+    bhScePtr += 2;
+
+    if ((v2 & 0x2)) 
+    {
+        pPos.y = -1.0f * (*(unsigned short*)bhScePtr / 100.0f);
+    } 
+    else 
+    {
+        pPos.y = *(unsigned short*)bhScePtr / 100.0f;
+    }
+
+    bhScePtr += 2;
+    
+    if ((v2 & 0x4)) 
+    {
+        pPos.z = -1.0f * (*(unsigned short*)bhScePtr / 100.0f);
+    } 
+    else 
+    {
+        pPos.z = *(unsigned short*)bhScePtr / 100.0f;
+    }
+
+    bhScePtr += 2;    
+
+    v3 = *(unsigned short*)bhScePtr;
+
+    bhScePtr += 2;
+    
+    RegistObjectSe(v0, &pPos, v3, v1);
+
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhRandTest()
+{
+	int v0;
+    unsigned int v1;
+    unsigned int v2; // not from DWARF
+
+    bhScePtr++;
+
+    v0 = *bhScePtr;
+
+    bhScePtr++;
+
+    v1 = *(unsigned short*)bhScePtr;
+
+    v1 <<= 16;
+
+    bhScePtr += 2;
+
+    v2 = *(unsigned short*)bhScePtr;
+
+    bhScePtr += 2;
+
+    v1 |= v2;
+    
+    if (v0 == 0) 
+    {
+        srand(v1);
+
+        bhEtask->addpx = -rand() / -2.1474836E9f;
+        
+        bhEtask->wpnl_no = *(int*)&bhEtask->addpx;
+    } 
+    else 
+    {
+        bhEtask->addpx = -rand() / -2.1474836E9f;
+        
+        bhEtask->wpnl_no = *(int*)&bhEtask->addpx;
+    }
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhEvtComSet()
+{
+	int v0;
+
+    bhScePtr++;
+
+    v0 = *bhScePtr;
+
+    bhScePtr++;
+    
+    sys->cb_flg |= 0x400000;
+
+    sys->com_num = v0;
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhZombieUpDieCk()
+{
+	int v0, v1;
+    BH_PWORK* e_ep;
+    ETTY_WORK* enep; // not from DWARF
+
+    bhScePtr++;
+
+    v0 = *bhScePtr;
+
+    bhScePtr++;
+
+    v1 = *(unsigned short*)bhScePtr;
+
+    bhScePtr += 2;
+    
+    enep = &rom->enep[v0];
+    e_ep = &ene[enep->wrk_no];
+
+    if ((e_ep->id == 1) && ((((int*)e_ep->exp1)[0] & 0x2)))
+    {
+        bhFlagSet(4, v1, 0);
+    }
+
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhFacePauseSet()
+{
+	int v1, v2;
+    BH_PWORK* pp;
+    ETTY_WORK* enep; // not from DWARF
+
+    bhScePtr++;
+
+    v1 = *bhScePtr;
+
+    bhScePtr++;
+
+    v2 = *bhScePtr;
+
+    bhScePtr += 2;
+    
+    enep = &rom->enep[v1];
+    pp = &ene[enep->wrk_no];
+
+    if (v2 == 0) 
+    {
+        ((int*)pp->exp0)[0] |= 0x10;
+    } 
+    else 
+    {
+        ((int*)pp->exp0)[0] &= ~0x10;
+    }
+
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhFaceReSet()
+{
+	int v1;
+    BH_PWORK* pp;    // not from DWARF
+    ETTY_WORK* enep; // not from DWARF
+
+    bhScePtr++;
+
+    v1 = *bhScePtr;
+
+    bhScePtr++;
+    
+    enep = &rom->enep[v1];
+    pp = &ene[enep->wrk_no];
+
+    ((int*)pp->exp0)[0] |= 0x20;
+
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhEffModeSet()
+{
+	int v0, v1;
+    O_WRK* op; // not from DWARF
+    
+    bhScePtr++;
+
+    v0 = *bhScePtr;
+
+    bhScePtr++;
+
+    v1 = *bhScePtr;
+
+    bhScePtr += 2;
+   
+    op = &eff[sys->efid[v0]];
+
+    op->mode1 = v1;
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhEnemyHpUp()
+{
+	int v0, v1;
+    BH_PWORK* e_ep;
+    ETTY_WORK* enep; // not from DWARF
+
+    bhScePtr++;
+    
+    v0 = *bhScePtr;
+
+    bhScePtr++;
+
+    v1 = *bhScePtr;
+
+    bhScePtr += 2;
+    
+    enep = &rom->enep[v0];
+    e_ep = &ene[enep->wrk_no];
+    
+    e_ep->hp = e_ep->hp + ((e_ep->hp / 100) * v1);
+
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhFaceRep()
+{
+	int v0, v1;
+    BH_PWORK* pp;
+    ETTY_WORK* enep; // not from DWARF
+
+    bhScePtr++;
+
+    v0 = *bhScePtr;
+
+    bhScePtr++;
+
+    v1 = *bhScePtr;
+
+    bhScePtr += 2;
+    
+    enep = &rom->enep[v0];
+    pp = &ene[enep->wrk_no];
+    
+    if (v1 == 0) 
+    {
+        ((int*)pp->exp0)[0] |= 0x2;
+    } 
+    else 
+    {
+        ((int*)pp->exp0)[0] &= ~0x2;
+    }
+
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhBGSeOff2()
+{
+	unsigned int v0;
+
+	bhScePtr++;
+
+	v0 = *bhScePtr;
+
+	bhScePtr++;
+
+	StopBackGroundSe2(v0);
+
+	return 1;
+}
+
+// 100% matching!
+unsigned int bhBgmOff2()
+{
+	bhScePtr += 2;
+
+	StopBgm2();
+
+	return 1;
+}
+
+// 100% matching!
+unsigned int bhBGSeOn2()
+{
+	unsigned int v0, v1;
+
+    bhScePtr++;
+    
+    v0 = *bhScePtr;
+    
+    bhScePtr++;
+    
+    v1 = *(unsigned short*)bhScePtr;
+    
+    bhScePtr += 2;
+    
+    CallBackGroundSe2(v0, v1);
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhBgmOn2()
+{
+    int v0, v1, v2;
+
+    bhScePtr++;
+    
+    v0 = *bhScePtr;
+    
+    bhScePtr++;
+    
+    v1 = *bhScePtr;
+    
+    v2 = -45;
+    
+    bhScePtr += 2;
+
+    if (v1 != 0)
+    {
+        v2 = -45;
+    }
+    
+    PlayBgm2(v0, v2);
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhMovieCk()
+{
+	int v0;
+    int ret;
+
+    bhScePtr += 2;
+    bhScePtr += 2;
+
+    bhScePtr++;
+    bhScePtr++;
+
+    v0 = CheckPlayEndMovie();
+
+    if (v0 == 0) 
+    {
+        ret = 0;
+    } 
+    else 
+    {
+        ret = 1;
+    }
+
+    return ret;
+}
+
+// 100% matching!
+unsigned int bhSetItmMotion()
+{
+    BH_PWORK* ob_ep;
+	unsigned char* a0;
+
+	a0 = bhScePtr;
+
+    bhScePtr++;
+    bhScePtr++;
+    
+    ob_ep = (BH_PWORK*)&sys->itwp[*++a0];
+    
+    if ((ob_ep->mode3 == 1) && ((sys->sp_flg & 0x4))) 
+    {
+        bhSetMotion(ob_ep, (int)ob_ep->mtn_add, ob_ep->mtn_md, ob_ep->mtn_tp);
+    
+        bhCalcModel(ob_ep);
+    }
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhObjAspdSet()
+{
+	unsigned int v0, v1;
+    O_WRK* op; // not from DWARF
+
+    bhScePtr++;
+
+    v0 = *bhScePtr;
+
+    bhScePtr++;
+
+    v1 = *bhScePtr;
+
+    bhScePtr += 2;
+   
+    op = &sys->obwp[v0];
+
+    op->aspd = v1;
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhPuruPuruFlagSet()
+{
+	unsigned int v0;
+
+	bhScePtr++;
+
+	v0 = *bhScePtr;
+
+	bhScePtr++;
+	
+	if (v0 == 0) 
+	{
+		SetEventVibrationMode(1);
+	}
+	else
+	{
+		SetEventVibrationMode(0);
+	}
+
+	return 1;
+}
+
+// 100% matching!
+unsigned int bhPuruPuruStart()
+{
+	unsigned int v0;
+
+	bhScePtr++;
+
+	v0 = *bhScePtr;
+
+	bhScePtr++;
+
+	StartVibrationEx(2, v0);
+
+	return 1;
+}
+
+// 100% matching!
+unsigned int bhSubMapBusyCk()
+{
+    unsigned int v0;
+    
+    bhScePtr++;
+    
+    v0 = *bhScePtr;
+    
+    bhScePtr++;
+    
+    if (((sys->st_flg & 0x40000)) || ((sys->st_flg & 0x8))) 
+    {
+        if (v0 != 0)
+        {
+            return 0;
+        }
+        else 
+        {
+            return 1;
+        }
+    }
+    
+    if (v0 == 0) 
+    {
+        return 0;
+    }
+    else 
+    {
+        return 1;
+    }
+}
+
+// 100% matching!
+unsigned int bhMapSystemOn()
+{
+	unsigned int v0, v1, v2, v3;
+
+    bhScePtr++;
+    
+    v0 = *bhScePtr;
+
+    bhScePtr++;
+
+    v1 = *bhScePtr;
+
+    bhScePtr++;
+
+    v2 = *bhScePtr;
+
+    bhScePtr++;
+
+    v3 = *bhScePtr;
+
+    bhScePtr += 2;
+    
+    sys->mp_prm[0] = v0;
+    sys->mp_prm[1] = v1;
+    sys->mp_prm[2] = v3;
+    sys->mp_prm[3] = v2;
+
+    sys->cb_flg |= 0x10000;
+
+    return 1;
+}
+
+// 100% matching! 
+unsigned int bhTrapDamageSet()
+{
+    unsigned int v0;
+    
+    bhScePtr++;
+    
+    v0 = *bhScePtr;
+    
+    bhScePtr++;
+    
+    if (v0 == 0) 
+    {
+        plp->stflg |= 0x1000;
+    } 
+    else 
+    {
+        plp->stflg &= ~0x1000;
+    }
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhEvtLighterFireSet()
+{
+	unsigned int v0, v1;
+
+    bhScePtr++;
+
+    v0 = *bhScePtr;
+
+    bhScePtr++;
+
+    v1 = *bhScePtr;
+
+    bhScePtr += 2;
+    
+    bhSetLighterFire(&sys->obwp[v0], v1);
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhObjLinkSetPlyItem()
+{
+	int v1;
+    int v0; // not from DWARF
+    
+    bhScePtr += 2;
+    
+    v1 = *bhScePtr;
+    
+    sys->itwp[v1].lkwkp = (unsigned char*)plp;
+    
+    bhScePtr++;
+    
+    v0 = *bhScePtr;
+    
+    sys->itwp[v1].lkono = v0;
+    
+    bhScePtr++;
+    
+    v0 = *bhScePtr;
+    
+    if (v0 == 0) 
+    {
+        sys->itwp[v1].flg |= 0x80;
+    } 
+    else 
+    {
+        sys->itwp[v1].flg &= ~0x80;
+    }
+    
+    bhScePtr++;
+
+    v0 = *bhScePtr;
+    
+    bhScePtr++;
+
+    if ((v0 & 0x1)) 
+    {
+        sys->itwp[v1].lox = -1.0f * (*(unsigned short*)bhScePtr / 100.0f);
+    } 
+    else 
+    {
+        sys->itwp[v1].lox = *(unsigned short*)bhScePtr / 100.0f;
+    }
+
+    bhScePtr += 2;
+    
+    if ((v0 & 0x2)) 
+    {
+        sys->itwp[v1].loy = -1.0f * (*(unsigned short*)bhScePtr / 100.0f);
+    } 
+    else 
+    {
+        sys->itwp[v1].loy = *(unsigned short*)bhScePtr / 100.0f;
+    }
+
+    bhScePtr += 2;
+    
+    if ((v0 & 0x4)) 
+    {
+        sys->itwp[v1].loz = -1.0f * (*(unsigned short*)bhScePtr / 100.0f);
+    }
+    else 
+    {
+        sys->itwp[v1].loz = *(unsigned short*)bhScePtr / 100.0f;
+    }
+
+    bhScePtr += 2;
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhPlayerKaidanMotion()
+{
+	unsigned int v0, v1;
+
+	bhScePtr++;
+
+	v0 = *bhScePtr;
+
+	bhScePtr++;
+
+	v1 = *bhScePtr;
+
+	bhScePtr += 2;
+
+	bhKaidanPlayerMotion(v0, v1);
+	
+	return 1;
+}
+
+// 100% matching!
+unsigned int bhEneRenderSet()
+{
+	unsigned int v0, v1;
+    BH_PWORK* epw;
+    ETTY_WORK* enep; // not from DWARF
+    
+    bhScePtr++;
+
+    v0 = *bhScePtr;
+
+    bhScePtr++;
+
+    v1 = *bhScePtr;
+
+    bhScePtr += 2;
+    
+    enep = &rom->enep[v0];
+    epw = &ene[enep->wrk_no];
+    
+    if (v1 == 0) 
+    {
+        epw->mdflg |= 0x200;
+    } 
+    else 
+    {
+        epw->mdflg &= ~0x200;
+    }
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhBgmOnEx()
+{
+	int v0, v1, v2;
+
+    bhScePtr++;
+
+    v0 = *bhScePtr;
+
+    bhScePtr++;
+
+    v1 = *bhScePtr;
+
+    v1 *= 10;
+
+    bhScePtr++;
+
+    v2 = *bhScePtr;
+
+    v2 *= -1;
+
+    bhScePtr++;
+
+    PlayBgmEx(v0, v1, v2);
+
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhBgmOn2Ex()
+{
+	int v0, v1;
+
+    bhScePtr++;
+
+    v0 = *bhScePtr;
+
+    bhScePtr++;
+
+    v1 = *bhScePtr;
+
+    v1 *= -1;
+
+    bhScePtr += 2;
+
+    PlayBgm2(v0, v1);
+
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhFogParameterCSet()
+{
+	int v0, v1, v2, v3, v4, v5, v6, v7;
+
+    bhScePtr++;
+
+    v0 = *bhScePtr;
+
+    bhScePtr++;
+
+    v1 = *bhScePtr;
+
+    bhScePtr++;
+
+    v2 = *bhScePtr;
+
+    bhScePtr++;
+
+    v3 = *bhScePtr;
+
+    bhScePtr++;
+
+    v4 = *bhScePtr;
+
+    bhScePtr++;
+
+    v5 = *bhScePtr;
+
+    bhScePtr++;
+
+    v6 = *bhScePtr;
+
+    bhScePtr++;
+
+    v7 = *bhScePtr;
+
+    bhScePtr += 2;
+    
+    bhCetask->e_lgt[0][0] = v0;
+    bhCetask->e_lgt[0][1] = v1;
+    bhCetask->e_lgt[0][2] = v2;
+    bhCetask->e_lgt[0][3] = v3;
+    
+    bhCetask->e_lgt[1][0] = v4;
+    bhCetask->e_lgt[1][1] = v5;
+    bhCetask->e_lgt[1][2] = v6;
+    bhCetask->e_lgt[1][3] = v7;
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhFogParameterStart()
+{
+	unsigned int v0, v1, v2;
+    float ips_w[4][3]; 
+    float ans[3]; 
+    float frm; 
+
+    bhScePtr += 2;
+    
+    ips_w[0][0] = bhCetask->e_lgt[1][0];
+    ips_w[1][0] = bhCetask->e_lgt[0][0];
+    
+    ips_w[0][1] = bhCetask->e_lgt[1][1];
+    ips_w[1][1] = bhCetask->e_lgt[0][1];
+    
+    ips_w[0][2] = bhCetask->e_lgt[1][2];
+    ips_w[1][2] = bhCetask->e_lgt[0][2];
+    
+    frm = (1.0f / bhCetask->cnt3) * bhCetask->cnt2;
+    
+    njLinear(ips_w[0], ans, NULL, frm);
+
+    v0 = ans[0];
+    v1 = ans[1];
+    v2 = ans[2];
+    
+    ips_w[0][0] = bhCetask->e_lgt[1][3];
+    ips_w[1][0] = bhCetask->e_lgt[0][3];
+    
+    njLinear(ips_w[0], ans, NULL, frm);
+    
+    sys->fog_col = (unsigned int)ans[0] | ((v2 << 8) | ((v0 << 24) | (v1 << 16)));
+
+    sys->st_flg |= 0x100000;
+    sys->gm_flg |= 0x10;
+    
+    return 0;
+}
+
+// 100% matching!
+unsigned int bhEffUVSet2()
+{
+	int v0, v1, v2, v3, v4;
+    NJS_TEXTUREH_VTX* tvp;
+    O_WRK* op; // not from DWARF
+
+    bhScePtr++;
+
+    v0 = *bhScePtr;
+
+    bhScePtr++;
+
+    v1 = *(unsigned short*)bhScePtr;
+
+    bhScePtr += 2;
+
+    v2 = *(unsigned short*)bhScePtr;
+
+    bhScePtr += 2;
+
+    v3 = *(unsigned short*)bhScePtr;
+
+    bhScePtr += 2;
+
+    v4 = *(unsigned short*)bhScePtr;
+
+    bhScePtr += 2;
+    
+    op = &eff[sys->efid[v0]];
+
+    tvp = (NJS_TEXTUREH_VTX*)op->pvp;
+    
+    tvp[0].u = v1 / 512.0f;
+    tvp[0].v = v2 / 512.0f;
+    
+    tvp[1].u = v3 / 512.0f;
+    tvp[1].v = v2 / 512.0f;
+    
+    tvp[2].u = v1 / 512.0f;
+    tvp[2].v = v4 / 512.0f;
+    
+    tvp[3].u = v3 / 512.0f;
+    tvp[3].v = v4 / 512.0f;
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhBGColorSet()
+{
+	int v0, v1, v2, v3, v4;
+
+    bhScePtr++;
+
+    v0 = *bhScePtr;
+
+    bhScePtr++;
+
+    v1 = *bhScePtr;
+
+    bhScePtr++;
+
+    v2 = *bhScePtr;
+
+    bhScePtr++;
+
+    v3 = *bhScePtr;
+
+    bhScePtr++;
+
+    v4 = *bhScePtr;
+
+    bhScePtr++;
+    
+    sys->gm_flg |= 0x8000;
+
+    rom->bak_col = v3 | ((v2 << 8) | ((v0 << 24) | (v1 << 16)));
+
+    sys->bcl_ct = v4;
+
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhMovieTimeCk()
+{
+	unsigned int v1, v2, ret, ret2;
+    unsigned int v0; // not from DWARF
+
+    bhScePtr++;
+
+    v0 = *bhScePtr;
+
+    bhScePtr++;
+
+    v1 = *(unsigned short*)bhScePtr;
+
+    bhScePtr += 2;
+
+    v2 = *bhScePtr;
+
+    bhScePtr += 2;
+    
+    ret2 = CheckPlayEndMovie();
+
+    if (ret2 == 0) 
+    {
+        return 1;
+    }
+    
+    ret = GetTimeMoive();
+    
+    switch (v2) 
+    {
+    case 0:
+        if (ret == v1) 
+        {
+             ret = 0; 
+        }
+        else 
+        {
+             ret = 1; 
+        }
+
+        break;
+    case 1:
+        if (ret > v1) 
+        { 
+            ret = 0; 
+        }
+        else 
+        { 
+            ret = 1; 
+        }
+
+        break;
+    case 2:
+        if (ret >= v1) 
+        { 
+            ret = 0; 
+        }
+        else 
+        { 
+            ret = 1; 
+        }
+
+        break;
+    case 3:
+        if (ret < v1) 
+        { 
+            ret = 0; 
+        }
+        else 
+        { 
+            ret = 1; 
+        }
+
+        break;
+    case 4:
+        if (ret <= v1) 
+        { 
+            ret = 0;
+        }
+        else 
+        { 
+            ret = 1; 
+        }
+
+        break;
+    case 5:
+        if (ret != v1) 
+        { 
+            ret = 0; 
+        }
+        else 
+        { 
+            ret = 1; 
+        }
+
+        break;
+    }
+
+    return ret;
+}
+
+// 100% matching!
+unsigned int bhEffTypeSet()
+{
+	unsigned int v0, v1;
+    O_WRK* op; // not from DWARF
+
+    bhScePtr++;
+    
+    v0 = *bhScePtr;
+
+    bhScePtr++;
+
+    v1 = *bhScePtr;
+
+    bhScePtr += 2;
+  
+    op = &eff[sys->efid[v0]];
+
+    op->type = v1;
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhPlayerPoison2Cr()
+{
+	bhScePtr += 2;
+
+	sys->ply_stflg[0] &= ~0x200000;
+
+	return 1;
+}
+
+// 100% matching! 
+unsigned int bhPlyHandChange()
+{
+    int v1;
+    O_WORK* owk;
+    int v0, v2; // not from DWARF
+
+    bhScePtr++;
+
+    v0 = *bhScePtr;
+
+    sys->obwp[v0].lkwkp = (unsigned char*)plp;
+    
+    bhScePtr++;
+
+    v1 = *bhScePtr;
+
+    sys->obwp[v1].lkwkp = (unsigned char*)plp;
+    
+    sys->obwp[v0].lkono = 9;
+    sys->obwp[v1].lkono = 13;
+    
+    bhScePtr++;
+
+    v2 = *bhScePtr;
+
+    bhScePtr++;
+
+    if (v2 == 0) 
+    {
+        sys->obwp[v0].stflg &= ~0x1000000;
+        sys->obwp[v1].stflg &= ~0x1000000;
+
+        sys->obwp[v0].flg |= 0x80;
+        sys->obwp[v1].flg |= 0x80;
+
+        sys->obwp[0].mdflg |= 0x1;
+        sys->obwp[1].mdflg |= 0x1;
+
+        if (plp->wpnr_no == 1) 
+        {
+            bhEtask[1].wpnr_no = 1;
+            plp->wpnr_no = 0;
+
+            sys->ply_wno[sys->ply_id] = 0;
+
+            owk = plp->mdl->owP;
+            owk += 7;
+            owk->flg &= ~0x2;
+
+            owk = plp->mdl->owP;
+            owk += 8;
+            owk->flg &= ~0x2;
+
+            owk = plp->mdl->owP;
+            owk += 9;
+            owk->flg &= ~0x2;
+        }
+    } 
+    else 
+    {
+        sys->obwp[v0].flg &= ~0x80;
+        sys->obwp[v1].flg &= ~0x80;
+
+        sys->obwp[0].mdflg &= ~0x1;
+        sys->obwp[1].mdflg &= ~0x1;
+
+        sys->obwp[v0].stflg |= 0x1000000;
+        sys->obwp[v1].stflg |= 0x1000000;
+
+        if (bhEtask[1].wpnr_no == 1) 
+        {
+            bhEtask[1].wpnr_no = 0;
+            plp->wpnr_no = 1;
+
+            sys->ply_wno[sys->ply_id] = 1;
+            
+            owk = plp->mdl->owP;
+            owk += 7;
+            owk->flg |= 0x2;
+
+            owk = plp->mdl->owP;
+            owk += 8;
+            owk->flg |= 0x2;
+
+            owk = plp->mdl->owP;
+            owk += 9;
+            owk->flg |= 0x2;
+        }
+    }
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhHEffectSet2()
+{
+    int v2, v3, v4;
+    EF_WORK *eft;
+    
+    eft = &sys->ef;
+
+    bhScePtr++;
+
+    v4 = *bhScePtr;
+
+    bhScePtr++;
+
+    eft->type = *bhScePtr;
+
+    bhScePtr++;
+
+    v2 = *bhScePtr;
+
+    bhScePtr++;
+    
+    if ((v2 & 0x1)) 
+    {
+        eft->px = -1.0f * (*(unsigned short*)bhScePtr / 100.0f);
+    } 
+    else 
+    {
+        eft->px = *(unsigned short*)bhScePtr / 100.0f;
+    }
+
+    bhScePtr += 2;
+    
+    if ((v2 & 0x2)) 
+    {
+        eft->py = -1.0f * (*(unsigned short*)bhScePtr / 100.0f);
+    } 
+    else 
+    {
+        eft->py = *(unsigned short*)bhScePtr / 100.0f;
+    }
+
+    bhScePtr += 2;
+    
+    if ((v2 & 0x4)) 
+    {
+        eft->pz = -1.0f * (*(unsigned short*)bhScePtr / 100.0f);
+    } 
+    else 
+    {
+        eft->pz = *(unsigned short*)bhScePtr / 100.0f;
+    }
+    
+    bhScePtr += 2;
+    
+    v2 = *bhScePtr;
+    
+    bhScePtr++;
+    
+    v3 = *bhScePtr;
+    
+    if ((v2 & 0x1)) 
+    {
+        v3 = -v3;
+    }
+    
+    eft->ax = v3 * (65536.0f / 360.0f);
+
+    bhScePtr++;
+
+    v3 = *bhScePtr;
+    
+    if ((v2 & 0x2)) 
+    {
+        v3 = -v3;
+    }
+    
+    eft->ay = v3 * (65536.0f / 360.0f);
+    
+    bhScePtr++;
+    
+    v2 = *bhScePtr;
+    
+    bhScePtr++;
+    
+    if ((v2 & 0x1)) 
+    {
+        eft->sx = -1.0f * (*(unsigned short*)bhScePtr / 100.0f);
+    } 
+    else 
+    {
+        eft->sx = *(unsigned short*)bhScePtr / 100.0f;
+    }
+
+    bhScePtr += 2;
+    
+    if ((v2 & 0x2)) 
+    {
+        eft->sy = -1.0f * (*(unsigned short*)bhScePtr / 100.0f);
+    } 
+    else 
+    {
+        eft->sy = *(unsigned short*)bhScePtr / 100.0f;
+    }
+
+    bhScePtr += 2;
+    
+    if ((v2 & 0x4)) 
+    {
+        eft->sz = -1.0f * (*(unsigned short*)bhScePtr / 100.0f);
+    } 
+    else 
+    {
+        eft->sz = *(unsigned short*)bhScePtr / 100.0f;
+    }
+
+    bhScePtr += 2;
+
+    eft->id = *(unsigned short*)bhScePtr;
+
+    bhScePtr += 2;
+    
+    eft->flg = 1;
+
+    eft->flr_no = 0;
+
+    eft->mdlver = 0;
+    
+    bhSetEffectTb(eft, NULL, NULL, v4);
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhObjDposCk()
+{
+	int v0, v1, v2, v3, v4;
+	int eay, eay2;
+    BH_PWORK *e_ep;
+    NJS_CNK_OBJECT *objP;
+	ETTY_WORK *enep; // not from DWARF
+    O_WRK *op;       // not from DWARF
+    
+    bhScePtr++;
+
+    v0 = *bhScePtr;
+
+    bhScePtr++;
+
+    v1 = *bhScePtr;
+
+    bhScePtr++;
+
+    v2 = *bhScePtr;
+    
+    bhScePtr++;
+
+    v3 = *bhScePtr;
+
+    bhScePtr++;
+
+    v4 = *bhScePtr;
+
+    bhScePtr++;
+    
+    if (v4 == 0) 
+	{
+        if ((v1 & 0x2)) 
+		{
+            if (v2 != 0) 
+			{
+                v2 -= 360;
+            }
+        }
+
+        eay = v2 * (65536.0f / 360.0f);
+        eay2 = v3 * (65536.0f / 360.0f);
+        
+        op = &sys->obwp[v0];
+
+        op->ay = (short)op->ay;
+
+        if (eay != (unsigned short)op->ay) 
+		{
+            if (eay < (unsigned short)op->ay)
+			{
+                op->ay -= (short)eay2;
+
+                if (eay >= (unsigned short)op->ay) 
+				{
+                    op->ay = (unsigned short)eay;
+
+                    return 0;
+                }
+
+                return 1;
+            }
+
+            if ((unsigned short)op->ay < eay) 
+			{
+                op->ay += (short)eay2;
+
+                if (eay <= (unsigned short)op->ay) 
+				{
+                    op->ay = (unsigned short)eay;
+
+                    return 0;
+                }
+
+                return 1;
+            }
+        }
+    } 
+	else 
+	{
+        if ((v1 & 0x2)) 
+		{
+            v2 = -v2;
+        }
+
+        eay = v2 * (65536.0f / 360.0f); 
+		eay = (short)eay;
+
+        eay2 = v3 * (65536.0f / 360.0f);
+		eay2 = (short)eay2;
+        
+        enep = &rom->enep[v0];
+        e_ep = &ene[enep->wrk_no];
+
+        objP = e_ep->mdl->objP;
+        objP += v4;
+        
+        objP->ang[0] = (short)objP->ang[0];
+
+        if (eay != objP->ang[0]) 
+		{
+            if (eay < objP->ang[0]) 
+			{
+                objP->ang[0] -= eay2;
+
+                if (eay >= objP->ang[0]) 
+				{
+                    objP->ang[0] = eay;
+
+                    return 0;
+                }
+
+                return 1;
+            }
+
+            if (objP->ang[0] < eay) 
+			{
+                objP->ang[0] += eay2;
+
+                if (eay <= objP->ang[0]) 
+				{
+                    objP->ang[0] = eay;
+
+                    return 0;
+                }
+
+                return 1;
+            }
+        }
+    }
+    
+    return 0;
+}
+
+// 100% matching!
+unsigned int bhItemGetGet()
+{
+	int v0, v1, v2;
+    
+    bhScePtr++;
+
+    v0 = *bhScePtr;
+
+    bhScePtr++;
+
+    v1 = *bhScePtr;
+
+    bhScePtr++;
+
+    v2 = *bhScePtr;
+
+    bhScePtr++;
+    
+    sys->itm[(v0 * 16) + 2] = v1 << 16;
+
+    if (v1 == 34) 
+	{
+        sys->itm[(v0 * 16) + 2] += 500;
+    }
+
+    switch (v2) 
+	{
+	case 0:
+		sys->itm[v0 * 16] = 2;
+		
+		if (v1 == 34) 
+		{
+			sys->ply_wno[v0] = 8;
+		}
+
+		break;
+	case 2:
+		sys->itm[(v0 * 16) + 2] |= 0x8000000;
+		
+		sys->itm[v0 * 16] = 2;
+
+		if (v1 == 34) 
+		{
+			sys->ply_wno[v0] = 8;
+		}
+
+		break;
+    }
+
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhEtcAtariEnePosSet()
+{
+	int v0, v1, v2, v3, v4, v5;
+    ATR_WORK *e_etcp;
+    BH_PWORK *epw;
+    POS *e_posp;
+    float sw1, sw2;
+    unsigned int cnt, cnt2;
+	ETTY_WORK *enep; // not from DWARF
+
+    bhScePtr++;
+
+    v0 = *bhScePtr;
+
+    bhScePtr++;
+
+    v1 = *bhScePtr;
+
+    bhScePtr++;
+
+    v2 = *bhScePtr;
+
+    bhScePtr++;
+
+    v3 = *bhScePtr;
+
+    bhScePtr++;
+
+    v4 = *bhScePtr;
+
+    bhScePtr++;
+
+    v5 = *bhScePtr;
+
+    bhScePtr += 2;
+    
+    enep = &rom->enep[v0];
+    epw = &ene[enep->wrk_no];
+    
+    e_etcp = rom->etcp;
+    e_etcp += v1;
+    
+    e_posp = rom->posp;
+    e_posp += v2;
+    
+    sw2 = njDistanceP2P((NJS_POINT3*)e_posp, (NJS_POINT3*)&epw->mlwP->owP[v5].mtx[12]);
+
+    for (cnt = v2, cnt2 = v2; cnt < v3; cnt++, e_posp++) 
+	{
+        sw1 = njDistanceP2P((NJS_POINT3*)e_posp, (NJS_POINT3*)&epw->mlwP->owP[v5].mtx[12]);
+
+        if (sw1 < sw2) 
+		{
+            sw2 = sw1;
+            cnt2 = cnt;
+        }
+    }
+
+    e_posp = rom->posp;
+    e_posp += cnt2;
+    
+    e_etcp->px = e_posp->px - (e_etcp->w / 2.0f);
+    e_etcp->py = e_posp->py;
+    e_etcp->pz = e_posp->pz - (e_etcp->d / 2.0f);
+    
+    sys->evt_posno[v4] = cnt2;
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhEtcAtariEvtPosSet()
+{
+    int v0, v1, v3;
+    ATR_WORK* e_etcp;
+    POS* e_posp;
+    BH_PWORK* epw;
+	int v2;    // not from DWARF
+    O_WRK* op; // not from DWARF
+
+    bhScePtr++;
+
+    v0 = *bhScePtr;
+
+    bhScePtr++;
+
+    v1 = *bhScePtr;
+
+    bhScePtr++;
+
+    v3 = *bhScePtr;
+
+    bhScePtr++;
+    
+    e_etcp = rom->etcp;
+    e_etcp += v1;
+
+    e_posp = rom->posp;
+
+    e_posp += sys->evt_posno[v0];
+    
+    e_etcp->px = e_posp->px - (e_etcp->w / 2.0f);
+    e_etcp->py = e_posp->py;
+    e_etcp->pz = e_posp->pz - (e_etcp->d / 2.0f);
+    
+    op = &sys->itwp[v3];
+    
+    op->px = e_posp->px;
+    op->py = e_posp->py;
+    op->pz = e_posp->pz;
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhRoomSoundCase()
+{
+	int v0;
+
+	bhScePtr++;
+	
+	v0 = *bhScePtr;
+
+	bhScePtr++;
+
+	SetRoomSoundCaseNo(v0);
+
+	return 1;
+}
+
+// 100% matching!
+unsigned int bhItemPlToSBox()
+{
+	unsigned int cnt, cnt2;
+    int v0;
+
+    bhScePtr++;
+
+    v0 = *bhScePtr;
+
+    bhScePtr++;
+    
+    for (cnt = 12 * 16; cnt < 256; cnt++)
+	{
+        sys->itm[cnt] = 0;
+    }
+    
+    for (cnt = (v0 * 16) + 2, cnt2 = 12 * 16; cnt < ((v0 * 16) + 16); cnt++, cnt2++) 
+	{
+        sys->itm[cnt2] = sys->itm[cnt];
+        sys->itm[cnt] = 0;
+    }
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhItemSBoxToIBox()
+{
+	unsigned int cnt, cnt2;
+
+    bhScePtr += 2;
+    
+    for (cnt = 4 * 16, cnt2 = 12 * 16; (cnt < (12 * 16)) || (cnt2 < (13 * 16)); cnt++) 
+	{
+        if (sys->itm[cnt2] == 0) 
+		{ 
+			break;
+		}
+
+        if (sys->itm[cnt] == 0) 
+		{
+            sys->itm[cnt] = sys->itm[cnt2];
+            sys->itm[cnt2] = 0;
+
+            cnt2++;
+        }
+    }
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhGrdPosSet()
+{
+	unsigned int v1;
+    ATR_WORK* e_walp;
+	unsigned int v0; // not from DWARF
+ 
+    bhScePtr++;
+ 
+    e_walp = rom->walp;
+
+    e_walp += *bhScePtr;
+    
+    bhScePtr += 2;
+
+    v1 = *bhScePtr;
+
+    bhScePtr++;
+    
+    if ((v1 & 0x1)) 
+	{
+        e_walp->px = -1.0f * (*(unsigned short*)bhScePtr / 100.0f);
+    } 
+	else 
+	{
+        e_walp->px = *(unsigned short*)bhScePtr / 100.0f;
+    }
+
+    bhScePtr += 2;
+    
+    if ((v1 & 0x2)) 
+	{
+        e_walp->py = -1.0f * (*(unsigned short*)bhScePtr / 100.0f);
+    } 
+	else 
+	{
+        e_walp->py = *(unsigned short*)bhScePtr / 100.0f;
+    }
+
+    bhScePtr += 2;
+    
+    if ((v1 & 0x4)) 
+	{
+        e_walp->pz = -1.0f * (*(unsigned short*)bhScePtr / 100.0f);
+    } 
+	else 
+	{
+        e_walp->pz = *(unsigned short*)bhScePtr / 100.0f;
+    }
+
+    bhScePtr += 2;
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhGrdPosMoveCSet()
+{
+	int v0, v1;
+
+    bhScePtr++;
+
+    v0 = *bhScePtr;
+
+    bhScePtr++;
+    
+    if ((v0 & 0x1)) 
+	{
+        bhCetask->e_lgt[0][0] = -1.0f * (*(unsigned short*)bhScePtr / 100.0f);
+    } 
+	else 
+	{
+        bhCetask->e_lgt[0][0] = *(unsigned short*)bhScePtr / 100.0f;
+    }
+
+    bhScePtr += 2;
+
+    if ((v0 & 0x2)) 
+	{
+        bhCetask->e_lgt[0][1] = -1.0f * (*(unsigned short*)bhScePtr / 100.0f);
+    } 
+	else 
+	{
+        bhCetask->e_lgt[0][1] = *(unsigned short*)bhScePtr / 100.0f;
+    }
+
+    bhScePtr += 2;
+    
+    if ((v0 & 0x4)) 
+	{
+        bhCetask->e_lgt[0][2] = -1.0f * (*(unsigned short*)bhScePtr / 100.0f);
+    } 
+	else 
+	{
+        bhCetask->e_lgt[0][2] = *(unsigned short*)bhScePtr / 100.0f;
+    }
+
+    bhScePtr += 2;
+    bhScePtr++;
+
+    v1 = *bhScePtr;
+
+    bhScePtr++;
+    
+    if ((v1 & 0x1)) 
+	{
+        bhCetask->e_lgt[1][0] = -1.0f * (*(unsigned short*)bhScePtr / 100.0f);
+    } 
+	else 
+	{
+        bhCetask->e_lgt[1][0] = *(unsigned short*)bhScePtr / 100.0f;
+    }
+
+    bhScePtr += 2;
+    
+    if ((v1 & 0x2)) 
+	{
+        bhCetask->e_lgt[1][1] = -1.0f * (*(unsigned short*)bhScePtr / 100.0f);
+    } 
+	else 
+	{
+        bhCetask->e_lgt[1][1] = *(unsigned short*)bhScePtr / 100.0f;
+    }
+
+    bhScePtr += 2;
+    
+    if ((v1 & 0x4)) 
+	{
+        bhCetask->e_lgt[1][2] = -1.0f * (*(unsigned short*)bhScePtr / 100.0f);
+    }
+	else 
+	{
+        bhCetask->e_lgt[1][2] = *(unsigned short*)bhScePtr / 100.0f;
+    }
+
+    bhScePtr += 2;
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhGrdPosMoveStart()
+{
+	ATR_WORK* e_walp;
+    float ips_w[4][3]; 
+    float ans[3]; 
+    
+    bhScePtr++;
+    
+    e_walp = rom->walp;
+	
+    e_walp += *bhScePtr;
+
+    bhScePtr++;
+    
+    ips_w[0][0] = bhCetask->e_lgt[1][0];
+    ips_w[1][0] = bhCetask->e_lgt[1][0];
+    ips_w[2][0] = bhCetask->e_lgt[0][0];
+    ips_w[3][0] = bhCetask->e_lgt[0][0];
+    
+    ips_w[0][1] = bhCetask->e_lgt[1][1];
+    ips_w[1][1] = bhCetask->e_lgt[1][1];
+    ips_w[2][1] = bhCetask->e_lgt[0][1];
+    ips_w[3][1] = bhCetask->e_lgt[0][1];
+    
+    ips_w[0][2] = bhCetask->e_lgt[1][2];
+    ips_w[1][2] = bhCetask->e_lgt[1][2];
+    ips_w[2][2] = bhCetask->e_lgt[0][2];
+    ips_w[3][2] = bhCetask->e_lgt[0][2];
+    
+    njOverhauserSpline((float*)ips_w, (float*)ans, NULL, (1.0f / bhCetask->cnt3) * bhCetask->cnt2);
+    
+    e_walp->px = ans[0];
+    e_walp->py = ans[1];
+    e_walp->pz = ans[2];
+    
+    return 0;
+}
+
+// 100% matching!
+unsigned int bhEvtKill()
+{
+	unsigned int v0;
+
+	bhScePtr++;
+	
+	v0 = *bhScePtr;
+
+	bhScePtr++;
+
+	bhEtask[v0].status = 0;
+
+	return 1;
+}
+
+// 100% matching!
+unsigned int bhReTryPointSet()
+{
+	bhScePtr += 2;
+
+	bhPushGameData();
+
+	return 1;
+}
+
+// 100% matching!
+unsigned int bhPlyDposCk()
+{
+	int v1, v2, v3; 
+    int eay, eay2;
+    BH_PWORK* e_ep;
+	int v0, v4; // not from DWARF
+    
+    bhScePtr++;
+
+    v0 = *bhScePtr;
+
+    bhScePtr++;
+
+    v1 = *bhScePtr;
+
+    bhScePtr++;
+
+    v2 = *bhScePtr;
+    
+    bhScePtr++;
+
+    v3 = *bhScePtr;
+
+    bhScePtr++;
+
+    v4 = *bhScePtr;
+
+    bhScePtr++;
+
+    if (((v1 & 0x2)) && (v2 != 0))
+	{
+		v2 -= 360;
+    }
+
+    eay = v2 * (65536.0f / 360.0f);
+    eay2 = v3 * (65536.0f / 360.0f);
+    
+    e_ep = plp;
+
+    e_ep->ay = (short)e_ep->ay;
+
+    if (eay != (unsigned short)e_ep->ay) 
+	{
+        if (eay < (unsigned short)e_ep->ay) 
+		{
+            e_ep->ay -= (short)eay2;
+
+            if (eay >= (unsigned short)e_ep->ay) 
+			{
+                e_ep->ay = (unsigned short)eay;
+
+                return 0;
+            }
+
+            return 1;
+        }
+
+        if ((unsigned short)e_ep->ay < eay) 
+		{
+            e_ep->ay += (short)eay2;
+
+            if (eay <= (unsigned short)e_ep->ay) 
+			{
+                e_ep->ay = (unsigned short)eay;
+
+                return 0;
+            }
+
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
+// 100% matching!
+unsigned int bhPlItemLostEx()
+{
+	unsigned int cnt, cnt2;
+    int v0, v1;
+  
+    bhScePtr++;
+
+    v0 = *bhScePtr;
+
+    bhScePtr++;
+
+    v1 = *bhScePtr;
+
+    bhScePtr += 2;
+
+    cnt2 = v1 + (14 * 16);
+
+    for (cnt = (sys->ply_id * 16) + 2; cnt < ((sys->ply_id * 16) + 12); cnt++) 
+	{
+        if (v0 == (unsigned char)(sys->itm[cnt] >> 16)) 
+		{
+            sys->itm[cnt2] = sys->itm[cnt];
+            sys->itm[cnt] = 0;
+            
+			if ((sys->itm[sys->ply_id * 16] >= (cnt - (sys->ply_id * 16))) && (sys->itm[sys->ply_id * 16] != 0)) 
+			{
+                if (sys->itm[sys->ply_id * 16] == cnt) 
+				{
+                    sys->itm[sys->ply_id * 16] = 0;
+                } 
+				else
+				{
+                    sys->itm[sys->ply_id * 16]--;
+                }
+            }
+
+            for ( ; cnt < ((sys->ply_id * 16) + 12); cnt++) 
+			{
+                sys->itm[cnt] = sys->itm[cnt + 1];
+            }
+
+            return 1;
+        }
+    }
+
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhCyodanSetEx()
+{
+    int v0, v1, v2, v3, v4, v5;
+    int w0, w1, w2, w3, w4, w5, w6, w7;
+    NJS_POINT3 ps, wps;
+    int wp_hef;
+    BH_PWORK* e_ep;
+	ETTY_WORK* enep; // not from DWARF
+   
+    bhScePtr++;
+
+    v0 = *bhScePtr;
+
+    bhScePtr++;
+
+    v1 = *bhScePtr;
+
+    bhScePtr++;
+
+    v2 = *bhScePtr;
+
+    bhScePtr++;
+
+    v3 = *bhScePtr;
+
+    bhScePtr++;
+
+    w0 = *bhScePtr;
+
+    bhScePtr++;
+
+    w1 = *bhScePtr;
+
+    bhScePtr++;
+
+    w2 = *bhScePtr;
+
+    bhScePtr++;
+
+    w3 = *bhScePtr;
+
+    bhScePtr++;
+
+    v4 = *bhScePtr;
+
+    bhScePtr++;
+    
+    if ((v4 & 0x1)) 
+	{
+        wps.x = -1.0f * (*(unsigned short*)bhScePtr / 100.0f);
+    } 
+	else
+	{
+        wps.x = *(unsigned short*)bhScePtr / 100.0f;
+    }
+
+    bhScePtr += 2;
+    
+    if ((v4 & 0x2)) 
+	{
+         wps.y = -1.0f * (*(unsigned short*)bhScePtr / 100.0f);
+    } 
+	else 
+	{
+         wps.y = *(unsigned short*)bhScePtr / 100.0f;
+    }
+
+    bhScePtr += 2;
+    
+    if ((v4 & 0x4)) 
+	{
+         wps.z = -1.0f * (*(unsigned short*)bhScePtr / 100.0f);
+    } 
+	else 
+	{
+         wps.z = *(unsigned short*)bhScePtr / 100.0f;
+    }
+
+    bhScePtr += 2;
+    
+    v5 = *bhScePtr;
+
+    bhScePtr++;
+
+    wp_hef = WpnTab[v5].hiteff;
+    
+    v4 = *bhScePtr;
+
+    bhScePtr++;
+    
+    if ((v4 & 0x1)) 
+	{
+        ps.x = -1.0f * (*(unsigned short*)bhScePtr / 100.0f);
+    } 
+	else 
+	{
+        ps.x = *(unsigned short*)bhScePtr / 100.0f;
+    }
+
+    bhScePtr += 2;
+    
+    if ((v4 & 0x2)) 
+	{
+        ps.y = -1.0f * (*(unsigned short*)bhScePtr / 100.0f);
+    } 
+	else 
+	{
+        ps.y = *(unsigned short*)bhScePtr / 100.0f;
+    }
+
+    bhScePtr += 2;
+    
+    if ((v4 & 0x4)) 
+	{
+        ps.z = -1.0f * (*(unsigned short*)bhScePtr / 100.0f);
+    } 
+	else 
+	{
+        ps.z = *(unsigned short*)bhScePtr / 100.0f;
+    }
+	
+    bhScePtr += 2;
+    
+    w4 = *bhScePtr;
+
+    bhScePtr++;
+
+    w5 = *bhScePtr;
+
+    bhScePtr++;
+
+    w6 = *bhScePtr;
+
+    bhScePtr += 2;
+    
+    switch (w4) 
+	{
+	case 1:
+		enep = &rom->enep[w5];
+		e_ep = &ene[enep->wrk_no];
+		
+		wps.x += e_ep->mlwP->owP[w6].mtx[12];
+		wps.y += e_ep->mlwP->owP[w6].mtx[13];
+		wps.z += e_ep->mlwP->owP[w6].mtx[14];
+		break;
+	case 2:
+		e_ep = (BH_PWORK*)&sys->obwp[w5];
+	
+		wps.x += e_ep->mlwP->owP[w6].mtx[12];
+		wps.y += e_ep->mlwP->owP[w6].mtx[13];
+		wps.z += e_ep->mlwP->owP[w6].mtx[14];
+		break;
+    }
+    
+    bhSetEffParticleMk2(NULL, 0, &wps, &ps, v3 | ((v2 << 8) | ((v0 << 24) | (v1 << 16))), w3 | ((w2 << 8) | ((w0 << 24) | (w1 << 16))), wp_hef);
+    
+	return 1;
+}
+
+// 100% matching!
+unsigned int bhArmsItemSet() 
+{
+    unsigned int cnt, icnt, wicnt;
+    int v0;
+
+    bhScePtr++;
+
+    v0 = *bhScePtr;
+
+    bhScePtr++;
+    
+    if ((sys->gm_flg & 0x8000000))
+	{
+        for (wicnt = 0, icnt = 2, cnt = (sys->ply_id * 16) + 2; cnt < ((sys->ply_id * 16) + 12); cnt++, icnt++) 
+		{
+            if ((unsigned char)(sys->itm[cnt] >> 16) == v0) 
+			{
+                wicnt = icnt;
+                break;
+            }
+        }
+    } 
+	else 
+	{
+        for (wicnt = 0, icnt = 2, cnt = (sys->ply_id * 16) + 2; cnt < ((sys->ply_id * 16) + 10); cnt++, icnt++) 
+		{
+            if ((unsigned char)(sys->itm[cnt] >> 16) == v0) 
+			{
+                wicnt = icnt;
+                break;
+            }
+        }
+    }
+ 
+    if (wicnt != 0) 
+	{
+        sys->itm[sys->ply_id * 16] = wicnt;
+    }
+
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhItemGetGetEx()
+{
+	unsigned int cnt, icnt, wicnt;
+    int v0, v1, v2, v3;
+
+    bhScePtr++;
+
+    v0 = *bhScePtr;
+
+    bhScePtr++;
+
+    v1 = *bhScePtr;
+
+    bhScePtr++;
+
+    v3 = *bhScePtr;
+
+    bhScePtr++;
+
+    v2 = *(unsigned short*)bhScePtr;
+
+    bhScePtr += 2;
+    
+    if ((sys->gm_flg & 0x8000000)) 
+	{
+        for (wicnt = 0, icnt = 2, cnt = (v0 * 16) + 2; cnt < ((v0 * 16) + 12); cnt++, icnt++) 
+		{
+            if (sys->itm[cnt] == 0) 
+			{
+                wicnt = icnt;
+                break;
+            }
+        }
+    } 
+	else 
+	{
+        for (wicnt = 0, icnt = 2, cnt = (v0 * 16) + 2; cnt < ((v0 * 16) + 10); cnt++, icnt++) 
+		{
+            if (sys->itm[cnt] == 0) 
+			{
+                wicnt = icnt;
+                break;
+            }
+        }
+    }
+ 
+    if (wicnt != 0) 
+	{
+        sys->itm[cnt] = v1 << 16;
+
+        sys->itm[cnt] |= v2;
+
+        if (v1 == 33) 
+		{
+            sys->itm[v0 * 16]++;
+        }
+
+        if (v3 == 0) 
+		{
+            sys->itm[v0 * 16] = wicnt;
+        }
+    }
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhEffectSandSetMatsumoto()
+{
+	int v0, v1, v2;
+
+    bhScePtr++;
+
+    v0 = *bhScePtr;
+
+    bhScePtr++;
+
+    v1 = *bhScePtr;
+	
+    bhScePtr++;
+
+    v2 = *bhScePtr;
+
+    bhScePtr++;
+
+    bhEne02_SetSandEffectEV(v0, v1, v2);
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhVoiceWait()
+{
+    unsigned int v0, v1, v2, v3, v4;
+    NJS_POINT3 pPos;
+    BH_PWORK* e_ep;
+    O_WRK* op;       // not from DWARF
+    ETTY_WORK* enep; // not from DWARF
+
+    bhScePtr++;
+    
+    v0 = *bhScePtr;
+    
+    bhScePtr++;
+    
+    v1 = *(unsigned short*)bhScePtr;
+    
+    bhScePtr += 2;
+    
+    v2 = *bhScePtr;
+
+    bhScePtr++;
+    
+    v3 = *bhScePtr * 10;
+    
+    bhScePtr++;
+    
+    v4 = *bhScePtr;
+
+    bhScePtr++;
+    bhScePtr++;
+
+    if (bhCetask->mode2 != 0) 
+    {
+        bhCetask->mode2 = 0;
+        
+        StopVoice(0);
+    }
+
+    switch (v0) 
+    {
+    case 0:
+        pPos.x = plp->mlwP->owP->mtx[12];
+        pPos.y = plp->mlwP->owP->mtx[13];
+        pPos.z = plp->mlwP->owP->mtx[14];
+        break;
+    case 1:
+        enep = &rom->enep[v4];
+        e_ep = &ene[enep->wrk_no];
+        
+        pPos.x = e_ep->mlwP->owP->mtx[12];
+        pPos.y = e_ep->mlwP->owP->mtx[13];
+        pPos.z = e_ep->mlwP->owP->mtx[14];
+        break;
+    case 2:
+        op = &sys->obwp[v4];
+        
+        pPos.x = op->mlwP->owP->mtx[12];
+        pPos.y = op->mlwP->owP->mtx[13];
+        pPos.z = op->mlwP->owP->mtx[14];
+        break;
+    }
+
+    bhCetask->mode2 = 1;
+    
+    PlayVoiceEx(v1, &pPos, v2, v3, 1);
+    
+    return 1;
+}
+
+// 100% matching! 
+unsigned int bhVoiceStart()
+{
+	bhScePtr += 2;
+
+	ContinuePlayVoice();
+
+	return 1;
+}
+
+// 100% matching!
+unsigned int bhGameOverSet()
+{
+	bhScePtr += 2;
+
+	sys->ts_flg &= ~0x4000;
+
+	*(int*)&sys->gov_md0 = 0;
+
+	return 1;
+}
+
+// 100% matching!
+unsigned int bhPlItemChangeM()
+{
+    unsigned int cnt;
+    int v0, v1;
+ 
+    bhScePtr++;
+    
+    v0 = *bhScePtr;
+    
+    bhScePtr++;
+    
+    v1 = *bhScePtr;
+    
+    bhScePtr += 2;
+
+    for (cnt = (sys->ply_id * 16) + 2; cnt < ((sys->ply_id * 16) + 12); cnt++) 
+    {
+        if (v0 == (unsigned char)(sys->itm[cnt] >> 16))
+        {
+            sys->itm[cnt] = v1 << 16;
+
+            return 1;
+        }
+    }
+
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhEffBakuDrmSet()
+{
+	int v2;
+    NJS_VECTOR pPos;
+
+    bhScePtr++;
+
+    v2 = *bhScePtr;
+
+    bhScePtr++;
+
+    if ((v2 & 0x1)) 
+	{
+        pPos.x = -1.0f * (*(unsigned short*)bhScePtr / 100.0f);
+    } 
+	else 
+	{
+        pPos.x = *(unsigned short*)bhScePtr / 100.0f;
+    }
+
+    bhScePtr += 2;
+    
+    if ((v2 & 0x2)) 
+	{
+        pPos.y = -1.0f * (*(unsigned short*)bhScePtr / 100.0f);
+    } 
+	else 
+	{
+        pPos.y = *(unsigned short*)bhScePtr / 100.0f;
+    }
+
+    bhScePtr += 2;
+    
+    if ((v2 & 0x4)) 
+	{
+        pPos.z = -1.0f * (*(unsigned short*)bhScePtr / 100.0f);
+    } 
+	else 
+	{
+        pPos.z = *(unsigned short*)bhScePtr / 100.0f;
+    }
+
+    bhScePtr += 2;
+    
+    bhSetExplosionEffect(&pPos);
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhPlItemTamaSet()
+{
+    unsigned int cnt;
+    int v0, v1;
+ 
+    bhScePtr++;
+    
+    v0 = *bhScePtr;
+    
+    bhScePtr++;
+    
+    v1 = *(unsigned short*)bhScePtr;
+    
+    bhScePtr += 2;
+
+    for (cnt = (sys->ply_id * 16) + 2; cnt < ((sys->ply_id * 16) + 12); cnt++) 
+    {
+        if (v0 == (unsigned char)(sys->itm[cnt] >> 16))
+        {
+            sys->itm[cnt] = (v0 << 16) + v1;
+
+            return 1;
+        }
+    }
+
+    return 1;
+}
+
+// 100% matching! 
+unsigned int bhEffClearEvt()
+{
+	bhScePtr += 2;
+
+	bhClearEventEffect();
+
+	return 1;
+}
+
+// 100% matching!
+unsigned int bhEvtTimerSet()
+{
+	int v0;
+
+	bhScePtr++;
+
+	v0 = *bhScePtr;
+    
+    bhScePtr++;
+
+	bhSetEventTimer(v0);
+
+	return 1;
+}
+
+// 100% matching!
+unsigned int bhEneLookFlgSet()
+{
+    unsigned int v2, v3;
+    BH_PWORK* e_ep;
+	ETTY_WORK* enep; // not from DWARF
+
+    bhScePtr++;
+
+    v2 = *bhScePtr;
+
+    bhScePtr++;
+
+    v3 = *bhScePtr;
+
+    bhScePtr += 2;
+    
+    enep = &rom->enep[v2];
+    e_ep = &ene[enep->wrk_no];
+
+    if (v3 == 0) 
+	{
+        e_ep->flg &= ~0x8000;
+    } 
+	else 
+	{
+        e_ep->flg |= 0x8000;
+    }
+
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhReturnTitleEvt()
+{
+    bhScePtr += 2;
+    
+    RequestAllStopSoundEx(1, 1, 0);
+    
+    bhReturnTitle();
+    
+    sys->ss_flg &= ~0x1000;
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhSyukanModeSet() 
+{
+    unsigned int v0;
+    
+    bhScePtr++;
+    
+    v0 = *bhScePtr;
+    
+    bhScePtr++;
+    
+    if (v0 == 0) 
+    {
+        sys->gm_flg |= 0x1000000;
+        
+        cam.pe_ax = 0;
+        cam.pe_pers = 11832;
+        
+        sys->gm_flg |= 0x2000;
+        sys->st_flg &= ~0x1;
+        
+        cam.axp = 0;
+        cam.ax = 0;
+    } 
+    else
+    {
+        sys->gm_flg &= ~0x10000C0;
+        sys->gm_flg |= 0x800;
+    }
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhExGameItemInit()
+{
+	bhScePtr += 2;
+
+	ExtraGameItemInit();
+
+	return 1;
+}
+
+// 100% matching!
+unsigned int bhEneLifeSetM()
+{
+    int v0, v1;
+    ETTY_WORK* enep; // not from DWARF
+    BH_PWORK* e_ep;  // not from DWARF
+
+    bhScePtr++;
+
+    v0 = *bhScePtr;
+
+    bhScePtr++;
+
+    v1 = *(unsigned short*)bhScePtr;
+
+    bhScePtr += 2;
+    
+    enep = &rom->enep[v0];
+    e_ep = &ene[enep->wrk_no];
+
+    e_ep->hp = v1;
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhEffSSizeSet()
+{
+	int v0, v1;
+    O_WRK* e_ep;
+
+    bhScePtr++;
+
+    v0 = *bhScePtr;
+
+    bhScePtr += 2;
+
+    v1 = *bhScePtr;
+
+    bhScePtr++;
+    
+    e_ep = &eff[sys->efid[v0]];
+    
+    if ((v1 & 0x1)) 
+	{
+        e_ep->sxb = e_ep->sx = -1.0f * (*(unsigned short*)bhScePtr / 100.0f);
+    } 
+	else 
+	{
+        e_ep->sxb = e_ep->sx = *(unsigned short*)bhScePtr / 100.0f;
+    }
+
+    bhScePtr += 2;
+    
+    if ((v1 & 0x2)) 
+	{
+        e_ep->syb = e_ep->sy = -1.0f * (*(unsigned short*)bhScePtr / 100.0f);
+    } 
+	else 
+	{
+        e_ep->syb = e_ep->sy = *(unsigned short*)bhScePtr / 100.0f;
+    }
+
+    bhScePtr += 2;
+    
+    if ((v1 & 0x4)) 
+	{
+        e_ep->szb = e_ep->sz = -1.0f * (*(unsigned short*)bhScePtr / 100.0f);
+    } 
+	else 
+	{
+        e_ep->szb = e_ep->sz = *(unsigned short*)bhScePtr / 100.0f;
+    }
+
+    bhScePtr += 2;
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhEffLinkOffsetSet()
+{
+	int v0, v1;
+    O_WRK* e_ep;
+
+    bhScePtr++;
+
+    v0 = *bhScePtr;
+
+    bhScePtr += 2;
+
+    v1 = *bhScePtr;
+
+    bhScePtr++;
+    
+    e_ep = &eff[sys->efid[v0]];
+    
+    if ((v1 & 0x1)) 
+	{
+        e_ep->lox = -1.0f * (*(unsigned short*)bhScePtr / 100.0f);
+    }
+	else
+	{
+        e_ep->lox = *(unsigned short*)bhScePtr / 100.0f;
+    }
+
+    bhScePtr += 2;
+    
+    if ((v1 & 0x2)) 
+	{
+        e_ep->loy = -1.0f * (*(unsigned short*)bhScePtr / 100.0f);
+    } 
+	else 
+	{
+        e_ep->loy = *(unsigned short*)bhScePtr / 100.0f;
+    }
+
+    bhScePtr += 2;
+    
+    if ((v1 & 0x4)) 
+	{
+        e_ep->loz = -1.0f * (*(unsigned short*)bhScePtr / 100.0f);
+    } 
+	else 
+	{
+        e_ep->loz = *(unsigned short*)bhScePtr / 100.0f;
+    }
+
+    bhScePtr += 2;
+    
+    return 1;
+}
+
+// 100% matching! 
+unsigned int bhRankingCall()
+{
+	bhScePtr += 2;
+    
+    sys->ss_flg |= 0x20000;
+    
+    njFogDisable();
+    
+    njSetBackColor(0, 0, 0);
+    
+    bhReleaseMainTexture();
+    
+    Ps2ClearOT();
+    
+    if (sys->fade_an > 0) 
+    {
+        bhDrawScreenFade();
+    }
+    
+    sys->tk_flg = 0x702040;
+    sys->ts_flg = 0;
+    
+    sys->typ_md0 = 0;
+    sys->typ_flg = 0;
+    
+    sys->ssv_tim = 0;
+    
+    sys->memp = sys->mempb;
+    
+    sys->ss_flg &= ~0x20000;
+    
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhCallSysSe()
+{
+	int v0;
+	
+	bhScePtr += 2;
+
+	v0 = *(unsigned short*)bhScePtr;
+
+	bhScePtr += 2;
+
+	CallSystemSe(0, v0);
+
+	return 1;
+}
+
+// 100% matching! 
+unsigned int bhSleep()
+{
+    bhCetask->loop++;
+    
+    bhCetask->cnt[bhCetask->loop] = *(unsigned short*)&bhScePtr[2];
+    
+    bhScePtr++;
+    
+    if (--bhCetask->cnt[bhCetask->loop] == 0) 
+    {
+        bhScePtr += 3;
+        
+        bhCetask->loop--;
+    }
+    
+    return 0;
+}
+
+// 100% matching!
+unsigned int bhSleeping()
+{
+	if (--bhCetask->cnt[bhCetask->loop] == 0) 
+	{
+		bhScePtr += 3;
+
+		bhCetask->loop--;
+	}
+
+	return 0;
+}
+
+// 100% matching! 
+unsigned int bhWhile()
+{
+    bhCetask->loop++;
+    
+    bhCetask->lcondition[bhCetask->loop] = &bhScePtr[2];
+    
+    bhScePtr = &bhScePtr[bhScePtr[1]];
+    
+    bhCetask->lstack[bhCetask->loop] = bhScePtr;
+    
+    return 1;
+}
+
+// 100% matching! 
+unsigned int bhEwhile() 
+{
+    bhCetask->data = bhScePtr;
+    
+    bhScePtr = bhCetask->lcondition[bhCetask->loop];
+
+    if (bhScenarioJmpT[*bhScePtr]() != 0) 
+    {
+        bhScePtr = bhCetask->lstack[bhCetask->loop];
+    } 
+    else 
+    {
+        bhScePtr = bhCetask->data;
+        
+        bhScePtr++;
+        
+        bhCetask->loop--;
+        
+        return 0;
+    }
+
+    return 1;
+}
+
+// 100% matching! 
+unsigned int bhEwhile2()
+{
+	bhCetask->data = bhScePtr;
+    
+    bhScePtr = bhCetask->lcondition[bhCetask->loop];
+
+    if (bhScenarioJmpT[*bhScePtr]() != 0) 
+    {
+        bhScePtr = bhCetask->lstack[bhCetask->loop];
+    } 
+    else 
+    {
+        bhScePtr = bhCetask->data;
+        
+        bhScePtr++;
+        
+        bhCetask->loop--;
+        
+        return 1;
+    }
+
+    return 1;
+}
+
+// 100% matching! 
+unsigned int bhEvtNext()
+{
+	*bhScePtr++;
+
+	return 0;
+}
+
+// 100% matching! 
+unsigned int bhComNext()
+{
+	*bhScePtr++;
+
+	return 1;
+}
+
+// 100% matching! 
+unsigned int bhEvtEnd()
+{
+	bhCetask->status = 0;
+
+	*bhScePtr++;
+	*bhScePtr++;
+
+	return 0;
+}
+
+// 100% matching! 
+unsigned int bhFor()
+{
+    bhCetask->loop++;
+    
+    bhCetask->cnt3 = bhCetask->cnt2 = bhCetask->cnt[bhCetask->loop] = *(short*)&bhScePtr[2];
+    
+    bhScePtr += 4;
+    
+    bhCetask->lstack[bhCetask->loop] = bhScePtr;
+    
+    return 1;
+}
+
+// 100% matching! 
+unsigned int bhNext()
+{
+    if (--bhCetask->cnt[bhCetask->loop] != 0) 
+    {
+        bhCetask->cnt2 = bhCetask->cnt[bhCetask->loop];
+        
+        bhScePtr = bhCetask->lstack[bhCetask->loop];
+    }
+    else 
+    {
+        bhScePtr++;
+        bhScePtr++;
+        
+        bhCetask->loop--;
+        
+        return 1;
+    }
+
+    return 1;
+}
+
+// 100% matching!
+unsigned int bhPlCtr()
+{
+	bhCetask->mode0 = 1;
+
+	bhScePtr++;
+    
+    Player_controll();
+    
+    return 1;
+}
+
+// 100% matching!
+int Player_controll() 
+{
+    switch (*bhScePtr) 
+    {
+    case 150:
+        bhScePtr++;
+        
+        if (*bhScePtr == 0) 
+        {
+            ((int*)plp->exp1)[0] |= 0x1E0;
+            ((int*)plp->exp1)[0] &= ~0x14;
+        } 
+        else 
+        {
+            ((int*)plp->exp1)[0] |= 0x14;
+        }
+        
+        bhScePtr += 2;
+        break;
+    case 129:
+    {
+        unsigned int v0; 
+        unsigned short *a0;    
+        
+        bhScePtr++;
+        
+        a0 = (unsigned short*)bhScePtr;
+        
+        bhScePtr = (unsigned char*)&a0[3];
+        
+        v0 = *bhScePtr;
+        
+        bhScePtr++;
+        
+        ((int*)bhCetask->work->exp1)[24] = (int)(v0 * (65536.0f / 360.0f)) >> 1;
+        
+        v0 = *bhScePtr;
+        
+        bhScePtr++;
+        
+        ((int*)bhCetask->work->exp1)[25] = (int)(v0 * (65536.0f / 360.0f)) >> 1;
+        
+        v0 = *bhScePtr;
+        
+        bhScePtr++;
+        
+        ((int*)bhCetask->work->exp1)[26] = (int)(v0 * (65536.0f / 360.0f)) >> 1;
+        
+        v0 = *bhScePtr;
+        
+        bhScePtr++;
+        
+        ((char*)bhCetask->work->exp1)[120] = v0;
+            
+        if (!(((unsigned char*)bhCetask->work->exp1)[120] & 0x1)) 
+        {
+            ((int*)bhCetask->work->exp1)[27] = 0;
+            ((int*)bhCetask->work->exp1)[28] = 0;
+            ((int*)bhCetask->work->exp1)[29] = 0;
+        }
+            
+        if ((((unsigned char*)bhCetask->work->exp1)[120] & 0x40)) 
+        {
+            ((int*)bhCetask->work->exp1)[21] = -(*a0++ >> 1) * (65536.0f / 360.0f);
+        } 
+        else
+        {
+            ((int*)bhCetask->work->exp1)[21] = (*a0++ >> 1) * (65536.0f / 360.0f);
+        }
+        
+        if ((((unsigned char*)bhCetask->work->exp1)[120] & 0x20))
+        {
+            ((int*)bhCetask->work->exp1)[22] = -(*a0++ >> 1) * (65536.0f / 360.0f);
+        } 
+        else 
+        {
+            ((int*)bhCetask->work->exp1)[22] = (*a0++ >> 1) * (65536.0f / 360.0f);
+        }
+        
+        ((int*)bhCetask->work->exp1)[23] = (*a0++ >> 1) * (65536.0f / 360.0f);
+        break;
+    }
+    case 130:
+        ((unsigned char*)bhCetask->work->exp1)[120] = 0;
+        
+        bhScePtr++;
+        break;
+    case 141:
+    {
+        unsigned int v0, v1, v2;
+        
+        bhScePtr++;
+        
+        v0 = *bhScePtr;
+        
+        bhScePtr++;
+        
+        v1 = *bhScePtr;
+        
+        bhScePtr++;
+        
+        v2 = *bhScePtr;
+        
+        bhScePtr++;
+        bhScePtr++;
+        
+        ((int*)bhCetask->work->exp1)[0] |= 0x1C;
+            
+        ((int*)bhCetask->work->exp1)[16] = v0;
+        
+        ((short*)bhCetask->work->exp1)[34] = v1;
+        ((short*)bhCetask->work->exp1)[35] = v2;
+        break;
+    }
+    case 142:
+        ((int*)bhCetask->work->exp1)[0] |= 0x1E0;
+        ((int*)bhCetask->work->exp1)[0] &= ~0x1C;
+        
+        bhScePtr++;
+        break;
+    case 131:
+    {
+        unsigned int v0, v1; 
+        
+        bhScePtr++;
+        
+        v0 = *bhScePtr;
+        
+        bhScePtr++;
+        
+        v1 = *bhScePtr;
+        
+        bhScePtr++;
+        
+        if (bhCetask->work->mode2 == v0)
+        {
+            bhCetask->work->mode3 = 1;
+        }
+        else 
+        {
+            bhCetask->work->mode3 = 0;
+        }
+        
+        bhCetask->work->mode0 = 7;
+        bhCetask->work->mode1 = v1;
+        bhCetask->work->mode2 = v0;
+        
+        if (bhCetask->work->mode2 == 1) 
+        {
+            bhCetask->work->mode3 = 0;
+        }
+        
+        break;
+    }
+    case 140:
+    {
+        unsigned int v0;
+        
+        bhScePtr++;
+        
+        v0 = *bhScePtr;
+        
+        bhScePtr++;
+        bhScePtr++;
+            
+        if (bhCetask->work->mode2 == v0) 
+        {
+            bhCetask->work->mode3 = 1;
+        } 
+        else 
+        {
+            bhCetask->work->mode3 = 0;
+        }
+
+        bhCetask->work->mode0 = 7;
+        bhCetask->work->mode2 = v0 + 4;
+        
+        v0 = *(unsigned short*)bhScePtr;
+        
+        if (bhCetask->bpx == 0) 
+        {
+            bhCetask->work->ct0 = v0 << 16;
+        } 
+        else 
+        {
+            bhCetask->work->ct0 = (v0 * -1) << 16;
+        }
+        
+        bhScePtr += 2;
+        
+        v0 = *(unsigned short*)bhScePtr;
+        
+        if (bhCetask->bpz == 0) 
+        {
+            bhCetask->work->ct0 |= v0;
+        } 
+        else 
+        {
+            bhCetask->work->ct0 |= v0 * -1;
+        }
+        
+        bhScePtr += 2;
+        break;
+    }
+    case 12:
+        bhScePtr++;
+        
+        bhCetask->bpx = *bhScePtr;
+        
+        bhScePtr++;
+        
+        bhCetask->bpy = *bhScePtr;
+        
+        bhScePtr++;
+        
+        bhCetask->bpz = *bhScePtr;
+        
+        bhScePtr++;
+        bhScePtr++;
+        break;
+    case 13:
+        bhScePtr++;
+        
+        bhCetask->bax = *bhScePtr;
+        
+        bhScePtr++;
+        
+        bhCetask->bay = *bhScePtr;
+        
+        bhScePtr++;
+        
+        bhCetask->baz = *bhScePtr;
+        
+        bhScePtr++;
+        bhScePtr++;
+        break;
+    case 132:
+    {
+        unsigned int v0;
+        
+        bhCetask->work->mnwP = (MN_WORK*)sys->plmthp;
+        
+        bhCetask->work->mode0 = 7;
+        bhCetask->work->mode2 = 5;
+        bhCetask->work->mode3 = 0;
+        
+        bhScePtr++;
+        
+        v0 = *bhScePtr;
+        
+        bhCetask->work->mode1 = v0;
+        
+        bhScePtr++;
+        
+        v0 = *bhScePtr;
+        
+        bhCetask->work->ct0 = v0;
+        
+        bhScePtr++;
+        
+        v0 = *bhScePtr;
+        
+        bhCetask->work->ct1 = v0;
+        
+        bhScePtr++;
+        
+        v0 = *bhScePtr;
+        
+        bhCetask->work->ct2 = v0;
+        
+        bhScePtr++;
+        break;
+    }
+    case 143:
+    {
+        unsigned int v0;
+        
+        bhCetask->work->mnwP = (MN_WORK*)sys->plmthp;
+        
+        bhCetask->work->mode0 = 7;
+        bhCetask->work->mode2 = 5;
+    
+        bhScePtr++;
+        
+        v0 = *bhScePtr;
+        
+        bhCetask->work->mode3 = v0;
+        
+        bhScePtr++;
+        bhScePtr++;
+        break;
+    }
+    case 145:
+    {
+        unsigned int v0;
+        
+        bhCetask->work->mtn_add = 32768;
+        
+        bhCetask->work->mnwP = sys->rmthp;
+    
+        bhCetask->work->mode0 = 7;
+        bhCetask->work->mode2 = 8;
+        bhCetask->work->mode3 = 0;
+        
+        bhScePtr++;
+        
+        v0 = *bhScePtr;
+        
+        bhCetask->work->mode1 = v0;
+        
+        bhScePtr++;
+        
+        v0 = *bhScePtr;
+        
+        bhCetask->work->ct0 = v0;
+        
+        bhScePtr++;
+        
+        v0 = *bhScePtr;
+        
+        bhCetask->work->ct1 = v0;
+        
+        bhScePtr++;
+        
+        v0 = *bhScePtr;
+        
+        bhCetask->work->ct2 = v0;
+        
+        bhScePtr++;
+        break;
+    }
+    case 137:
+    {
+        unsigned int v0; 
+        POS *e_posp;
+        
+        bhCetask->work->mode0 = 7;
+        bhCetask->work->mode1 = 0;
+        bhCetask->work->mode2 = 1;
+        bhCetask->work->mode3 = 0;
+        
+        bhScePtr++;
+        
+        v0 = *bhScePtr;
+        
+        e_posp = rom->posp;
+        e_posp += v0;
+        
+        bhCetask->work->py = e_posp->py;
+        
+        bhSetFloorNum(bhCetask->work);
+        
+        bhCetask->work->px = e_posp->px;
+        bhCetask->work->py = e_posp->py;
+        bhCetask->work->pz = e_posp->pz;
+        
+        bhCetask->work->ay = e_posp->ay;
+        
+        bhScePtr += 2;
+        break;
+    }
+    case 128:
+        bhCetask->work->mtn_add = 65536;
+        
+        bhCetask->work->flg |= 0x10;
+        
+        bhCetask->work->mnwP = (MN_WORK*)sys->plmthp;
+        
+        bhCetask->work->mode0 = 1;
+        bhCetask->work->mode1 = 0;
+        bhCetask->work->mode2 = 0;
+        bhCetask->work->mode3 = 0;
+        
+        bhCetask->work->stflg &= ~0x10000;
+        bhCetask->work->flg &= ~0x210000;
+    case 139:
+        bhCetask->mode1 = 0;
+        
+        bhScePtr++;
+        
+        bhCetask->mode0 = 0;
+        break;
+    case 7:
+        bhScePtr++;
+        
+        if (bhCetask->bpx == 0) 
+        {
+            bhCetask->work->px = *(unsigned short*)bhScePtr / 100.0f;
+        } 
+        else 
+        {
+            bhCetask->work->px = -1.0f * (*(unsigned short*)bhScePtr / 100.0f);
+        }
+        
+        ((float*)plp->exp0)[18] = bhCetask->work->pxb = bhCetask->work->px;
+        
+        bhScePtr += 2;
+        
+        if (bhCetask->bpy == 0) 
+        {
+            bhCetask->work->py = *(unsigned short*)bhScePtr / 100.0f;
+        } 
+        else 
+        {
+            bhCetask->work->py = -1.0f * (*(unsigned short*)bhScePtr / 100.0f);
+        }
+        
+        bhCetask->work->pyb = bhCetask->work->py;
+        
+        bhCetask->work->flr_no = bhCheckFloorNum(bhCetask->work->py);
+        
+        bhScePtr += 2;
+        
+        if (bhCetask->bpz == 0)
+        {
+            bhCetask->work->pz = *(unsigned short*)bhScePtr / 100.0f;
+        } 
+        else 
+        {
+            bhCetask->work->pz = -1.0f * (*(unsigned short*)bhScePtr / 100.0f);
+        }
+        
+        ((float*)plp->exp0)[20] = bhCetask->work->pzb = bhCetask->work->pz;
+        
+        bhScePtr += 2;
+        break;
+    case 52:
+        bhScePtr++;
+        
+        bhStandPlayerMotion();
+        break;
+    case 0:
+        bhScePtr++;
+        break;
+    }
+}
+
+// 100% matching!
+unsigned int bhObjCtr()
+{
+    bhScePtr++;
+    
+    Obj_controll();
+    
+    return 1;
+}
+
+// 100% matching!
+int Obj_controll()
+{
+    unsigned char v0;
+
+    v0 = *bhScePtr;
+    
+    switch (v0)
+    {                       
+    case 20:
+        bhScePtr++;
+        
+        v0 = *bhScePtr;
+        
+        bhScePtr += 2;
+
+        bhCetask->work->px += bhEtask[v0].work->mlwP->objP->pos[0];
+        bhCetask->work->pz += bhEtask[v0].work->mlwP->objP->pos[2];
+        break;
+    case 1:
+        bhCetask->mode1 = 0;
+        
+        bhScePtr++;
+        break;
+    default:
+        return;
+    }
+}
+
+// 100% matching!
+unsigned int bhSubCtr()
+{
+    bhScePtr++;
+    
+    Sub_controll();
+    
+    return 1;
+}
+
+// 100% matching!
+int Sub_controll()
+{
+	switch (*bhScePtr)
+    {
+    case 128:
+        if (bhCetask->work != NULL) 
+        {
+            bhCetask->work->mnwP = sys->emtp[bhCetask->work->id];
+            
+            bhCetask->work->mode0 = 1;
+            bhCetask->work->mode2 = 0;
+            
+            *(char*)&bhCetask->work->ct2 = 0;
+            
+            bhCetask->work->stflg &= ~0x10000;
+            bhCetask->work->flg &= ~0x200000;
+        } 
+        else 
+        {
+            printf("Sub_controll NULL work!!\n");
+            
+            while (TRUE);
+        }
+    case 139:
+        bhCetask->mode1 = 0;
+        
+        bhScePtr++;
+        
+        bhCetask->mode0 = 0;
+        break;
+    case 144:
+        bhCetask->work->mode0 = 1;
+        bhCetask->work->mode2 = 0;
+        bhCetask->work->mode3 = 3;
+        
+        *(char*)&bhCetask->work->ct2 = 0; 
+        
+        bhCetask->work->stflg &= ~0x10000;
+        bhCetask->work->flg &= ~0x200000;
+        
+        bhCetask->mode1 = 0;
+        
+        bhScePtr++;
+        
+        bhCetask->mode0 = 0;
+        break;
+    case 143:
+        bhCetask->work->mnwP = sys->emtp[bhCetask->work->id];
+        
+        bhScePtr++;
+        
+        bhCetask->work->mode0 = *bhScePtr;
+        
+        bhScePtr++;
+        
+        bhCetask->work->mode1 = *bhScePtr;
+        
+        bhScePtr++;
+        
+        bhCetask->work->mode2 = *bhScePtr;
+        
+        bhScePtr++;
+        
+        bhCetask->work->mode3 = 0;
+        
+        *(unsigned char*)&bhCetask->work->type = *bhScePtr; 
+        
+        bhScePtr++;
+        
+        *(char*)&bhCetask->work->ct2 = 0; 
+        
+        bhCetask->work->stflg &= ~0x10000;
+        bhCetask->work->flg &= ~0x200000;
+        
+        bhCetask->mode1 = 0;
+        bhCetask->mode0 = 0;
+        
+        if (bhCetask->work->id == 1)
+        {
+            ((char*)bhCetask->work->exp1)[12] = 1;
+            ((void**)bhCetask->work->exp1)[215] = sys->emtp[bhCetask->work->id];
+        }
+        
+        bhCetask->work->mtn_md = bhCetask->mtn_md;
+        bhCetask->work->mdflg = bhCetask->mdflg;
+        
+        bhCetask->work->hokan_rate = bhCetask->hokan_rate;
+        break;
+    case 146:
+        bhCetask->work->mnwP = sys->emtp[bhCetask->work->id];
+        
+        bhScePtr++;
+        
+        bhCetask->work->mode0 = *bhScePtr;
+        
+        bhScePtr++;
+        
+        bhCetask->work->mode1 = *bhScePtr;
+        
+        bhScePtr++;
+        
+        bhCetask->work->mode2 = *bhScePtr;
+        
+        bhScePtr++;
+        
+        *(unsigned char*)&bhCetask->work->type = *bhScePtr; 
+        
+        bhScePtr++;
+        
+        bhCetask->work->mode3 = *bhScePtr;
+        
+        bhScePtr += 2;
+        
+        *(char*)&bhCetask->work->ct2 = 0; 
+        
+        bhCetask->work->stflg &= ~0x10000;
+        bhCetask->work->flg &= ~0x200000;
+        
+        bhCetask->mode1 = 0;
+        bhCetask->mode0 = 0;
+        
+        if (bhCetask->work->id == 1) 
+        {
+            ((char*)bhCetask->work->exp1)[12] = 1;
+            ((void**)bhCetask->work->exp1)[215] = sys->emtp[bhCetask->work->id];
+        }
+        
+        bhCetask->work->mtn_md = bhCetask->mtn_md;
+        
+		bhCetask->work->hokan_rate = bhCetask->hokan_rate;
+        break;
+    case 147:
+        bhScePtr++;
+        
+        bhCetask->work->mode0 = *bhScePtr;
+        
+        bhScePtr++;
+        
+        bhCetask->work->mode1 = *bhScePtr;
+        
+        bhScePtr++;
+        
+        bhCetask->work->mode2 = *bhScePtr;
+        
+        bhScePtr++;
+        
+        bhCetask->work->mode3 = *bhScePtr;
+        
+        bhScePtr++;
+        
+        *(unsigned char*)&bhCetask->work->type = *bhScePtr; 
+        
+        bhScePtr += 2;
+        break;
+    case 148:
+    {
+        int v0;
+            
+        bhScePtr++;
+        
+        v0 = *bhScePtr;
+    
+        bhScePtr += 2;
+        
+        bhEne11_LightControl(bhCetask->work, v0);
+        break;
+    }
+    case 149:
+    {
+        int v0;
+            
+        bhScePtr++;
+        
+        v0 = *bhScePtr;
+        
+        bhScePtr += 2;
+        
+        if (v0 == 0) 
+        {
+            bhCetask->work->flg &= ~0x10000;
+        } 
+        else
+        {
+            bhCetask->work->flg |= 0x10000;
+        }
+        
+        break;
+    }
+    case 0:
+        bhScePtr++;
+        break;
+    }
+}
+
+// 100% matching!
+unsigned int bhCommonCtr()
+{
+	bhScePtr++;
+    
+    Common_controll();
+    
+    return 1;
+}
+
+// 100% matching!
+int Common_controll()
+{
+    switch (*bhScePtr)
+    {
+        case 53:
+        {
+            int v0; 
+            
+            bhScePtr++;
+            v0 = bhScePtr[0];
+            bhScePtr += 2;
+            bhCetask->work->mtn_md |= 0x20;
+            if (bhCetask->work->id == 0x1) 
+            {
+                ((BH_PWORK *)bhCetask->work->exp1)->mtn_md |= 0x20;
+            }
+            if (v0 == 0) 
+            {
+                bhCetask->work->mtn_md |= 0x8;
+                if (bhCetask->work->id == 0x1) 
+                {
+                    ((BH_PWORK *)bhCetask->work->exp1)->mtn_md |= 0x8;
+                }
+            } 
+            else 
+            {
+                bhCetask->work->mtn_md &= ~8;
+                if (bhCetask->work->id == 0x1) 
+                {
+                    ((BH_PWORK *)bhCetask->work->exp1)->mtn_md &= ~8;
+                }
+            }
+        }
+        break;
+        case 51:
+        {
+            int v0; 
+            int v1; 
+            int v2; 
+            BH_PWORK* epw; 
+            POS* e_posp; 
+            ETTY_WORK* temp; // not from the debugging symbols
+            
+            bhScePtr++;
+            v0 = *bhScePtr++;
+            v1 = *bhScePtr++;
+            v2 = *bhScePtr;
+            bhScePtr += 2;
+            temp = &rom->enep[v0];
+            
+            epw = &ene[temp->wrk_no];
+            e_posp = rom->posp;
+            e_posp += sys->evt_posno[v2];
+            bhCetask->ips[0x0][0x0] = epw->mlwP->owP[v1].mtx[0xc];
+            bhCetask->ips[0x0][0x1] = epw->mlwP->owP[v1].mtx[0xd];
+            bhCetask->ips[0x0][0x2] = epw->mlwP->owP[v1].mtx[0xe];
+            bhCetask->ips[0x1][0x0] = epw->mlwP->owP[v1].mtx[0xc];
+            bhCetask->ips[0x1][0x1] = epw->mlwP->owP[v1].mtx[0xd];
+            bhCetask->ips[0x1][0x2] = epw->mlwP->owP[v1].mtx[0xe];
+            bhCetask->ips[0x2][0x0] = e_posp->px - (e_posp->px - epw->mlwP->owP[v1].mtx[0xc]) / 2.0f;
+            bhCetask->ips[0x2][0x1] = e_posp->py;
+            bhCetask->ips[0x2][0x2] = e_posp->pz - (e_posp->pz - epw->mlwP->owP[v1].mtx[0xe]) / 2.0f;
+            bhCetask->ips[0x3][0x0] = epw->mlwP->owP[v1].mtx[0xc];
+            bhCetask->ips[0x3][0x1] = epw->mlwP->owP[v1].mtx[0xd] * -1.0f;
+            bhCetask->ips[0x3][0x2] = epw->mlwP->owP[v1].mtx[0xe];
+        }
+        break;
+        case 52:
+        {
+            int v0; 
+            POS* e_posp; 
+            
+            bhScePtr++;
+            v0 = *bhScePtr;
+            bhScePtr += 2;
+            e_posp = rom->posp;
+            e_posp += sys->evt_posno[v0];
+            bhCetask->ips[0x0][0x0] = bhCetask->work->px;
+            bhCetask->ips[0x0][0x1] = bhCetask->work->py;
+            bhCetask->ips[0x0][0x2] = bhCetask->work->pz;
+            bhCetask->ips[0x1][0x0] = e_posp->px;
+            bhCetask->ips[0x1][0x1] = e_posp->py;
+            bhCetask->ips[0x1][0x2] = e_posp->pz;
+        }
+        break;
+        case 50:
+            bhScePtr++;
+            *(unsigned char *)&bhCetask->work->type = *bhScePtr;
+            bhScePtr += 2;
+        break;
+        case 47:
+            bhScePtr++;
+            bhCalcModel(bhCetask->work);
+        break;
+        case 43:
+        {
+            float ips_w[4][3]; 
+            float ian_w[4][3]; 
+            float ans[3]; 
+            float frm; 
+            int v0;
+            int v1; 
+            int v2; 
+            
+            bhScePtr++;
+            v0 = *bhScePtr++;
+            v1 = *bhScePtr++;
+            v2 = *bhScePtr++;
+            ips_w[0x0][0x0] = bhCetask->ips[0x1][0x0];
+            ips_w[0x1][0x0] = bhCetask->ips[0x1][0x0];
+            ips_w[0x2][0x0] = bhCetask->ips[0x0][0x0];
+            ips_w[0x3][0x0] = bhCetask->ips[0x0][0x0];
+            ips_w[0x0][0x1] = bhCetask->ips[0x1][0x1];
+            ips_w[0x1][0x1] = bhCetask->ips[0x1][0x1];
+            ips_w[0x2][0x1] = bhCetask->ips[0x0][0x1];
+            ips_w[0x3][0x1] = bhCetask->ips[0x0][0x1];
+            ips_w[0x0][0x2] = bhCetask->ips[0x1][0x2];
+            ips_w[0x1][0x2] = bhCetask->ips[0x1][0x2];
+            ips_w[0x2][0x2] = bhCetask->ips[0x0][0x2];
+            ips_w[0x3][0x2] = bhCetask->ips[0x0][0x2];
+            ian_w[0x0][0x0] = bhCetask->ian[0x1][0x0];
+            ian_w[0x1][0x0] = bhCetask->ian[0x1][0x0];
+            ian_w[0x2][0x0] = bhCetask->ian[0x0][0x0];
+            ian_w[0x3][0x0] = bhCetask->ian[0x0][0x0];
+            ian_w[0x0][0x1] = bhCetask->ian[0x1][0x1];
+            ian_w[0x1][0x1] = bhCetask->ian[0x1][0x1];
+            ian_w[0x2][0x1] = bhCetask->ian[0x0][0x1];
+            ian_w[0x3][0x1] = bhCetask->ian[0x0][0x1];
+            ian_w[0x0][0x2] = bhCetask->ian[0x1][0x2];
+            ian_w[0x1][0x2] = bhCetask->ian[0x1][0x2];
+            ian_w[0x2][0x2] = bhCetask->ian[0x0][0x2];
+            ian_w[0x3][0x2] = bhCetask->ian[0x0][0x2];
+            frm = 1.0f / bhCetask->cnt3 * bhCetask->cnt2;
+            if (v0 == '\0') 
+            {
+                njOverhauserSpline(ips_w[0],ans,0,frm);
+            }
+            else 
+            {
+                njLinear(ips_w[0x1],ans,0,frm);
+            }
+            
+            if (bhCetask->model_cno == 0x0) 
+            {
+                if ((v1 & 0x1) != 0x0) 
+                {
+                    bhCetask->work->px = ans[0x0];
+                }
+                if ((v1 & 0x2) != 0x0) 
+                {
+                    bhCetask->work->py = ans[0x1];
+                }
+                if ((v1 & 0x4) != 0x0) 
+                {
+                    bhCetask->work->pz = ans[0x2];
+                }
+            }
+            else 
+            {
+                NJS_CNK_OBJECT* objP; 
+                
+                objP = bhCetask->work->mdl->objP;
+                objP += bhCetask->model_cno;
+                if ((v1 & 0x1) != 0x0) 
+                {
+                    objP->pos[0x0] = ans[0x0];
+                }
+                if ((v1 & 0x2) != 0x0) 
+                {
+                    objP->pos[0x1] = ans[0x1];
+                }
+                if ((v1 & 0x4) != 0x0) 
+                {
+                    objP->pos[0x2] = ans[0x2];
+                }
+            }
+            if (v0 == '\0')
+            {
+                njOverhauserSpline(ian_w[0],ans,0,frm);
+            }
+            else 
+            {
+                njLinear(ian_w[0x1],ans,0,frm);
+            }
+                
+            if (bhCetask->model_cno == 0x0) 
+            {
+                if ((v2 & 0x1) != 0x0) 
+                {
+                    bhCetask->work->ax = ans[0x0] * 182.04445f;
+                }
+                if ((v2 & 0x2) != 0x0) 
+                {
+                    bhCetask->work->ay = ans[0x1] * 182.04445f;
+                }
+                if ((v2 & 0x4) != 0x0) 
+                {
+                    bhCetask->work->az = ans[0x2] * 182.04445f;
+                }
+            }
+            else
+            {
+                NJS_CNK_OBJECT* objP; 
+                
+                objP = bhCetask->work->mdl->objP;
+                objP += bhCetask->model_cno;
+                if ((v2 & 0x1) != 0x0) 
+                {
+                    objP->ang[0x0] = ans[0x0] * 182.04445f;
+                }
+                if ((v2 & 0x2) != 0x0) 
+                {
+                    objP->ang[0x1] = ans[0x1] * 182.04445f;
+                }
+                if ((v2 & 0x4) != 0x0) 
+                {
+                    objP->ang[0x2] = ans[0x2] * 182.04445f;
+                }
+            }
+        }
+        break;
+        case 44:
+        {
+            float ips_w[4][3]; 
+            float ans[3]; 
+            float frm; 
+            int v0; 
+            int v1; 
+            
+            bhScePtr++;
+            v0 = *bhScePtr++;
+            v1 = *bhScePtr++;
+            bhScePtr++;
+            ips_w[0x0][0x0] = bhCetask->ips[0x1][0x0];
+            ips_w[0x1][0x0] = bhCetask->ips[0x1][0x0];
+            ips_w[0x2][0x0] = bhCetask->ips[0x0][0x0];
+            ips_w[0x3][0x0] = bhCetask->ips[0x0][0x0];
+            ips_w[0x0][0x1] = bhCetask->ips[0x1][0x1];
+            ips_w[0x1][0x1] = bhCetask->ips[0x1][0x1];
+            ips_w[0x2][0x1] = bhCetask->ips[0x0][0x1];
+            ips_w[0x3][0x1] = bhCetask->ips[0x0][0x1];
+            ips_w[0x0][0x2] = bhCetask->ips[0x1][0x2];
+            ips_w[0x1][0x2] = bhCetask->ips[0x1][0x2];
+            ips_w[0x2][0x2] = bhCetask->ips[0x0][0x2];
+            ips_w[0x3][0x2] = bhCetask->ips[0x0][0x2];
+            frm = 1.0f / bhCetask->cnt3 * bhCetask->cnt2;
+            if (v0 == '\0') 
+            {
+                njOverhauserSpline(ips_w[0],ans,0,frm);
+            }
+            else 
+            {
+                njLinear(ips_w[1],ans,0,frm);
+            }
+            
+            if (bhCetask->model_cno == 0x0) 
+            {
+                if ((v1 & 0x1) != 0x0) 
+                {
+                    bhCetask->work->px = ans[0];
+                }
+                if ((v1 & 0x2) != 0x0)
+                {
+                    bhCetask->work->py = ans[1];
+                }
+                if ((v1 & 0x4) != 0x0) 
+                {
+                    bhCetask->work->pz = ans[2];
+                }
+            } 
+            else
+            {
+                NJS_CNK_OBJECT* objP; 
+                
+                objP = bhCetask->work->mdl->objP;
+                objP += bhCetask->model_cno;
+                if ((v1 & 0x1) != 0x0) 
+                {
+                    objP->pos[0] = ans[0];
+                }
+                if ((v1 & 0x2) != 0x0) 
+                {
+                    objP->pos[1] = ans[1];
+                }
+                if ((v1 & 0x4) != 0x0) 
+                {
+                    objP->pos[2] = ans[2];
+                }
+            }
+        }
+        break;
+        case 45:
+        {
+            float ian_w[4][3]; 
+            float ans[3]; 
+            float frm; 
+            int v0; 
+            int v1; 
+            
+            bhScePtr++;
+            v0 = *bhScePtr++;
+            v1 = *bhScePtr++;
+            bhScePtr++;
+            ian_w[0x0][0x0] = bhCetask->ian[0x1][0x0];
+            ian_w[0x1][0x0] = bhCetask->ian[0x1][0x0];
+            ian_w[0x2][0x0] = bhCetask->ian[0x0][0x0];
+            ian_w[0x3][0x0] = bhCetask->ian[0x0][0x0];
+            ian_w[0x0][0x1] = bhCetask->ian[0x1][0x1];
+            ian_w[0x1][0x1] = bhCetask->ian[0x1][0x1];
+            ian_w[0x2][0x1] = bhCetask->ian[0x0][0x1];
+            ian_w[0x3][0x1] = bhCetask->ian[0x0][0x1];
+            ian_w[0x0][0x2] = bhCetask->ian[0x1][0x2];
+            ian_w[0x1][0x2] = bhCetask->ian[0x1][0x2];
+            ian_w[0x2][0x2] = bhCetask->ian[0x0][0x2];
+            ian_w[0x3][0x2] = bhCetask->ian[0x0][0x2];
+            frm = 1.0f / bhCetask->cnt3 * bhCetask->cnt2;
+            if (v0 == '\0') 
+            {
+                njOverhauserSpline(ian_w[0],ans,0,frm);
+            }
+            else 
+            {
+                njLinear(ian_w[1],ans,0,frm);
+            }
+                
+            if (bhCetask->model_cno == 0x0) 
+            {
+                if ((v1 & 0x1) != 0x0) 
+                {
+                    bhCetask->work->ax = ans[0] * 182.04445f;
+                }
+                if ((v1 & 0x2) != 0x0) 
+                {
+                    bhCetask->work->ay = ans[1] * 182.04445f;
+                }
+                if ((v1 & 0x4) != 0x0) 
+                {
+                    bhCetask->work->az = ans[2] * 182.04445f;
+                }
+            } 
+            else
+            {
+                NJS_CNK_OBJECT* objP; 
+                
+                objP = bhCetask->work->mdl->objP;
+                objP += bhCetask->model_cno;
+                if ((v1 & 0x1) != 0x0) 
+                {
+                    objP->ang[0] = ans[0] * 182.04445f;
+                }
+                if ((v1 & 0x2) != 0x0) 
+                {
+                    objP->ang[1] = ans[1] * 182.04445f;
+                }
+                if ((v1 & 0x4) != 0x0)
+                {
+                    objP->ang[2] = ans[2] * 182.04445f;
+                }
+            }
+        }
+        break;
+        case 42:
+        {
+            int v0; 
+            int v1; 
+            O_WORK* owk; 
+            
+            owk = bhCetask->work->mdl->owP;
+            bhScePtr++;
+            v0 = *bhScePtr++;
+            v1 = *bhScePtr++;
+            owk += v1;
+            if (v0 == '\0') 
+            {
+                owk->flg |= 0x2;
+                break;
+            }
+            else 
+            {
+                owk->flg &= ~2;
+            }
+        }
+        break;
+        case 41:
+            bhScePtr++;
+            if (*(unsigned short *)bhScePtr == 0x0) 
+            {
+                bhCetask->work->flg &= ~0x40000;
+            }
+            else 
+            {
+                bhCetask->work->flg |= 0x40000;
+            }
+            bhScePtr += 2;
+        break;
+        case 46:
+            bhScePtr++;
+            if (*(unsigned short *)bhScePtr == 0x0) 
+            {
+                bhCetask->work->flg &= ~0x20;
+            }
+            else 
+            {
+                bhCetask->work->flg |= 0x20;
+            }
+            bhScePtr += 2;
+        break;
+        case 40:
+        {
+            int v0; // not from the debugging symbols
+            
+            bhScePtr++;
+            v0 = *(unsigned short *)bhScePtr;
+            bhCetask->work->frm_no = v0 << 0x10;
+            if (bhCetask->work->id == 0x1) 
+            {
+                ((BH_PWORK *)bhCetask->work->exp1)->frm_no = v0 << 0x10;
+            }
+            bhScePtr += 2;
+        }
+        break;
+        case 28:
+        {
+            float ips_w[4][3]; 
+            float ian_w[4][3]; 
+            float ans[3]; 
+            float frm; 
+            int v0; 
+            
+            bhScePtr++;
+            v0 = *bhScePtr++;
+            ips_w[0x0][0x0] = bhCetask->ips[0x1][0x0];
+            ips_w[0x1][0x0] = bhCetask->ips[0x1][0x0];
+            ips_w[0x2][0x0] = bhCetask->ips[0x0][0x0];
+            ips_w[0x3][0x0] = bhCetask->ips[0x0][0x0];
+            ips_w[0x0][0x1] = bhCetask->ips[0x1][0x1];
+            ips_w[0x1][0x1] = bhCetask->ips[0x1][0x1];
+            ips_w[0x2][0x1] = bhCetask->ips[0x0][0x1];
+            ips_w[0x3][0x1] = bhCetask->ips[0x0][0x1];
+            ips_w[0x0][0x2] = bhCetask->ips[0x1][0x2];
+            ips_w[0x1][0x2] = bhCetask->ips[0x1][0x2];
+            ips_w[0x2][0x2] = bhCetask->ips[0x0][0x2];
+            ips_w[0x3][0x2] = bhCetask->ips[0x0][0x2];
+            ian_w[0x0][0x0] = bhCetask->ian[0x1][0x0];
+            ian_w[0x1][0x0] = bhCetask->ian[0x1][0x0];
+            ian_w[0x2][0x0] = bhCetask->ian[0x0][0x0];
+            ian_w[0x3][0x0] = bhCetask->ian[0x0][0x0];
+            ian_w[0x0][0x1] = bhCetask->ian[0x1][0x1];
+            ian_w[0x1][0x1] = bhCetask->ian[0x1][0x1];
+            ian_w[0x2][0x1] = bhCetask->ian[0x0][0x1];
+            ian_w[0x3][0x1] = bhCetask->ian[0x0][0x1];
+            ian_w[0x0][0x2] = bhCetask->ian[0x1][0x2];
+            ian_w[0x1][0x2] = bhCetask->ian[0x1][0x2];
+            ian_w[0x2][0x2] = bhCetask->ian[0x0][0x2];
+            ian_w[0x3][0x2] = bhCetask->ian[0x0][0x2];
+            frm = 1.0f / bhCetask->cnt3 * bhCetask->cnt2;
+            if (v0 == '\0') 
+            {
+                njOverhauserSpline(ips_w[0],ans,0,frm);
+            }
+            else 
+            {
+                njLinear(ips_w[1],ans,0,frm);
+            }
+            
+            if (bhCetask->model_cno == 0x0) 
+            {
+                bhCetask->work->px = ans[0];
+                bhCetask->work->py = ans[1];
+                bhCetask->work->pz = ans[2];
+            }
+            else
+            {
+                NJS_CNK_OBJECT* objP; 
+                
+                objP = bhCetask->work->mdl->objP;
+                objP += bhCetask->model_cno;
+                objP->pos[0] = ans[0];
+                objP->pos[1] = ans[1];
+                objP->pos[2] = ans[2];
+            }
+            
+            if (v0 == '\0') 
+            {
+                njOverhauserSpline(ian_w[0],ans,0,frm);
+            }
+            else 
+            {
+                njLinear(ian_w[1],ans,0,frm);
+            }
+            
+            if (bhCetask->model_cno == 0x0) 
+            {
+                bhCetask->work->ax = ans[0] * 182.04445f;
+                bhCetask->work->ay = ans[1] * 182.04445f;
+                bhCetask->work->az = ans[2] * 182.04445f;
+            } 
+            else 
+            {
+                NJS_CNK_OBJECT* objP; 
+                
+                objP = bhCetask->work->mdl->objP;
+                objP += bhCetask->model_cno;
+                objP->ang[0] = ans[0] * 182.04445f;
+                objP->ang[1] = ans[1] * 182.04445f;
+                objP->ang[2] = ans[2] * 182.04445f;
+            }
+        }
+        break;
+        case 30:
+        {
+            float ips_w[4][3]; 
+            float ans[3]; 
+            float frm; 
+            int v0; 
+            
+            bhScePtr++;
+            v0 = *bhScePtr++;
+            ips_w[0x0][0x0] = bhCetask->ips[0x1][0x0];
+            ips_w[0x1][0x0] = bhCetask->ips[0x1][0x0];
+            ips_w[0x2][0x0] = bhCetask->ips[0x0][0x0];
+            ips_w[0x3][0x0] = bhCetask->ips[0x0][0x0];
+            ips_w[0x0][0x1] = bhCetask->ips[0x1][0x1];
+            ips_w[0x1][0x1] = bhCetask->ips[0x1][0x1];
+            ips_w[0x2][0x1] = bhCetask->ips[0x0][0x1];
+            ips_w[0x3][0x1] = bhCetask->ips[0x0][0x1];
+            ips_w[0x0][0x2] = bhCetask->ips[0x1][0x2];
+            ips_w[0x1][0x2] = bhCetask->ips[0x1][0x2];
+            ips_w[0x2][0x2] = bhCetask->ips[0x0][0x2];
+            ips_w[0x3][0x2] = bhCetask->ips[0x0][0x2];
+            frm = 1.0f / bhCetask->cnt3 * bhCetask->cnt2;
+            if (v0 == '\0') 
+            {
+                njOverhauserSpline(ips_w[0],ans,0,frm);
+            }
+            else 
+            {
+                njLinear(ips_w[1],ans,0,frm);
+            }
+            
+            if (bhCetask->model_cno == 0x0) 
+            {
+                bhCetask->work->px = ans[0];
+                bhCetask->work->py = ans[1];
+                bhCetask->work->pz = ans[2];
+            } 
+            else 
+            {
+                NJS_CNK_OBJECT* objP; 
+                
+                objP = bhCetask->work->mdl->objP;
+                objP += bhCetask->model_cno;
+                objP->pos[0] = ans[0];
+                objP->pos[1] = ans[1];
+                objP->pos[2] = ans[2];
+            }
+        }
+        break;
+        case 31:
+        {
+            float ian_w[4][3]; 
+            float ans[3]; 
+            float frm; 
+            int v0; 
+            
+            bhScePtr++;
+            v0 = *bhScePtr++;
+            ian_w[0x0][0x0] = bhCetask->ian[0x1][0x0];
+            ian_w[0x1][0x0] = bhCetask->ian[0x1][0x0];
+            ian_w[0x2][0x0] = bhCetask->ian[0x0][0x0];
+            ian_w[0x3][0x0] = bhCetask->ian[0x0][0x0];
+            ian_w[0x0][0x1] = bhCetask->ian[0x1][0x1];
+            ian_w[0x1][0x1] = bhCetask->ian[0x1][0x1];
+            ian_w[0x2][0x1] = bhCetask->ian[0x0][0x1];
+            ian_w[0x3][0x1] = bhCetask->ian[0x0][0x1];
+            ian_w[0x0][0x2] = bhCetask->ian[0x1][0x2];
+            ian_w[0x1][0x2] = bhCetask->ian[0x1][0x2];
+            ian_w[0x2][0x2] = bhCetask->ian[0x0][0x2];
+            ian_w[0x3][0x2] = bhCetask->ian[0x0][0x2];
+            
+            frm = 1.0f / bhCetask->cnt3 * bhCetask->cnt2;
+            if (v0 == '\0') 
+            {
+                njOverhauserSpline(ian_w[0],ans,0,frm);
+            }
+            else
+            {
+                njLinear(ian_w[1],ans,0,frm);
+            }
+            
+            if (bhCetask->model_cno == 0x0) 
+            {
+                bhCetask->work->ax = ans[0] * 182.04445f;
+                bhCetask->work->ay = ans[1] * 182.04445f;
+                bhCetask->work->az = ans[2] * 182.04445f;
+            } 
+            else
+            {
+                NJS_CNK_OBJECT* objP; 
+                
+                objP = bhCetask->work->mdl->objP;
+                objP += bhCetask->model_cno;
+                objP->ang[0] = ans[0] * 182.04445f;
+                objP->ang[1] = ans[1] * 182.04445f;
+                objP->ang[2] = ans[2] * 182.04445f;
+            }
+        }
+        break;
+        case 29:
+        {
+            float ips_w[4][3]; 
+            float ian_w[4][3]; 
+            float ans[3]; 
+            float frm; 
+            
+            bhScePtr++;
+            bhScePtr++;
+            ips_w[0x0][0x0] = bhCetask->ips[0x3][0x0];
+            ips_w[0x1][0x0] = bhCetask->ips[0x2][0x0];
+            ips_w[0x2][0x0] = bhCetask->ips[0x1][0x0];
+            ips_w[0x3][0x0] = bhCetask->ips[0x0][0x0];
+            ips_w[0x0][0x1] = bhCetask->ips[0x3][0x1];
+            ips_w[0x1][0x1] = bhCetask->ips[0x2][0x1];
+            ips_w[0x2][0x1] = bhCetask->ips[0x1][0x1];
+            ips_w[0x3][0x1] = bhCetask->ips[0x0][0x1];
+            ips_w[0x0][0x2] = bhCetask->ips[0x3][0x2];
+            ips_w[0x1][0x2] = bhCetask->ips[0x2][0x2];
+            ips_w[0x2][0x2] = bhCetask->ips[0x1][0x2];
+            ips_w[0x3][0x2] = bhCetask->ips[0x0][0x2];
+            ian_w[0x0][0x0] = bhCetask->ian[0x3][0x0];
+            ian_w[0x1][0x0] = bhCetask->ian[0x2][0x0];
+            ian_w[0x2][0x0] = bhCetask->ian[0x1][0x0];
+            ian_w[0x3][0x0] = bhCetask->ian[0x0][0x0];
+            ian_w[0x0][0x1] = bhCetask->ian[0x3][0x1];
+            ian_w[0x1][0x1] = bhCetask->ian[0x2][0x1];
+            ian_w[0x2][0x1] = bhCetask->ian[0x1][0x1];
+            ian_w[0x3][0x1] = bhCetask->ian[0x0][0x1];
+            ian_w[0x0][0x2] = bhCetask->ian[0x3][0x2];
+            ian_w[0x1][0x2] = bhCetask->ian[0x2][0x2];
+            ian_w[0x2][0x2] = bhCetask->ian[0x1][0x2];
+            ian_w[0x3][0x2] = bhCetask->ian[0x0][0x2];
+            frm = 1.0f / bhCetask->cnt3 * bhCetask->cnt2;
+            njOverhauserSpline(ips_w[0],ans,0,frm);
+            
+            if (bhCetask->model_cno == 0x0)
+            {
+                bhCetask->work->px = ans[0];
+                bhCetask->work->py = ans[1];
+                bhCetask->work->pz = ans[2];
+            }
+            else 
+            {
+                NJS_CNK_OBJECT* objP; 
+                
+                objP = bhCetask->work->mdl->objP;
+                objP += bhCetask->model_cno;
+                objP->pos[0] = ans[0];
+                objP->pos[1] = ans[1];
+                objP->pos[2] = ans[2];
+            }
+            
+            njOverhauserSpline(ian_w[0],ans,0,frm); 
+            
+            if (bhCetask->model_cno == 0x0) 
+            {
+                bhCetask->work->ax = ans[0] * 182.04445f;
+                bhCetask->work->ay = ans[1] * 182.04445f;
+                bhCetask->work->az = ans[2] * 182.04445f;
+            } 
+            else 
+            {
+                NJS_CNK_OBJECT* objP; 
+                
+                objP = bhCetask->work->mdl->objP;
+                objP += bhCetask->model_cno;
+                objP->ang[0] = ans[0] * 182.04445f;
+                objP->ang[1] = ans[1] * 182.04445f;
+                objP->ang[2] = ans[2] * 182.04445f;
+            }
+        }
+        break;
+        case 32:
+        {
+            float ips_w[4][3]; 
+            float ans[3]; 
+
+            bhScePtr++;
+            bhScePtr++;
+            ips_w[0x0][0x0] = bhCetask->ips[0x3][0x0];
+            ips_w[0x1][0x0] = bhCetask->ips[0x2][0x0];
+            ips_w[0x2][0x0] = bhCetask->ips[0x1][0x0];
+            ips_w[0x3][0x0] = bhCetask->ips[0x0][0x0];
+            ips_w[0x0][0x1] = bhCetask->ips[0x3][0x1];
+            ips_w[0x1][0x1] = bhCetask->ips[0x2][0x1];
+            ips_w[0x2][0x1] = bhCetask->ips[0x1][0x1];
+            ips_w[0x3][0x1] = bhCetask->ips[0x0][0x1];
+            ips_w[0x0][0x2] = bhCetask->ips[0x3][0x2];
+            ips_w[0x1][0x2] = bhCetask->ips[0x2][0x2];
+            ips_w[0x2][0x2] = bhCetask->ips[0x1][0x2];
+            ips_w[0x3][0x2] = bhCetask->ips[0x0][0x2];
+            
+            njOverhauserSpline(ips_w[0],ans,0,1.0f / bhCetask->cnt3 * bhCetask->cnt2);
+            
+            if (bhCetask->model_cno == 0x0) 
+            {
+                bhCetask->work->px = ans[0];
+                bhCetask->work->py = ans[1];
+                bhCetask->work->pz = ans[2];
+            } 
+            else 
+            {
+                NJS_CNK_OBJECT* objP;
+                
+                objP = bhCetask->work->mdl->objP;
+                objP += bhCetask->model_cno;
+                objP->pos[0] = ans[0];
+                objP->pos[1] = ans[1];
+                objP->pos[2] = ans[2];
+            }
+        }
+        break;
+        case 33:
+        {
+            float ian_w[4][3]; 
+            float ans[3]; 
+            
+            bhScePtr++;
+            bhScePtr++;
+            ian_w[0x0][0x0] = bhCetask->ian[0x3][0x0];
+            ian_w[0x1][0x0] = bhCetask->ian[0x2][0x0];
+            ian_w[0x2][0x0] = bhCetask->ian[0x1][0x0];
+            ian_w[0x3][0x0] = bhCetask->ian[0x0][0x0];
+            ian_w[0x0][0x1] = bhCetask->ian[0x3][0x1];
+            ian_w[0x1][0x1] = bhCetask->ian[0x2][0x1];
+            ian_w[0x2][0x1] = bhCetask->ian[0x1][0x1];
+            ian_w[0x3][0x1] = bhCetask->ian[0x0][0x1];
+            ian_w[0x0][0x2] = bhCetask->ian[0x3][0x2];
+            ian_w[0x1][0x2] = bhCetask->ian[0x2][0x2];
+            ian_w[0x2][0x2] = bhCetask->ian[0x1][0x2];
+            ian_w[0x3][0x2] = bhCetask->ian[0x0][0x2];
+            
+            njOverhauserSpline(ian_w[0],ans,0,1.0f / bhCetask->cnt3 * bhCetask->cnt2);
+            
+            if (bhCetask->model_cno == 0x0) 
+            { 
+                bhCetask->work->ax = ans[0] * 182.04445f;
+                bhCetask->work->ay = ans[1] * 182.04445f;
+                bhCetask->work->az = ans[2] * 182.04445f;
+            } 
+            else 
+            {
+                NJS_CNK_OBJECT* objP; 
+                
+                objP = bhCetask->work->mdl->objP;
+                objP += bhCetask->model_cno;
+                objP->ang[0] = ans[0] * 182.04445f;
+                objP->ang[1] = ans[1] * 182.04445f;
+                objP->ang[2] = ans[2] * 182.04445f;
+            }
+        }
+        break;
+        case 26:
+        {
+            int v0; 
+            int v1; 
+            
+            bhScePtr++;
+            v0 = *bhScePtr++;
+            v1 = *bhScePtr++;
+            
+            if (v1 & 0x1)
+            {
+                bhCetask->ips[v0][0x0] = (*(unsigned short *)bhScePtr / 100.0f) * -1.0f;
+            }
+            else 
+            {
+                bhCetask->ips[v0][0x0] = *(unsigned short *)bhScePtr / 100.0f;
+            }
+            bhScePtr += 2;
+            
+            if (v1 & 0x2) 
+            {
+                bhCetask->ips[v0][0x1] = (*(unsigned short *)bhScePtr / 100.0f) * -1.0f;
+            }
+            else 
+            {
+                bhCetask->ips[v0][0x1] = *(unsigned short *)bhScePtr / 100.0f;
+            }
+            bhScePtr += 2;
+            
+            if (v1 & 0x4) 
+            {
+                bhCetask->ips[v0][0x2] = (*(unsigned short *)bhScePtr / 100.0f) * -1.0f;
+            }
+            else 
+            {
+                bhCetask->ips[v0][0x2] = *(unsigned short *)bhScePtr / 100.0f;
+            }
+            bhScePtr += 2;
+        }
+        break;
+        case 27:
+        {
+            int v0; 
+            int v1; 
+            int v2; 
+            
+            bhScePtr++;
+            v0 = *bhScePtr++;
+            v1 = *bhScePtr++;
+            
+            v2 = *bhScePtr;
+            if ((v1 & 0x1) != 0x0) 
+            {
+                v2 = -v2;
+            }
+            bhCetask->ian[v0][0x0] = v2;
+            bhScePtr++;
+            
+            v2 = *bhScePtr;
+            if ((v1 & 0x2) != 0x0) 
+            {
+                v2 = -v2;
+            }
+            bhCetask->ian[v0][0x1] = v2;
+            bhScePtr++;
+            
+            v2 = *bhScePtr;
+            if ((v1 & 0x4) != 0x0) 
+            {
+                v2 = -v2;
+            }
+            bhCetask->ian[v0][0x2] = v2;
+            bhScePtr += 2;
+        }
+        break;
+        case 48:
+        {
+            int v0; 
+            
+            bhScePtr++;
+            v0 = *bhScePtr;
+            bhScePtr += 2;
+            
+            if (bhCetask->model_cno == 0x0) 
+            {
+                bhCetask->ips[v0][0x0] = bhCetask->work->px;
+                bhCetask->ips[v0][0x1] = bhCetask->work->py;
+                bhCetask->ips[v0][0x2] = bhCetask->work->pz;
+            } 
+            else 
+            {
+                NJS_CNK_OBJECT* objP; 
+                
+                objP = bhCetask->work->mdl->objP;
+                objP += bhCetask->model_cno;
+                bhCetask->ips[v0][0x0] = objP->pos[0];
+                bhCetask->ips[v0][0x1] = objP->pos[1];
+                bhCetask->ips[v0][0x2] = objP->pos[2];
+            }
+        }
+        break;
+        case 49:
+        {
+            int v0;
+            int v1; 
+            
+            bhScePtr++;
+            v0 = *bhScePtr++;
+            v1 = *bhScePtr++;
+            bhCetask->ian[v0][0x0] = *(short *)&bhCetask->work->ax * 0.005493164f;
+            bhCetask->ian[v0][0x1] = *(short *)&bhCetask->work->ay * 0.005493164f;
+            bhCetask->ian[v0][0x2] = *(short *)&bhCetask->work->az * 0.005493164f;
+            
+            if (bhCetask->model_cno == 0x0) 
+            {
+                bhCetask->ian[v0][0x0] = *(short *)&bhCetask->work->ax * 0.005493164f;
+                bhCetask->ian[v0][0x1] = *(short *)&bhCetask->work->ay * 0.005493164f;
+                bhCetask->ian[v0][0x2] = *(short *)&bhCetask->work->az * 0.005493164f;
+            }
+            else 
+            {
+                NJS_CNK_OBJECT* objP; 
+                
+                objP = bhCetask->work->mdl->objP;
+                objP += bhCetask->model_cno;
+                bhCetask->ian[v0][0x0] = *(short *)&objP->ang[0] * 0.005493164f;
+                bhCetask->ian[v0][0x1] = *(short *)&objP->ang[1] * 0.005493164f;
+                bhCetask->ian[v0][0x2] = *(short *)&objP->ang[2] * 0.005493164f;
+            }
+            
+            if (bhCetask->ian[v0][0x0] < 0.0f) 
+            {
+                bhCetask->ian[v0][0x0] += 360.0f;
+            }
+            
+            if (v1 == '\0') 
+            {
+                if (bhCetask->ian[v0][0x1] < 0.0f) 
+                {
+                    bhCetask->ian[v0][0x1] += 360.0f;
+                }
+            }
+            else 
+            {
+                if (bhCetask->ian[v0][0x1] > 180.0f) 
+                {
+                    bhCetask->ian[v0][0x1] -= 360.0f;
+                }
+            }
+            
+            if (bhCetask->ian[v0][0x2] < 0.0f) 
+            {
+                bhCetask->ian[v0][0x2] += 360.0f;
+            }
+        }
+        break;
+        case 25:
+        {
+            unsigned int v0; 
+            unsigned int t1; 
+            
+            bhScePtr++;
+            switch(*bhScePtr) 
+            {
+                case 1:
+                case 2:
+                    bhCetask->work->mtn_add = 0x10000;
+                    break;
+                case 0:
+                case 3:
+                case 8:
+                    bhCetask->work->mtn_add = 0x8000;
+                    break;
+                case 4:
+                    bhCetask->work->mtn_add = 0x5555;
+                    break;
+                case 5:
+                case 9:
+                    bhCetask->work->mtn_add = 0x4000;
+                    break;
+                case 6:
+                    bhCetask->work->mtn_add = 0x3333;
+                    break;
+                case 7:
+                case 10:
+                    bhCetask->work->mtn_add = 0x2aaa;
+                    break;
+                case 11:
+                    bhCetask->work->mtn_add = 0x2000;
+                    break;
+                case 12:
+                    bhCetask->work->mtn_add = 0x1999;
+                    break;
+                case 13:
+                    bhCetask->work->mtn_add = 0x1555;
+                    break;
+                case 14:
+                    bhCetask->work->mtn_add = 0x2492;
+                    break;
+                case 15:
+                    bhCetask->work->mtn_add = 0x2000;
+                    break;
+                case 16:
+                    bhCetask->work->mtn_add = 0x1c71;
+                    break;
+                case 17:
+                    bhCetask->work->mtn_add = 0x1999;
+                    break;
+                case 18:
+                    bhCetask->work->mtn_add = 0x1745;
+                    break;
+                case 19:
+                    bhCetask->work->mtn_add = 0x1555;
+                    break;
+                case 20:
+                    bhCetask->work->mtn_add = 0x1249;
+                    break;
+                case 21:
+                    bhCetask->work->mtn_add = 0x1000;
+                    break;
+                case 22:
+                    bhCetask->work->mtn_add = 0xe38;
+                    break;
+                case 23:
+                    bhCetask->work->mtn_add = 0xccc;
+                    break;
+                case 24:
+                    bhCetask->work->mtn_add = 0xba2;
+                    break;
+                case 25:
+                    bhCetask->work->mtn_add = 0xaaa;
+                    break;
+            }
+            
+            bhScePtr++;
+            switch (*bhScePtr) 
+            {
+                case 0:
+                    bhCetask->work->mnwP = (MN_WORK*)sys->plmthp;
+                    bhCetask->work->mode0 = '\a';
+                    bhCetask->work->mode2 = '\b';
+                    bhCetask->work->mode3 = '\0';
+                    
+                    bhScePtr++;
+                    bhCetask->work->mode1 = *bhScePtr++;
+                    bhCetask->work->ct0 = *bhScePtr++;
+                    v0 = *bhScePtr;
+                    bhCetask->work->ct1 = v0;
+                    bhScePtr++;
+                    
+                    t1 = *bhScePtr;
+                    bhCetask->work->ct2 = t1;
+                    
+                    if (t1 == 0x6) 
+                    {
+                        bhCetask->work->hokan_count = 0x0;
+                        bhCetask->work->mtn_md |= 0x8;
+                    } 
+                    else 
+                    {
+                        bhCetask->work->hokan_count = 0x8;
+                        bhCetask->work->mtn_md &= ~8;
+                    }
+                    bhScePtr++;
+                    bhCetask->work->frm_no = 0x0;
+                break;
+                case 1:
+                    bhCetask->work->mnwP = sys->emtp[bhCetask->work->id];
+                    bhCetask->work->mode0 = '\x01';
+                    bhCetask->work->mode2 = '\0';
+                    bhCetask->work->mode3 = '\0';
+                    
+                    bhScePtr++;
+                    t1 = *bhScePtr;
+                    *(unsigned char*)&bhCetask->work->mtn_no = t1;
+                    bhCetask->work->mode1 = t1;
+                    
+                    bhCetask->work->mtn_md = bhCetask->mtn_md;
+                    bhCetask->work->hokan_rate = bhCetask->hokan_rate;
+                    
+                    if (bhCetask->work->id == 0x1) 
+                    {
+                        ((BH_PWORK *)bhCetask->work->exp1)->mode0 = 6;
+                        ((BH_PWORK *)bhCetask->work->exp1)->mtn_md = 0x20;
+                        ((BH_PWORK *)bhCetask->work->exp1)->mtn_no = t1 + 0xc8;
+                        ((BH_PWORK *)bhCetask->work->exp1)->hokan_count = 0x8;
+                        ((BH_PWORK *)bhCetask->work->exp1)->mtn_add = bhCetask->work->mtn_add;
+                        ((BH_PWORK *)bhCetask->work->exp1)->hokan_rate = 0x0;
+                        ((BH_PWORK *)bhCetask->work->exp1)->frm_no = 0x0;
+                        ((BH_PWORK *)bhCetask->work->exp1)->frm_mode = 0x0;
+                        ((BH_PWORK *)bhCetask->work->exp1)->mnwP = sys->emtp[bhCetask->work->id];
+                    }
+                    
+                    bhScePtr++;
+                    if (*bhScePtr == '\0') 
+                    {
+                        bhCetask->work->mode0 = '\x01';
+                    } 
+                    else 
+                    {
+                        bhCetask->work->mode0 = '\x05';
+                    }
+                    
+                    bhScePtr++;
+                    v0 = *bhScePtr;
+                    bhCetask->work->ct1 = v0;
+                    
+                    bhScePtr++;
+                    t1 = *bhScePtr;
+                    if (t1 > 8) 
+                    {
+                        bhCetask->work->ct2 = 0xa;
+                    } 
+                    else 
+                    {
+                        bhCetask->work->ct2 = t1;
+                    }
+                    
+                    bhScePtr++;
+                    if (t1 == 0x6) 
+                    {
+                        bhCetask->work->hokan_count = 0x0;
+                        bhCetask->work->mtn_md |= 8;
+                        if (bhCetask->work->id == 0x1)
+                        {
+                            ((BH_PWORK *)bhCetask->work->exp1)->hokan_count = 0x0;
+                        }
+                    } 
+                    else if (t1 > 0x8) 
+                    {
+                        bhCetask->work->hokan_count = t1;
+                        if (bhCetask->work->id == 0x1) 
+                        {
+                            ((BH_PWORK *)bhCetask->work->exp1)->hokan_count = t1;
+                        }
+                    } 
+                    else 
+                    {
+                        bhCetask->work->hokan_count = 0x8;
+                        bhCetask->work->mtn_md &= ~8;
+                    }
+                    bhCetask->work->frm_no = 0x0;
+                break;
+            }
+                
+            switch(v0) 
+            {
+                case 0x0:
+                    bhSetMotion(bhCetask->work,0,0,0);
+                    bhCalcModel(bhCetask->work);
+                    bhCalcLinkModel(bhCetask->work);
+                    break;
+                case 0x2:
+                    bhSetMotion(bhCetask->work,0,0,0);
+                    break;
+                case 0x3:
+                    bhCalcModel(bhCetask->work);
+                    break;
+                case 0x4:
+                    bhCalcLinkModel(bhCetask->work);
+                    break;
+                case 0x5:
+                    bhSetMotion(bhCetask->work,0,0,0);
+                    bhCalcModel(bhCetask->work);
+                    break;
+                case 0x6:
+                    bhSetMotion(bhCetask->work,0,0,0);
+                    bhCalcLinkModel(bhCetask->work);
+                    break;
+                case 0x7:
+                    bhCalcModel(bhCetask->work);
+                    bhCalcLinkModel(bhCetask->work);
+                    break;
+            }
+        }
+        break;
+        case 35:
+        {
+            unsigned int v0; 
+            unsigned int t1; 
+            
+            bhScePtr++;
+            switch(*bhScePtr)
+            {
+                case 1:
+                case 2:
+                    bhCetask->work->mtn_add = 0x10000;
+                    break;
+                case 0:
+                case 3:
+                case 8:
+                    bhCetask->work->mtn_add = 0x8000;
+                    break;
+                case 4:
+                    bhCetask->work->mtn_add = 0x5555;
+                    break;
+                case 5:
+                case 9:
+                    bhCetask->work->mtn_add = 0x4000;
+                    break;
+                case 6:
+                    bhCetask->work->mtn_add = 0x3333;
+                    break;
+                case 7:
+                case 10:
+                    bhCetask->work->mtn_add = 0x2aaa;
+                    break;
+                case 11:
+                    bhCetask->work->mtn_add = 0x2000;
+                    break;
+                case 12:
+                    bhCetask->work->mtn_add = 0x1999;
+                    break;
+                case 13:
+                    bhCetask->work->mtn_add = 0x1555;
+                    break;
+                case 14:
+                    bhCetask->work->mtn_add = 0x2492;
+                    break;
+                case 15:
+                    bhCetask->work->mtn_add = 0x2000;
+                    break;
+                case 16:
+                    bhCetask->work->mtn_add = 0x1c71;
+                    break;
+                case 17:
+                    bhCetask->work->mtn_add = 0x1999;
+                    break;
+                case 18:
+                    bhCetask->work->mtn_add = 0x1745;
+                    break;
+                case 19:
+                    bhCetask->work->mtn_add = 0x1555;
+                    break;
+                case 20:
+                    bhCetask->work->mtn_add = 0x1249;
+                    break;
+                case 21:
+                    bhCetask->work->mtn_add = 0x1000;
+                    break;
+                case 22:
+                    bhCetask->work->mtn_add = 0xe38;
+                    break;
+                case 23:
+                    bhCetask->work->mtn_add = 0xccc;
+                    break;
+                case 24:
+                    bhCetask->work->mtn_add = 0xba2;
+                    break;
+                case 25:
+                    bhCetask->work->mtn_add = 0xaaa;
+                    break;
+            }
+            
+            bhScePtr++;
+            switch (*bhScePtr) 
+            {
+                case 0:
+                    bhCetask->work->mnwP = (MN_WORK*)sys->plmthp;
+                    bhCetask->work->mode0 = '\a';
+                    bhCetask->work->mode2 = '\b';
+                    bhCetask->work->mode3 = '\0';
+                    
+                    bhScePtr++;
+                    bhCetask->work->mode1 = *bhScePtr;
+                    
+                    bhScePtr++;
+                    bhCetask->work->ct0 = *bhScePtr;
+                    
+                    bhScePtr++;
+                    v0 = *bhScePtr;
+                    bhCetask->work->ct1 = v0;
+                    bhScePtr++;
+
+                    t1 = *bhScePtr;
+                    bhCetask->work->ct2 = t1;
+                    
+                    if (t1 == 0x6) 
+                    {
+                        bhCetask->work->hokan_count = 0x0;
+                    } 
+                    else 
+                    {
+                        bhCetask->work->hokan_count = 0x8;
+                    }
+                    bhScePtr++;
+                    bhCetask->work->frm_no = 0x0;
+                break;
+                case 1:
+                    bhCetask->work->mnwP = sys->emtp[bhCetask->work->id];
+                    bhCetask->work->mode0 = '\x01';
+                    bhCetask->work->mode2 = '\0';
+                    bhCetask->work->mode3 = '\0';
+                    
+                    bhScePtr++;
+                    t1 = *bhScePtr;
+                    *(unsigned char*)&bhCetask->work->mtn_no = t1;
+                    bhCetask->work->mode1 = t1;
+                    
+                    bhCetask->work->mtn_md = bhCetask->mtn_md;
+                    bhCetask->work->hokan_rate = bhCetask->hokan_rate;
+                    
+                    if (bhCetask->work->id == 0x1) 
+                    {
+                        ((BH_PWORK *)bhCetask->work->exp1)->mode0 = 6;
+                        ((BH_PWORK *)bhCetask->work->exp1)->mtn_md = 0x20;
+                        ((BH_PWORK *)bhCetask->work->exp1)->mtn_no = t1 + 1;
+                        ((BH_PWORK *)bhCetask->work->exp1)->hokan_count = 0x8;
+                        ((BH_PWORK *)bhCetask->work->exp1)->mtn_add = bhCetask->work->mtn_add;
+                        ((BH_PWORK *)bhCetask->work->exp1)->hokan_rate = 0x0;
+                        ((BH_PWORK *)bhCetask->work->exp1)->frm_no = 0x0;
+                        ((BH_PWORK *)bhCetask->work->exp1)->frm_mode = 0x0;
+                        ((BH_PWORK *)bhCetask->work->exp1)->mnwP = sys->emtp[bhCetask->work->id];
+                    }
+                    
+                    bhScePtr++;
+                    if (*bhScePtr == '\0') 
+                    {
+                        bhCetask->work->mode0 = '\x01';
+                        *(unsigned char *)&bhCetask->work->ct2 = 0x1;
+                    } 
+                    else
+                    {
+                        bhCetask->work->mode0 = '\x05';
+                        *(unsigned char *)&bhCetask->work->ct2 = 0x3;
+                    }
+
+                    t1 = *bhScePtr;
+                    if (bhCetask->bpx == '\0') 
+                    {
+                        bhCetask->work->ct0 = t1 << 0x10;
+                    }
+                    else
+                    {
+                        bhCetask->work->ct0 = (t1 * -1) << 0x10;
+                    }
+                    
+                    bhScePtr++;
+                    v0 = *bhScePtr++;
+                    bhCetask->work->frm_no = 0x0;
+                    bhScePtr += 2;
+                break;
+            }
+            
+            switch(v0) 
+            {
+                case 0x0:
+                    bhSetMotion(bhCetask->work,0,0,0);
+                    bhCalcModel(bhCetask->work);
+                    bhCalcLinkModel(bhCetask->work);
+                    break;
+                case 0x2:
+                    bhSetMotion(bhCetask->work,0,0,0);
+                    break;
+                case 0x3:
+                    bhCalcModel(bhCetask->work);
+                    break;
+                case 0x4:
+                    bhCalcLinkModel(bhCetask->work);
+                    break;
+                case 0x5:
+                    bhSetMotion(bhCetask->work,0,0,0);
+                    bhCalcModel(bhCetask->work);
+                    break;
+                case 0x6:
+                    bhSetMotion(bhCetask->work,0,0,0);
+                    bhCalcLinkModel(bhCetask->work);
+                    break;
+                case 0x7:
+                    bhCalcModel(bhCetask->work);
+                    bhCalcLinkModel(bhCetask->work);
+                    break;
+            }
+        }
+        break;
+        case 24:
+        {
+            unsigned int v0; 
+            unsigned int t0; 
+            unsigned int t1; 
+            
+            bhCetask->work->mnwP = sys->rmthp;
+            bhScePtr++;
+            t0 = false;
+            switch(*bhScePtr) 
+            {
+                case 1:
+                case 2:
+                    t0 = true;
+                    bhCetask->work->mtn_add = 0x10000;
+                    if (bhCetask->work->id == 0x1) 
+                    {
+                        ((BH_PWORK *)bhCetask->work->exp1)->mtn_md = 0x20;
+                    }
+                    break;
+                case 0:
+                case 3:
+                case 8:
+                    bhCetask->work->mtn_add = 0x8000;
+                    if (bhCetask->work->id == 0x1) 
+                    {
+                        ((BH_PWORK *)bhCetask->work->exp1)->mtn_md = 0x28;
+                    }
+                    break;
+                case 4:
+                    bhCetask->work->mtn_add = 0x5555;
+                    if (bhCetask->work->id == 0x1) 
+                    {
+                        ((BH_PWORK *)bhCetask->work->exp1)->mtn_md = 0x28;
+                    }
+                    break;
+                case 5:
+                case 9:
+                    bhCetask->work->mtn_add = 0x4000;
+                    if (bhCetask->work->id == 0x1) 
+                    {
+                        ((BH_PWORK *)bhCetask->work->exp1)->mtn_md = 0x28;
+                    }
+                    break;
+                case 6:
+                    bhCetask->work->mtn_add = 0x3333;
+                    if (bhCetask->work->id == 0x1) 
+                    {
+                        ((BH_PWORK *)bhCetask->work->exp1)->mtn_md = 0x28;
+                    }
+                    break;
+                case 7:
+                case 10:
+                    bhCetask->work->mtn_add = 0x2aaa;
+                    if (bhCetask->work->id == 0x1) 
+                    {
+                        ((BH_PWORK *)bhCetask->work->exp1)->mtn_md = 0x28;
+                    }
+                    break;
+                case 11:
+                    bhCetask->work->mtn_add = 0x2000;
+                    if (bhCetask->work->id == 0x1) 
+                    {
+                        ((BH_PWORK *)bhCetask->work->exp1)->mtn_md = 0x28;
+                    }
+                    break;
+                case 12:
+                    bhCetask->work->mtn_add = 0x1999;
+                    if (bhCetask->work->id == 0x1) 
+                    {
+                        ((BH_PWORK *)bhCetask->work->exp1)->mtn_md = 0x28;
+                    }
+                    break;
+                case 13:
+                    bhCetask->work->mtn_add = 0x1555;
+                    if (bhCetask->work->id == 0x1) 
+                    {
+                        ((BH_PWORK *)bhCetask->work->exp1)->mtn_md = 0x28;
+                    }
+                    break;
+                case 14:
+                    bhCetask->work->mtn_add = 0x2492;
+                    if (bhCetask->work->id == 0x1)
+                    {
+                        ((BH_PWORK *)bhCetask->work->exp1)->mtn_md = 0x28;
+                    }
+                    break;
+                case 15:
+                    bhCetask->work->mtn_add = 0x2000;
+                    if (bhCetask->work->id == 0x1) 
+                    {
+                        ((BH_PWORK *)bhCetask->work->exp1)->mtn_md = 0x28;
+                    }
+                    break;
+                case 16:
+                    bhCetask->work->mtn_add = 0x1c71;
+                    if (bhCetask->work->id == 0x1) 
+                    {
+                        ((BH_PWORK *)bhCetask->work->exp1)->mtn_md = 0x28;
+                    }
+                    break;
+                case 17:
+                    bhCetask->work->mtn_add = 0x1999;
+                    if (bhCetask->work->id == 0x1) 
+                    {
+                        ((BH_PWORK *)bhCetask->work->exp1)->mtn_md = 0x28;
+                    }
+                    break;
+                case 18:
+                    bhCetask->work->mtn_add = 0x1745;
+                    if (bhCetask->work->id == 0x1) 
+                    {
+                        ((BH_PWORK *)bhCetask->work->exp1)->mtn_md = 0x28;
+                    }
+                    break;
+                case 19:
+                    bhCetask->work->mtn_add = 0x1555;
+                    if (bhCetask->work->id == 0x1) 
+                    {
+                        ((BH_PWORK *)bhCetask->work->exp1)->mtn_md = 0x28;
+                    }
+                    break;
+                case 20:
+                    bhCetask->work->mtn_add = 0x1249;
+                    if (bhCetask->work->id == 0x1) 
+                    {
+                        ((BH_PWORK *)bhCetask->work->exp1)->mtn_md = 0x28;
+                    }
+                    break;
+                case 21:
+                    bhCetask->work->mtn_add = 0x1000;
+                    if (bhCetask->work->id == 0x1) 
+                    {
+                        ((BH_PWORK *)bhCetask->work->exp1)->mtn_md = 0x28;
+                    }
+                    break;
+                case 22:
+                    bhCetask->work->mtn_add = 0xe38;
+                    if (bhCetask->work->id == 0x1)
+                    {
+                        ((BH_PWORK *)bhCetask->work->exp1)->mtn_md = 0x28;
+                    }
+                    break;
+                case 23:
+                    bhCetask->work->mtn_add = 0xccc;
+                    if (bhCetask->work->id == 0x1) 
+                    {
+                        ((BH_PWORK *)bhCetask->work->exp1)->mtn_md = 0x28;
+                    }
+                    break;
+                case 24:
+                    bhCetask->work->mtn_add = 0xba2;
+                    if (bhCetask->work->id == 0x1)
+                    {
+                        ((BH_PWORK *)bhCetask->work->exp1)->mtn_md = 0x28;
+                    }
+                    break;
+                case 25:
+                    bhCetask->work->mtn_add = 0xaaa;
+                    if (bhCetask->work->id == 0x1) 
+                    {
+                        ((BH_PWORK *)bhCetask->work->exp1)->mtn_md = 0x28;
+                    }
+                    break;
+            }
+
+            bhScePtr++;
+
+            switch(*bhScePtr) 
+            {
+                case 0:
+                    bhCetask->work->mode0 = '\a';
+                    bhCetask->work->mode2 = '\b';
+                    bhCetask->work->mode3 = '\0';
+                    
+                    bhScePtr++;
+                    bhCetask->work->mode1 = *bhScePtr++;
+                    bhCetask->work->ct0 = *bhScePtr++;
+                    
+                    v0 = *bhScePtr;
+                    bhCetask->work->ct1 = *bhScePtr++;
+                    
+                    t1 = *bhScePtr;
+                    bhCetask->work->ct2 = t1;
+                    if (!t0) 
+                    {
+                        bhCetask->work->mtn_md |= 0x8;
+                    }
+                    
+                    if (t1 == 0x6) 
+                    {
+                        bhCetask->work->hokan_count = 0x0;
+                        bhCetask->work->mtn_md |= 0x8;
+                    }
+                    else
+                    {
+                        bhCetask->work->hokan_count = 0x8;
+                    }
+                    
+                    bhScePtr++;
+                    bhCetask->work->frm_no = 0x0;
+                break;
+                case 1:
+                    bhCetask->work->mode0 = '\x01';
+                    bhCetask->work->mode2 = '\0';
+                    bhCetask->work->mode3 = '\0';
+                    bhScePtr++;
+                    t1 = *bhScePtr;
+                    *(unsigned char *)&bhCetask->work->mtn_no = t1;
+                    bhCetask->work->mode1 = t1;
+                    bhCetask->work->mtn_md = 0x20;
+                    if (!t0) 
+                    {
+                        bhCetask->work->mtn_md |= 0x8;
+                    }
+                    bhCetask->work->hokan_rate = 0x0;
+                    if (bhCetask->work->id == 0x1) 
+                    {
+                        ((BH_PWORK *)bhCetask->work->exp1)->mode0 = '\x06';
+                        ((BH_PWORK *)bhCetask->work->exp1)->mtn_no = t1 + 0x1;
+                        ((BH_PWORK *)bhCetask->work->exp1)->hokan_count = 0x8;
+                        ((BH_PWORK *)bhCetask->work->exp1)->mtn_add = bhCetask->work->mtn_add;
+                        ((BH_PWORK *)bhCetask->work->exp1)->hokan_rate = 0x0;
+                        ((BH_PWORK *)bhCetask->work->exp1)->frm_no = 0x0;
+                        ((BH_PWORK *)bhCetask->work->exp1)->frm_mode = 0x0;
+                        ((BH_PWORK *)bhCetask->work->exp1)->mnwP = sys->rmthp;
+                    }
+                    
+                    bhScePtr++;
+                    if (*bhScePtr == '\0') 
+                    {
+                        bhCetask->work->mode0 = '\x01';
+                    }
+                    else 
+                    {
+                        bhCetask->work->mode0 = '\x05';
+                    }
+                    
+                    bhScePtr++;
+                    v0 = *bhScePtr;
+                    bhCetask->work->ct1 = *bhScePtr;
+                    bhScePtr++;
+                    
+                    t1 = *bhScePtr;
+                    if (t1 > 0x8)
+                    {
+                        bhCetask->work->ct2 = 0xa;
+                    }
+                    else 
+                    {
+                        bhCetask->work->ct2 = t1;
+                    }
+                    
+                    if (t1 == 0x6)
+                    {
+                        if (bhCetask->work->id == 0x1) 
+                        {
+                            ((BH_PWORK *)bhCetask->work->exp1)->hokan_count = 0x0;
+                        }
+                        bhCetask->work->mtn_md |= 0x8;
+                    }
+                    else if (0x8 < t1) 
+                    {
+                        bhCetask->work->hokan_count = t1;
+                        if (bhCetask->work->id == 0x1)
+                        {
+                            ((BH_PWORK *)bhCetask->work->exp1)->hokan_count = t1;
+                        }
+                    }
+                    bhScePtr++;
+                    bhCetask->work->frm_no = 0x0;
+                break;
+                case 2:
+                case 3:
+                    bhScePtr++;
+                    t1 = *bhScePtr;
+                    bhCetask->work->mode3 = '\x01';
+                    bhCetask->work->mtn_md = 0x20;
+                    if (!t0)
+                    {
+                        bhCetask->work->mtn_md |= 0x8;
+                    }
+                    bhCetask->work->mtn_no = t1;
+                    bhCetask->work->hokan_rate = 0x0;
+                    bhCetask->work->frm_no = 0x0;
+                    bhCetask->work->frm_mode = 0x0;
+                    bhScePtr++;
+                    bhScePtr++;
+                    v0 = *bhScePtr++;
+                    t1 = *bhScePtr;
+                    bhCetask->work->hokan_count = 0x8;
+                    if (t1 == '\x06') 
+                    {
+                        bhCetask->work->hokan_count = 0x0;
+                        bhCetask->work->mtn_md |= 0x8;
+                    }
+                    bhScePtr++;
+                break;
+            }
+            
+            switch(v0) 
+            {
+                case 0x0:
+                    bhSetMotion(bhCetask->work,0,0,0);
+                    bhCalcModel(bhCetask->work);
+                    bhCalcLinkModel(bhCetask->work);
+                    break;
+                case 0x1:
+                    break;
+                case 0x2:
+                    bhSetMotion(bhCetask->work,0,0,0);
+                    break;
+                case 0x3:
+                    bhCalcModel(bhCetask->work);
+                    break;
+                case 0x4:
+                    bhCalcLinkModel(bhCetask->work);
+                    break;
+                case 0x5:
+                    bhSetMotion(bhCetask->work,0,0,0);
+                    bhCalcModel(bhCetask->work);
+                    break;
+                case 0x6:
+                    bhSetMotion(bhCetask->work,0,0,0);
+                    bhCalcLinkModel(bhCetask->work);
+                    break;
+                case 0x7:
+                    bhCalcModel(bhCetask->work);
+                    bhCalcLinkModel(bhCetask->work);
+                    break;
+            }
+        }
+        break;
+        case 34:
+        {
+            unsigned int v0; 
+            unsigned int t0; 
+            unsigned int t1; 
+            
+            bhCetask->work->mnwP = sys->rmthp;
+            t0 = false;
+            bhScePtr++;
+            switch(*bhScePtr) 
+            {
+                case 1:
+                case 2:
+                    t0 = true;
+                    bhCetask->work->mtn_add = 0x10000;
+                    if (bhCetask->work->id == 0x1) 
+                    {
+                        ((BH_PWORK *)bhCetask->work->exp1)->mtn_md = 0x20;
+                    }
+                    break;
+                case 0:
+                case 3:
+                case 8:
+                    bhCetask->work->mtn_add = 0x8000;
+                    if (bhCetask->work->id == 0x1) 
+                    {
+                        ((BH_PWORK *)bhCetask->work->exp1)->mtn_md = 0x28;
+                    }
+                    break;
+                case 4:
+                    bhCetask->work->mtn_add = 0x5555;
+                    if (bhCetask->work->id == 0x1) 
+                    {
+                        ((BH_PWORK *)bhCetask->work->exp1)->mtn_md = 0x28;
+                    }
+                    break;
+                case 5:
+                case 9:
+                    bhCetask->work->mtn_add = 0x4000;
+                    if (bhCetask->work->id == 0x1)
+                    {
+                        ((BH_PWORK *)bhCetask->work->exp1)->mtn_md = 0x28;
+                    }
+                    break;
+                case 6:
+                    bhCetask->work->mtn_add = 0x3333;
+                    if (bhCetask->work->id == 0x1) 
+                    {
+                        ((BH_PWORK *)bhCetask->work->exp1)->mtn_md = 0x28;
+                    }
+                    break;
+                case 7:
+                case 10:
+                    bhCetask->work->mtn_add = 0x2aaa;
+                    if (bhCetask->work->id == 0x1) 
+                    {
+                        ((BH_PWORK *)bhCetask->work->exp1)->mtn_md = 0x28;
+                    }
+                    break;
+                case 11:
+                    bhCetask->work->mtn_add = 0x2000;
+                    if (bhCetask->work->id == 0x1)
+                    {
+                        ((BH_PWORK *)bhCetask->work->exp1)->mtn_md = 0x28;
+                    }
+                    break;
+                case 12:
+                    bhCetask->work->mtn_add = 0x1999;
+                    if (bhCetask->work->id == 0x1)
+                    {
+                        ((BH_PWORK *)bhCetask->work->exp1)->mtn_md = 0x28;
+                    }
+                    break;
+                case 13:
+                    bhCetask->work->mtn_add = 0x1555;
+                    if (bhCetask->work->id == 0x1) 
+                    {
+                        ((BH_PWORK *)bhCetask->work->exp1)->mtn_md = 0x28;
+                    }
+                    break;
+                case 14:
+                    bhCetask->work->mtn_add = 0x2492;
+                    if (bhCetask->work->id == 0x1)
+                    {
+                        ((BH_PWORK *)bhCetask->work->exp1)->mtn_md = 0x28;
+                    }
+                    break;
+                case 15:
+                    bhCetask->work->mtn_add = 0x2000;
+                    if (bhCetask->work->id == 0x1) 
+                    {
+                        ((BH_PWORK *)bhCetask->work->exp1)->mtn_md = 0x28;
+                    }
+                    break;
+                case 16:
+                    bhCetask->work->mtn_add = 0x1c71;
+                    if (bhCetask->work->id == 0x1) 
+                    {
+                        ((BH_PWORK *)bhCetask->work->exp1)->mtn_md = 0x28;
+                    }
+                    break;
+                case 17:
+                    bhCetask->work->mtn_add = 0x1999;
+                    if (bhCetask->work->id == 0x1) 
+                    {
+                        ((BH_PWORK *)bhCetask->work->exp1)->mtn_md = 0x28;
+                    }
+                    break;
+                case 18:
+                    bhCetask->work->mtn_add = 0x1745;
+                    if (bhCetask->work->id == 0x1)
+                    {
+                        ((BH_PWORK *)bhCetask->work->exp1)->mtn_md = 0x28;
+                    }
+                    break;
+                case 19:
+                    bhCetask->work->mtn_add = 0x1555;
+                    if (bhCetask->work->id == 0x1) 
+                    {
+                        ((BH_PWORK *)bhCetask->work->exp1)->mtn_md = 0x28;
+                    }
+                    break;
+                case 20:
+                    bhCetask->work->mtn_add = 0x1249;
+                    if (bhCetask->work->id == 0x1)
+                    {
+                        ((BH_PWORK *)bhCetask->work->exp1)->mtn_md = 0x28;
+                    }
+                    break;
+                case 21:
+                    bhCetask->work->mtn_add = 0x1000;
+                    if (bhCetask->work->id == 0x1) 
+                    {
+                        ((BH_PWORK *)bhCetask->work->exp1)->mtn_md = 0x28;
+                    }
+                    break;
+                case 22:
+                    bhCetask->work->mtn_add = 0xe38;
+                    if (bhCetask->work->id == 0x1) 
+                    {
+                        ((BH_PWORK *)bhCetask->work->exp1)->mtn_md = 0x28;
+                    }
+                    break;
+                case 23:
+                    bhCetask->work->mtn_add = 0xccc;
+                    if (bhCetask->work->id == 0x1)
+                    {
+                        ((BH_PWORK *)bhCetask->work->exp1)->mtn_md = 0x28;
+                    }
+                    break;
+                case 24:
+                    bhCetask->work->mtn_add = 0xba2;
+                    if (bhCetask->work->id == 0x1)
+                    {
+                        ((BH_PWORK *)bhCetask->work->exp1)->mtn_md = 0x28;
+                    }
+                    break;
+                case 25:
+                    bhCetask->work->mtn_add = 0xaaa;
+                    if (bhCetask->work->id == 0x1)
+                    {
+                        ((BH_PWORK *)bhCetask->work->exp1)->mtn_md = 0x28;
+                    }
+                    break;
+            }
+
+            bhScePtr++;
+
+            switch(*bhScePtr) 
+            {
+                case 0:
+                    bhCetask->work->mode0 = '\a';
+                    bhCetask->work->mode2 = '\b';
+                    bhCetask->work->mode3 = '\0';
+                    
+                    bhScePtr++;
+                    bhCetask->work->mode1 = *bhScePtr++;
+                    bhCetask->work->ct0 = *bhScePtr++;
+                    v0 = *bhScePtr;
+                    bhCetask->work->ct1 = *bhScePtr++;
+                    
+                    t1 = *bhScePtr;
+                    bhCetask->work->ct2 = t1;
+                    if (!t0) 
+                    {
+                        bhCetask->work->mtn_md |= 0x8;
+                    }
+                    
+                    if (t1 == 0x6) 
+                    {
+                        bhCetask->work->hokan_count = 0x0;
+                        bhCetask->work->mtn_md |= 0x8;
+                    } 
+                    else
+                    {
+                        bhCetask->work->hokan_count = 0x8;
+                    }
+                    
+                    bhScePtr++;
+                    bhCetask->work->frm_no = *(unsigned short *)bhScePtr << 0x10;
+                    bhScePtr += 2;
+                break;
+                case 1:
+                    bhCetask->work->mode0 = '\x01';
+                    bhCetask->work->mode2 = '\0';
+                    bhCetask->work->mode3 = '\0';
+                    
+                    bhScePtr++;
+                    t1 = *bhScePtr;
+                    *(unsigned char *)&bhCetask->work->mtn_no = t1;
+                    bhCetask->work->mode1 = t1;
+                    bhCetask->work->mtn_md = 0x20;
+                    
+                    if (!t0) 
+                    {
+                        bhCetask->work->mtn_md |= 0x8;
+                    }
+                    
+                    bhCetask->work->hokan_rate = 0x0;
+                    bhScePtr++;
+                    if (*bhScePtr == '\0')
+                    {
+                        bhCetask->work->mode0 = '\x01';
+                    }
+                    else 
+                    {
+                        bhCetask->work->mode0 = '\x05';
+                    }
+                    
+                    bhScePtr++;
+                    v0 = *bhScePtr;
+                    bhCetask->work->ct1 = *bhScePtr++;
+                    t1 = *bhScePtr;
+                    if (t1 > 8) 
+                    {
+                        bhCetask->work->ct2 = 0xa;
+                    }
+                    else 
+                    {
+                        bhCetask->work->ct2 = t1;
+                    }
+                    
+                    if (bhCetask->work->id == 0x1) 
+                    {
+                        ((BH_PWORK *)bhCetask->work->exp1)->hokan_count = 0x8;
+                    }
+                    
+                    if (t1 == 0x6) 
+                    {
+                        if (bhCetask->work->id == 0x1) 
+                        {
+                            ((BH_PWORK *)bhCetask->work->exp1)->hokan_count = 0x0;
+                        }
+                        bhCetask->work->mtn_md |= 0x8;
+                    }
+                    else if (0x8 < t1) 
+                    {
+                        bhCetask->work->hokan_count = t1;
+                        if (bhCetask->work->id == 0x1) 
+                        {
+                            ((BH_PWORK *)bhCetask->work->exp1)->hokan_count = t1;
+                        }
+                    }
+                    
+                    bhScePtr++;
+                    bhCetask->work->frm_no = *(unsigned short *)bhScePtr << 0x10;
+                    if (bhCetask->work->id == 0x1) 
+                    {
+                        ((BH_PWORK *)bhCetask->work->exp1)->mode0 = '\x06';
+                        ((BH_PWORK *)bhCetask->work->exp1)->mtn_no = bhCetask->work->mtn_no + 0x1;
+                        ((BH_PWORK *)bhCetask->work->exp1)->mtn_add = bhCetask->work->mtn_add;
+                        ((BH_PWORK *)bhCetask->work->exp1)->hokan_rate = 0x0;
+                        ((BH_PWORK *)bhCetask->work->exp1)->frm_no = bhCetask->work->frm_no;
+                        ((BH_PWORK *)bhCetask->work->exp1)->frm_mode = 0x0;
+                        ((BH_PWORK *)bhCetask->work->exp1)->mnwP = sys->rmthp;
+                    }
+                    bhScePtr += 2;
+                break;
+                case 2:
+                case 3:
+                    bhScePtr++;
+                    t1 = *bhScePtr;
+                    bhCetask->work->mode3 = '\x01';
+                    bhCetask->work->mtn_md = 0x20;
+                    if (!t0) 
+                    {
+                        bhCetask->work->mtn_md |= 0x8;
+                    }
+                    bhCetask->work->mtn_no = t1;
+                    bhCetask->work->hokan_rate = 0x0;
+                    bhCetask->work->frm_no = 0x0;
+                    bhCetask->work->frm_mode = 0x0;
+                    bhScePtr++;
+                    bhScePtr++;
+                    v0 = *bhScePtr++;
+                    t1 = *bhScePtr;
+                    bhCetask->work->hokan_count = 0x8;
+                    if (t1 == '\x06') 
+                    {
+                        bhCetask->work->hokan_count = 0x0;
+                        bhCetask->work->mtn_md |=  0x8;
+                    }
+                    bhScePtr++;
+                    bhCetask->work->frm_no = *(unsigned short *)bhScePtr << 0x10;
+                    bhScePtr += 2;
+                break;
+            }
+            
+            switch(v0) 
+            {
+                case 0x0:
+                    bhSetMotion(bhCetask->work,0,0,0);
+                    bhCalcModel(bhCetask->work);
+                    bhCalcLinkModel(bhCetask->work);
+                    break;
+                case 0x2:
+                    bhSetMotion(bhCetask->work,0,0,0);
+                    break;
+                case 0x3:
+                    bhCalcModel(bhCetask->work);
+                    break;
+                case 0x4:
+                    bhCalcLinkModel(bhCetask->work);
+                    break;
+                case 0x5:
+                    bhSetMotion(bhCetask->work,0,0,0);
+                    bhCalcModel(bhCetask->work);
+                    break;
+                case 0x6:
+                    bhSetMotion(bhCetask->work,0,0,0);
+                    bhCalcLinkModel(bhCetask->work);
+                    break;
+                case 0x7:
+                    bhCalcModel(bhCetask->work);
+                    bhCalcLinkModel(bhCetask->work);
+                    break;
+            }
+        }
+        break;
+        case 23:
+        {
+            unsigned int v0; 
+            
+            bhScePtr++;
+            v0 = *bhScePtr;
+            bhScePtr += 2;
+
+            switch(v0) 
+            {
+                case 0:
+                bhCetask->work->flg &= ~0x118;
+                break;
+                case 1:
+                bhCetask->work->flg |= 0x118;
+                break;
+                case 2:
+                bhCetask->work->flg &= ~0x18;
+                break;
+                case 3:
+                bhCetask->work->flg |= 0x18;
+                break;
+            }
+        }
+        break;
+        case 0x5:
+            bhScePtr++;
+            bhCetask->addpx = *bhScePtr++ * 0.1f;
+            bhCetask->addpy = *bhScePtr++ * 0.1f;
+            bhCetask->addpz = *bhScePtr++ * 0.1f;
+            bhScePtr++;
+        break;
+        case 0x6:
+        {
+            unsigned int v0; 
+    
+			bhScePtr++;
+			v0 = *bhScePtr;
+			bhCetask->addax = (int)(v0 * (65536.0f / 360.0f)) >> 0x1;
+			bhScePtr++;
+			v0 = *bhScePtr;
+			bhCetask->adday = (int)(v0 * (65536.0f / 360.0f)) >> 0x1;
+			bhScePtr++;
+			v0 = *bhScePtr;
+			bhCetask->addaz = (int)(v0 * (65536.0f / 360.0f)) >> 0x1;
+			bhScePtr++;
+			bhScePtr++;
+        }
+        break;
+        case 0xC:
+            bhScePtr++;
+            bhCetask->bpx = *bhScePtr++;
+            bhCetask->bpy = *bhScePtr++;
+            bhCetask->bpz = *bhScePtr++;
+            bhScePtr++;
+        break;
+        case 0xD:
+            bhScePtr++;
+            bhCetask->bax = *bhScePtr++;
+            bhCetask->bay = *bhScePtr++;
+            bhCetask->baz = *bhScePtr++;
+            bhScePtr++;
+        break;
+        case 7:
+            bhScePtr++;
+            if (bhCetask->bpx == '\0') 
+            {
+                bhCetask->work->px = *(unsigned short *)bhScePtr / 100.0f;
+            }
+            else 
+            {
+                bhCetask->work->px = (*(unsigned short *)bhScePtr / 100.0f) * -1.0f;
+            }
+            bhCetask->work->pxb = bhCetask->work->px;
+            bhScePtr += 2;
+            if (bhCetask->bpy == '\0') 
+            {
+                bhCetask->work->py = *(unsigned short *)bhScePtr / 100.0f;
+            }
+            else 
+            {
+                bhCetask->work->py = (*(unsigned short *)bhScePtr / 100.0f) * -1.0f;
+            }
+            bhCetask->work->pyb = bhCetask->work->py;
+            bhCetask->work->flr_no = bhCheckFloorNum(bhCetask->work->py);
+            bhScePtr += 2;
+            if (bhCetask->bpz == '\0') 
+            {
+                bhCetask->work->pz = *(unsigned short *)bhScePtr / 100.0f;
+            }
+            else 
+            {
+                bhCetask->work->pz = (*(unsigned short *)bhScePtr / 100.0f) * -1.0f;
+            }
+            bhCetask->work->pzb = bhCetask->work->pz;
+            bhScePtr += 2;
+        break;
+        case 11:
+        {
+            int v0; 
+            
+            bhScePtr++;
+            v0 = *bhScePtr;
+            if (bhCetask->bax != '\0') 
+            {
+                v0 = -v0;
+            }
+            bhCetask->work->ax = v0 * 182.04445f;
+            bhCetask->work->axb = bhCetask->work->ax;
+            bhScePtr++;
+            v0 = *bhScePtr;
+            if (bhCetask->bay != '\0') 
+            {
+                v0 = -v0;
+            }
+            bhCetask->work->ay = v0 * 182.04445f;
+            bhCetask->work->ayb = bhCetask->work->ay;
+            bhScePtr++;
+            v0 = *bhScePtr;
+            if (bhCetask->baz != '\0') 
+            {
+                v0 = -v0;
+            }
+            bhCetask->work->az = v0 * 182.04445f;
+            bhCetask->work->azb = bhCetask->work->az;
+            bhScePtr += 2;
+        }
+        break;
+        case 8:
+        {
+            NJS_CNK_OBJECT* objP; 
+            
+            objP = bhCetask->work->mdl->objP;
+            objP += bhCetask->model_cno;
+            
+            bhScePtr++;
+            if (bhCetask->bpx == '\0') 
+            {
+                objP->pos[0] = *(unsigned short *)bhScePtr / 100.0f;
+            }
+            else
+            {
+                objP->pos[0] = (*(unsigned short *)bhScePtr / 100.0f) * -1.0f;
+            }
+            bhScePtr += 2;
+            if (bhCetask->bpy == '\0') 
+            {
+                objP->pos[1] = *(unsigned short *)bhScePtr / 100.0f;
+            }
+            else 
+            {
+                objP->pos[1] = (*(unsigned short *)bhScePtr / 100.0f) * -1.0f;
+            }
+            bhScePtr += 2;
+            if (bhCetask->bpz == '\0')
+            {
+                objP->pos[2] = *(unsigned short *)bhScePtr / 100.0f;
+            }
+            else 
+            {
+                objP->pos[2] = (*(unsigned short *)bhScePtr / 100.0f) * -1.0f;
+            }
+            bhScePtr += 2;
+        }
+        break;
+        case 9:
+        {
+            int v1; 
+            NJS_CNK_OBJECT* objP; 
+            
+            objP = bhCetask->work->mdl->objP;
+            objP += bhCetask->model_cno;
+            bhScePtr++;
+            v1 = *bhScePtr;
+            if (bhCetask->bax != '\0') 
+            {
+                v1 = -v1;
+            }
+            objP->ang[0] = v1 * 182.04445f;
+            bhScePtr++;
+            v1 = *bhScePtr;
+            if (bhCetask->bay != '\0') 
+            {
+                v1 = -v1;
+            }
+            objP->ang[1] = v1 * 182.04445f;
+            bhScePtr++;
+            v1 = *bhScePtr;
+            if (bhCetask->baz != '\0')
+            {
+                v1 = -v1;
+            }
+            objP->ang[2] = v1 * 182.04445f;
+            bhScePtr += 2;
+        }
+        break;
+        case 2:
+            if (bhCetask->bpx == '\0')
+            {
+                bhCetask->work->px += bhCetask->addpx;
+            }
+            else
+            {
+                bhCetask->work->px -= bhCetask->addpx;
+            }
+            if (bhCetask->bpy == '\0')
+            {
+                bhCetask->work->py += bhCetask->addpy;
+            }
+            else 
+            {
+                bhCetask->work->py -= bhCetask->addpy;
+            }
+            if (bhCetask->bpz == '\0') 
+            {
+                bhCetask->work->pz += bhCetask->addpz;
+            }
+            else
+            {
+                bhCetask->work->pz -= bhCetask->addpz;
+            }
+            bhScePtr++;
+            bhScePtr++;
+        break;
+        case 3:
+            if (bhCetask->bax == '\0')
+            {
+                bhCetask->work->ax += bhCetask->addax;
+            }
+            else 
+            {
+                bhCetask->work->ax -= bhCetask->addax;
+            }
+            if (bhCetask->bay == '\0') 
+            {
+                bhCetask->work->ay += bhCetask->adday;
+            }
+            else 
+            {
+                bhCetask->work->ay -= bhCetask->adday;
+            }
+            if (bhCetask->baz == '\0')
+            {
+                bhCetask->work->az += bhCetask->addaz;
+            }
+            else
+            {
+                bhCetask->work->az -= bhCetask->addaz;
+            }
+            bhScePtr++;
+            bhScePtr++;
+        break;
+        case 4:
+            if (bhCetask->bpx == '\0') 
+            {
+                bhCetask->work->px += bhCetask->addpx;
+            }
+            else 
+            {
+                bhCetask->work->px -= bhCetask->addpx;
+            }
+            if (bhCetask->bpy == '\0') 
+            {
+                bhCetask->work->py += bhCetask->addpy;
+            }
+            else 
+            {
+                bhCetask->work->py -= bhCetask->addpy;
+            }
+            if (bhCetask->bpz == '\0') 
+            {
+                bhCetask->work->pz += bhCetask->addpz;
+            }
+            else 
+            {
+                bhCetask->work->pz -= bhCetask->addpz;
+            }
+            if (bhCetask->bax == '\0') 
+            {
+                bhCetask->work->ax += bhCetask->addax;
+            }
+            else
+            {
+                bhCetask->work->ax -= bhCetask->addax;
+            }
+            if (bhCetask->bay == '\0') 
+            {
+                bhCetask->work->ay += bhCetask->adday;
+            }
+            else 
+            {
+                bhCetask->work->ay -= bhCetask->adday;
+            }
+            if (bhCetask->baz == '\0') 
+            {
+                bhCetask->work->az += bhCetask->addaz;
+            }
+            else 
+            {
+                bhCetask->work->az -= bhCetask->addaz;
+            }
+            bhScePtr++;
+            bhScePtr++;
+        break;
+        case 17:
+        {
+            NJS_CNK_OBJECT* objP; 
+            
+            objP = bhCetask->work->mdl->objP;
+            objP += bhCetask->model_cno;
+            
+            if (bhCetask->bpx == '\0') 
+            {
+                objP->pos[0] += bhCetask->addpx;
+            }
+            else 
+            {
+                objP->pos[0] -= bhCetask->addpx;
+            }
+            if (bhCetask->bpy == '\0') 
+            {
+                objP->pos[1] += bhCetask->addpy;
+            }
+            else 
+            {
+                objP->pos[1] -= bhCetask->addpy;
+            }
+            if (bhCetask->bpz == '\0') 
+            {
+                objP->pos[2] += bhCetask->addpz;
+            }
+            else
+            {
+                objP->pos[2] -= bhCetask->addpz;
+            }
+            bhScePtr++;
+            bhScePtr++;
+        }
+        break;
+        case 18:
+        {
+            NJS_CNK_OBJECT* objP; 
+            
+            objP = bhCetask->work->mdl->objP;
+            objP += bhCetask->model_cno;
+            
+            if (bhCetask->bax == '\0')
+            {
+                objP->ang[0] += bhCetask->addax;
+            }
+            else
+            {
+                objP->ang[0] -= bhCetask->addax;
+            }
+            if (bhCetask->bay == '\0') 
+            {
+                objP->ang[1] += bhCetask->adday;
+            }
+            else 
+            {
+                objP->ang[1] -= bhCetask->adday;
+            }
+            if (bhCetask->baz == '\0')
+            {
+                objP->ang[2] += bhCetask->addaz;
+            }
+            else 
+            {
+                objP->ang[2] -= bhCetask->addaz;
+            }
+            bhScePtr++;
+            bhScePtr++;
+        }
+        break;
+        case 19:
+        {
+            NJS_CNK_OBJECT* objP; 
+            
+            objP = bhCetask->work->mdl->objP;
+            objP += bhCetask->model_cno;
+            if (bhCetask->bpx == '\0') 
+            {
+                objP->pos[0] += bhCetask->addpx;
+            }
+            else 
+            {
+                objP->pos[0] -= bhCetask->addpx;
+            }
+            if (bhCetask->bpy == '\0') 
+            {
+                objP->pos[1] += bhCetask->addpy;
+            }
+            else
+            {
+                objP->pos[1] -= bhCetask->addpy;
+            }
+            if (bhCetask->bpz == '\0') 
+            {
+                objP->pos[2] += bhCetask->addpz;
+            }
+            else
+            {
+                objP->pos[2] -= bhCetask->addpz;
+            }
+            if (bhCetask->bax == '\0') 
+            {
+                objP->ang[0] += bhCetask->addax;
+            }
+            else 
+            {
+                objP->ang[0] -= bhCetask->addax;
+            }
+            if (bhCetask->bay == '\0') 
+            {
+                objP->ang[1] += bhCetask->adday;
+            }
+            else
+            {
+                objP->ang[1] -= bhCetask->adday;
+            }
+            if (bhCetask->baz == '\0') 
+            {
+                objP->ang[2] += bhCetask->addaz;
+            }
+            else 
+            {
+                objP->ang[2] -= bhCetask->addaz;
+            }
+            bhScePtr++;
+            bhScePtr++;
+        }
+        break;
+        case 22:
+        {
+            NJS_CNK_OBJECT* objP; 
+            
+            objP = bhCetask->work->mdl->objP;
+            objP += bhCetask->model_cno;
+            
+            bhScePtr++;
+            switch(*bhScePtr) 
+            {
+                case 0:
+                    bhScePtr += 2;
+                    if (bhCetask->bpx == '\0') 
+                    {
+                        objP->pos[0] = *(unsigned short *)bhScePtr / 100.0f;
+                    } 
+                    else 
+                    {
+                        objP->pos[0] = (*(unsigned short *)bhScePtr / 100.0f) * -1.0f;
+                    }
+                    bhScePtr += 2;
+                break;
+                case 1:
+                    bhScePtr += 2;
+                    if (bhCetask->bpy == '\0') 
+                    {
+                        objP->pos[1] = *(unsigned short *)bhScePtr / 100.0f;
+                    } 
+                    else 
+                    {
+                        objP->pos[1] = (*(unsigned short *)bhScePtr / 100.0f) * -1.0f;
+                    }
+                    bhScePtr += 2;
+                break;
+                case 2:
+                    bhScePtr += 2;
+                    if (bhCetask->bpz == '\0') 
+                    {
+                        objP->pos[2] = *(unsigned short *)bhScePtr / 100.0f;
+                    } 
+                    else 
+                    {
+                        objP->pos[2] = (*(unsigned short *)bhScePtr / 100.0f) * -1.0f;
+                    }
+                    bhScePtr += 2;
+                break;
+            }
+        }
+        break;
+        case 10:
+            bhScePtr++;
+            
+            switch(*bhScePtr) 
+            {
+                case 0:
+                    bhScePtr += 2;
+                    if (bhCetask->bpx == '\0') 
+                    {
+                        bhCetask->work->px = *(unsigned short *)bhScePtr / 100.0f;
+                    } 
+                    else 
+                    {
+                        bhCetask->work->px = (*(unsigned short *)bhScePtr / 100.0f) * -1.0f;
+                    }
+                    bhScePtr += 2;
+                break;
+                case 1:
+                    bhScePtr += 2;
+                    if (bhCetask->bpy == '\0') 
+                    {
+                        bhCetask->work->py = *(unsigned short *)bhScePtr / 100.0f;
+                    } 
+                    else 
+                    {
+                        bhCetask->work->py = (*(unsigned short *)bhScePtr / 100.0f) * -1.0f;
+                    }
+                    bhScePtr += 2;
+                break;
+                case 2:
+                    bhScePtr += 2;
+                    if (bhCetask->bpz == '\0') 
+                    {
+                        bhCetask->work->pz = *(unsigned short *)bhScePtr / 100.0f;
+                    } 
+                    else 
+                    {
+                        bhCetask->work->pz = (*(unsigned short *)bhScePtr / 100.0f) * -1.0f;
+                    }
+                    bhScePtr += 2;
+                break;
+            }
+        break;
+        case 132:
+            bhCetask->work->mode0 = '\x01';
+            bhCetask->work->mode2 = '\0';
+            bhCetask->work->mode3 = '\0';
+            
+            bhScePtr++;
+            bhCetask->work->mode1 = *bhScePtr++;
+            
+            if (*bhScePtr == '\0') 
+            {
+                bhCetask->work->mode0 = '\x01';
+            }
+            else 
+            {
+                bhCetask->work->mode0 = '\x05';
+            }
+
+            bhScePtr++;
+            bhCetask->work->ct1 = *bhScePtr++;
+            bhCetask->work->ct2 = *bhScePtr++;
+        break;
+        case 140:
+        {
+            unsigned int v0; 
+            
+            bhCetask->work->mode2 = '\0';
+            bhCetask->work->mode3 = '\0';
+            
+            bhScePtr++;
+            bhCetask->work->mode1 = *bhScePtr++;
+            
+            if (*bhScePtr == '\0') 
+            {
+                bhCetask->work->mode0 = '\x01';
+                *(unsigned char *)&bhCetask->work->ct2 = 0x1;
+            }
+            else 
+            {
+                bhCetask->work->mode0 = '\x05';
+                *(unsigned char *)&bhCetask->work->ct2 = 0x3;
+            }
+            
+            bhScePtr++;
+            v0 = *(unsigned short *)bhScePtr;
+            if (bhCetask->bpx == '\0') 
+            {
+                bhCetask->work->ct0 = v0 << 0x10;
+            }
+            else
+            {
+                bhCetask->work->ct0 = (v0 * -1) << 0x10;
+            }
+            
+            bhScePtr += 2;
+            v0 = *(unsigned short *)bhScePtr;
+            if (bhCetask->bpz == '\0') 
+            {
+                bhCetask->work->ct0 |= v0;
+            }
+            else 
+            {
+                bhCetask->work->ct0 |= v0 * -1;
+            }
+            bhScePtr += 2;
+        }
+        break;
+        case 141:
+            bhCetask->work->mode0 = '\x05';
+            bhCetask->work->mode2 = '\0';
+            bhCetask->work->mode3 = '\0';
+            
+            bhScePtr++;
+            bhCetask->work->mode1 = *bhScePtr++;
+            bhCetask->work->ct0 = *bhScePtr++;
+            bhCetask->work->ct1 = *bhScePtr++;
+            bhCetask->work->ct2 = *bhScePtr++;
+        break;
+        case 14:
+        {
+            unsigned int v0; 
+            
+            bhScePtr++;
+            v0 = *bhScePtr;
+            bhCetask->work->ct3 = v0;
+            bhScePtr++;
+            bhScePtr++;
+        }
+        break;
+        case 21:
+        {
+            unsigned int v0; 
+            
+            bhScePtr++;
+            v0 = *bhScePtr;
+            bhCetask->work->ct1 = v0;
+            bhScePtr++;
+            bhScePtr++;
+        }
+        break;
+        case 15:
+        {
+            int v0; 
+            
+            bhScePtr++;
+            v0 = (unsigned int)*bhScePtr;
+            if (bhCetask->bax != '\0') 
+            {
+                v0 = -v0;
+            }
+            bhCetask->work->ax = v0 * 182.04445f;
+            bhCetask->work->axb = bhCetask->work->ax;
+            bhCetask->work->mlwP->objP->ang[0x0] = v0 * 182.04445f;
+            bhScePtr++;
+            v0 = (unsigned int)*bhScePtr;
+            if (bhCetask->bay != '\0') 
+            {
+                v0 = -v0;
+            }
+            bhCetask->work->ay = v0 * 182.04445f;
+            bhCetask->work->ayb = bhCetask->work->ay;
+            bhCetask->work->mlwP->objP->ang[0x1] = v0 * 182.04445f;
+            bhScePtr++;
+            v0 = (unsigned int)*bhScePtr;
+            if (bhCetask->baz != '\0') 
+            {
+                v0 = -v0;
+            }
+            bhCetask->work->az = v0 * 182.04445f;
+            bhCetask->work->azb = bhCetask->work->az;
+            bhCetask->work->mlwP->objP->ang[0x2] = v0 * 182.04445f;
+            bhScePtr += 2;
+        }
+        break;
+        case 16:
+        {
+            int v0;
+            int v1; 
+            unsigned char* a0; 
+            
+            bhScePtr++;
+            a0 = bhScePtr;
+            
+            v0 = a0[0];
+            v1 = a0[3];
+            if ((v1 & 0x1) != 0x0)
+            {
+                v0 = -v0;
+            }
+            bhCetask->work->mlwP->objP[0x1].ang[0x0] = v0 * 182.04445f;
+            bhScePtr++;
+            v0 = *bhScePtr;
+            if ((v1 & 0x2) != 0x0) 
+            {
+                v0 = -v0;
+            }
+            bhCetask->work->mlwP->objP[0x1].ang[0x1] = v0 * 182.04445f;
+            bhScePtr++;
+            v0 = *bhScePtr;
+            if ((v1 & 0x4) != 0x0)
+            {
+                v0 = -v0;
+            }
+            bhCetask->work->mlwP->objP[0x1].ang[0x2] = v0 * 182.04445f;
+            bhScePtr += 2;
+        }
+        break;
+        case 36:
+            bhCetask->work->mlwP->objP->pos[0x0] = 0.0f;
+            bhCetask->work->mlwP->objP->pos[0x1] = 0.0f;
+            bhCetask->work->mlwP->objP->pos[0x2] = 0.0f; 
+            bhScePtr++;
+        break;
+        case 38:
+        {
+            int v0; 
+            int v1; 
+            
+            bhScePtr++;
+            v0 = *bhScePtr++;
+            v1 = *bhScePtr++;
+            
+            if ((v1 & 0x1) != 0x0)
+            {
+                bhCetask->work->mlwP->objP[v0].pos[0x0] = (*(unsigned short *)bhScePtr / 100.0f) * -1.0f;
+            }
+            else
+            {
+                bhCetask->work->mlwP->objP[v0].pos[0x0] = *(unsigned short *)bhScePtr / 100.0f;
+            }
+            bhScePtr += 2;
+            if ((v1 & 0x2) != 0x0)
+            {
+                bhCetask->work->mlwP->objP[v0].pos[0x1] = (*(unsigned short *)bhScePtr / 100.0f) * -1.0f;
+            }
+            else 
+            {
+                bhCetask->work->mlwP->objP[v0].pos[0x1] = *(unsigned short *)bhScePtr / 100.0f;
+            }
+            
+            bhScePtr += 2;
+            if ((v1 & 0x4) != 0x0) 
+            {
+                bhCetask->work->mlwP->objP[v0].pos[0x2] = (*(unsigned short *)bhScePtr / 100.0f) * -1.0f;
+            }
+            else 
+            {
+                bhCetask->work->mlwP->objP[v0].pos[0x2] = *(unsigned short *)bhScePtr / 100.0f;
+            }
+            bhScePtr += 2;
+        }
+        break;
+        case 0:
+            bhScePtr++;
+        break;
+    }
+}
+
+// 100% matching! 
+unsigned int bhLoadWork()
+{
+    ETTY_WORK* e_enep;
+
+    bhScePtr++;
+    
+    switch (*bhScePtr) 
+    {                         
+    case 0:
+        bhCetask->work = plp;
+        
+        bhCetask->work->mode0 = 7;
+        bhCetask->work->mode2 = 0;
+        bhCetask->work->mode2 = 0; // strange this wasn't optimized out
+        
+        *(unsigned char*)&bhCetask->work->mtn_no = 42;
+        
+        bhCetask->work->stflg |= 0x10000;
+        bhCetask->work->stflg &= ~0x80;
+        
+        bhCetask->model_cno = 0;
+        
+        bhCetask->work->flg |= 0x10000;
+        
+        bhScePtr += 3;
+        break;
+    case 1:
+    {
+        unsigned char* a0;
+        
+        a0 = bhScePtr;
+        
+        bhScePtr++;
+        bhScePtr += 2;
+        
+        e_enep = &rom->enep[*++a0];
+        
+        bhCetask->work = &ene[e_enep->wrk_no];
+        
+        bhCetask->model_cno = *++a0;
+        
+        bhCetask->mtn_md = bhCetask->work->mtn_md;
+        bhCetask->mdflg = bhCetask->work->mdflg;
+        
+        bhCetask->hokan_rate = bhCetask->work->hokan_rate;
+        break;
+    }
+    case 2:
+    {
+        unsigned char* a0;
+        
+        a0 = bhScePtr;
+        
+        bhScePtr++;
+        bhScePtr += 2;
+        
+        bhCetask->work = (BH_PWORK*)&sys->obwp[*++a0];
+        
+        bhCetask->model_cno = *++a0;
+        break;
+    }
+    case 3:
+    {
+        unsigned char* a0;
+        
+        a0 = bhScePtr;
+        
+        bhScePtr++;
+        bhScePtr += 2;
+        
+        bhCetask->work = (BH_PWORK*)&sys->itwp[*++a0];
+        
+        bhCetask->model_cno = 0;
+        break;
+    }
+    case 4:
+    {
+        unsigned char* a0;
+        
+        a0 = bhScePtr;
+        
+        bhScePtr++;
+        bhScePtr += 2;
+        
+        bhCetask->work = (BH_PWORK*)&eff[sys->efid[*++a0]];
+        
+        bhCetask->model_cno = 0;
+        break;
+    }
+    }
+    
+    return 1;
+}
+
+// 100% matching! 
+unsigned int bhLoadWorkEx()
+{
+    ETTY_WORK* e_enep;
+
+    bhScePtr++;
+    
+    switch (*bhScePtr) 
+    {                         
+    case 0:
+        bhEtask->work = plp;
+        
+        bhEtask->work->mode0 = 7;
+        bhEtask->work->mode2 = 0;
+        bhEtask->work->mode2 = 0; // strange this wasn't optimized out
+        
+        *(unsigned char*)&bhEtask->work->mtn_no = 42;
+        
+        bhEtask->work->stflg |= 0x10000;
+        bhEtask->work->stflg &= ~0x80;
+        
+        bhEtask->work->flg |= 0x10000;
+
+        bhEtask->model_cno = 0;
+        
+        bhScePtr += 3;
+        break;
+    case 1:
+    {
+        unsigned char* a0;
+        
+        a0 = bhScePtr;
+        
+        bhScePtr++;
+        bhScePtr += 2;
+        
+        e_enep = &rom->enep[*++a0];
+        
+        bhEtask->work = &ene[e_enep->wrk_no];
+        
+        bhEtask->model_cno = *++a0;
+        
+        bhEtask->mtn_md = bhEtask->work->mtn_md;
+        bhEtask->mdflg = bhEtask->work->mdflg;
+        
+        bhEtask->hokan_rate = bhEtask->work->hokan_rate;
+        break;
+    }
+    case 2:
+    {
+        unsigned char* a0;
+        
+        a0 = bhScePtr;
+        
+        bhScePtr++;
+        bhScePtr += 2;
+        
+        bhEtask->work = (BH_PWORK*)&sys->obwp[*++a0];
+        
+        bhEtask->model_cno = *++a0;
+        break;
+    }
+    case 3:
+    {
+        unsigned char* a0;
+        
+        a0 = bhScePtr;
+        
+        bhScePtr++;
+        bhScePtr += 2;
+        
+        bhEtask->work = (BH_PWORK*)&sys->itwp[*++a0];
+        
+        bhEtask->model_cno = 0;
+        break;
+    }
+    case 4:
+    {
+        unsigned char* a0;
+        
+        a0 = bhScePtr;
+        
+        bhScePtr++;
+        bhScePtr += 2;
+        
+        bhEtask->work = (BH_PWORK*)&eff[sys->efid[*++a0]];
+        
+        bhEtask->model_cno = 0;
+        break;
+    }
+    }
+    
+    return 1;
+}
+
+// 100% matching! 
+unsigned int bhLoadWork2()
+{
+    ETTY_WORK* e_enep;
+    unsigned int tk_no;
+
+    bhScePtr++;
+    
+    switch (*bhScePtr) 
+    {                             
+    case 0:
+        bhCetask->work = plp;
+        
+        bhCetask->work->mode0 = 7;
+        
+        bhCetask->work->stflg |= 0x10000;
+        bhCetask->work->flg |= 0x10000;
+        
+        bhCetask->model_cno = 0;
+        break;
+    case 1:
+    {
+        unsigned char* a0;
+        
+        a0 = bhScePtr;
+        
+        e_enep = &rom->enep[*++a0]; 
+        
+        bhCetask->work = &ene[e_enep->wrk_no];
+        break;
+    }
+    case 2:
+    {
+        unsigned char* a0; 
+        
+        a0 = bhScePtr;
+        
+        a0++;
+        
+        tk_no = *++a0;
+        
+        bhEtask[tk_no].work = (BH_PWORK*)&sys->obwp[*++a0];
+        
+        bhEtask[tk_no].model_cno = *++a0;
+        break;
+    }
+    }
+    
+    bhScePtr += 5;
+    
+    return 1;
+}
+
+// 100% matching!
+int Event_init(BH_SCEWORK* a0, unsigned int evt_id) 
+{
+    a0->status = 1;
+    
+    *(short*)&a0->mode0 = 0;
+    
+    a0->data = (unsigned char*)rom->evtp;
+    a0->data = (unsigned char*)a0->data + ((int*)rom->evtp)[evt_id + ((sizeof(EVT_WORK) / 4) - 1)];
+    
+    a0->loop = -1;
+    
+    a0->ips[0][0] = 0;
+    a0->ips[0][1] = 0;
+    a0->ips[0][2] = 0;
+    
+    a0->ips[1][0] = 0;
+    a0->ips[1][1] = 0;
+    a0->ips[1][2] = 0;
+    
+    a0->ips[2][0] = 0;
+    a0->ips[2][1] = 0;
+    a0->ips[2][2] = 0;
+    
+    a0->ips[3][0] = 0;
+    a0->ips[3][1] = 0;
+    a0->ips[3][2] = 0;
+    
+    a0->ian[0][0] = 0;
+    a0->ian[0][1] = 0;
+    a0->ian[0][2] = 0;
+    
+    a0->ian[1][0] = 0;
+    a0->ian[1][1] = 0;
+    a0->ian[1][2] = 0;
+    
+    a0->ian[2][0] = 0;
+    a0->ian[2][1] = 0;
+    a0->ian[2][2] = 0;
+    
+    a0->ian[3][0] = 0;
+    a0->ian[3][1] = 0;
+    a0->ian[3][2] = 0;
+}
+
+// 100% matching!
+int Event_exec(unsigned int task_level, unsigned int evt_id)
+{
+    if (task_level >= 16)
+    {
+        task_level = 0;
+        
+        while ((bhEtask[task_level].status != 0) && (task_level != 15))
+        {
+            task_level++;
+        }
+    }
+
+    return Event_init(&bhEtask[task_level], evt_id);
+}
+
+// 100% matching!
+int bhEventScheduler2()
+{
+    unsigned int level;      
+    unsigned int t_time_flg; 
+    unsigned char* gsp; // not from DWARF
+    BH_SCEWORK* scep;   // not from DWARF
+
+    if ((sys->sp_flg & 0x10)) 
+    {
+        scep = bhEtask;
+        
+        t_time_flg = 0;
+        
+        for (level = 0; level < 16; level++, scep++) 
+        {
+            bhCetask = scep;
+            
+            if (scep->status != 0) 
+            {
+                if (t_time_flg == 0) 
+                {
+                    Event_T_timer++;
+                }
+                
+                t_time_flg = 1;
+                
+                bhScePtr = scep->data;
+                
+                while (TRUE) 
+                {
+                    while (bhScenarioJmpT[*bhScePtr]() != 0);
+                    
+                    if (bhIfelFlg <= 0)
+                    {
+                        break;
+                    }
+                    
+                    gsp = (unsigned char*)--G_Sp;
+                    
+                    bhIfelFlg--;
+                    
+                    bhScePtr = gsp;
+                }
+                
+                bhCetask->data = bhScePtr;
+            }
+        } 
+    }
+}
+
+// 100% matching!
+void bhScenarioCheck(unsigned char* next_ptr)
+{
+    unsigned char* gsp; // not from DWARF
+    
+    bhScePtr = (unsigned char*)rom->evtp;
+    
+    bhIfelFlg = 0;
+    
+    bhScePtr = &bhScePtr[(int)next_ptr];
+
+    while (TRUE) 
+    {
+        while (bhScenarioJmpT[*bhScePtr]() != 0);
+        
+        if (bhIfelFlg <= 0)
+        {
+            break;
+        }
+        
+        gsp = (unsigned char*)--G_Sp;
+        
+        bhIfelFlg--;
+        
+        bhScePtr = gsp;
+    }
+}
+
+// 100% matching!
+unsigned int bhFlagCk(unsigned char type, unsigned int cnt, unsigned char flag) 
+{
+    int* v0;
+
+    switch (type) 
+    {
+    case 1:
+        v0 = (int*)sys->ev_flg;
+        break;
+    case 2:
+        v0 = (int*)sys->ky_flg;
+        break;
+    case 3:
+        v0 = (int*)sys->ed_flg;
+        break;
+    case 4:
+        v0 = (int*)&sys->rm_flg;
+        break;
+    case 5:
+        v0 = (int*)&sys->st_flg;
+        break;
+    case 6:
+        v0 = (int*)&sys->sp_flg;
+        break;
+    case 7:
+        v0 = (int*)sys->it_flg;
+        break;
+    case 8:
+        v0 = (int*)sys->mp_flg;
+        break;
+    case 9:
+        v0 = (int*)sys->ic_flg;
+        break;
+    case 11:
+        v0 = (int*)&sys->gm_flg;
+        break;
+    }
+    
+    return flag ^ (v0[(cnt & 0x3FF) >> 5] << (cnt & 0x1F)) < 0;
+}
+
+// 100% matching! 
+unsigned int bhFlagSet(unsigned char type, unsigned int cnt, unsigned char flag)
+{
+    int* v0;
+    int v1; 
+    
+    switch (type) 
+    {
+    case 1:
+        v0 = (int*)&sys->ev_flg;
+        break;
+    case 2:
+        v0 = (int*)&sys->ky_flg;
+        break;
+    case 3:
+        v0 = (int*)&sys->ed_flg;
+        break;
+    case 4:
+        v0 = (int*)&sys->rm_flg;
+        break;
+    case 5:
+        v0 = (int*)&sys->st_flg;
+        break;
+    case 6:
+        v0 = (int*)&sys->sp_flg;
+        break;
+    case 7:
+        v0 = (int*)&sys->it_flg;
+        break;
+    case 8:
+        v0 = (int*)&sys->mp_flg;
+        break;
+    case 9:
+        v0 = (int*)&sys->ic_flg;
+        break;
+    case 11:
+        v0 = (int*)&sys->gm_flg;
+        break;
+    }
+
+    v0 = &v0[(cnt & 0x3E0) >> 5]; 
+    
+    cnt &= 0x1F;
+
+    switch (flag) 
+    {     
+    case 0:          
+        v1 = 0x80000000 >> cnt;
+        
+        *v0 |= v1;
+        
+        return 1;
+    case 1:         
+        v1 = ~(0x80000000 >> cnt);
+            
+        *v0 &= v1;
+        
+        return 1;
+    case 2:            
+        v1 = 0x80000000 >> cnt;
+        
+        *v0 ^= v1;
+        
+        return 1;
+    }
+}
+
+// 100% matching!
+void bhChangeViewClip(char stg_no, char rom_no, char rcase, int evc_no)
+{
+    int i;
+    float near, far;
+    static VIEW_CLIP* ViewClipTbl;
+    static VIEW_CLIP ViewClipSt0[8] =
+	{
+        { /* room */ 2,  /* rcase */ 0,  /* evc_no */ 1,  /* near */ -24.0f,      /* far */ -5000.0f  }, 
+        { /* room */ 2,  /* rcase */ 0,  /* evc_no */ 4,  /* near */ -25.0f,      /* far */ -20000.0f }, 
+        { /* room */ 2,  /* rcase */ 0,  /* evc_no */ 12, /* near */ -9.0f,       /* far */ -20000.0f }, 
+        { /* room */ 3,  /* rcase */ 0,  /* evc_no */ 3,  /* near */ -1.0f,       /* far */ -20000.0f }, 
+        { /* room */ 3,  /* rcase */ 0,  /* evc_no */ 23, /* near */ -1.0f,       /* far */ -20000.0f }, 
+        { /* room */ 3,  /* rcase */ 0,  /* evc_no */ 29, /* near */ -10.0f,      /* far */ -20000.0f }, 
+        { /* room */ 5,  /* rcase */ 0,  /* evc_no */ 1,  /* near */ -1.0f,       /* far */ -20000.0f }, 
+        { /* room */ -1, /* rcase */ -1, /* evc_no */ -1, /* near */ 0.0f,        /* far */ 0.0f      }
+    };
+    static VIEW_CLIP ViewClipSt1[15] =
+	{
+        { /* room */ 0,  /* rcase */ 2,  /* evc_no */ 8,  /* near */ -1.0f,       /* far */ -20000.0f }, 
+        { /* room */ 0,  /* rcase */ 2,  /* evc_no */ 33, /* near */ -10.0f,      /* far */ -20000.0f }, 
+        { /* room */ 2,  /* rcase */ 0,  /* evc_no */ 5,  /* near */ -1.0f,       /* far */ -20000.0f }, 
+        { /* room */ 2,  /* rcase */ 0,  /* evc_no */ 8,  /* near */ -4.0f,       /* far */ -20000.0f }, 
+        { /* room */ 2,  /* rcase */ 0,  /* evc_no */ 11, /* near */ -1.0f,       /* far */ -20000.0f }, 
+        { /* room */ 2,  /* rcase */ 0,  /* evc_no */ 15, /* near */ -1.9f,       /* far */ -20000.0f }, 
+        { /* room */ 2,  /* rcase */ 0,  /* evc_no */ 17, /* near */ -1.0f,       /* far */ -20000.0f }, 
+        { /* room */ 2,  /* rcase */ 0,  /* evc_no */ 34, /* near */ -1.1f,       /* far */ -20000.0f }, 
+        { /* room */ 5,  /* rcase */ 0,  /* evc_no */ 16, /* near */ -20.0f,      /* far */ -20000.0f }, 
+        { /* room */ 5,  /* rcase */ 0,  /* evc_no */ 20, /* near */ -1.0f,       /* far */ -20000.0f }, 
+        { /* room */ 5,  /* rcase */ 0,  /* evc_no */ 21, /* near */ -1.0f,       /* far */ -20000.0f }, 
+        { /* room */ 5,  /* rcase */ 0,  /* evc_no */ 23, /* near */ -1.0f,       /* far */ -20000.0f }, 
+        { /* room */ 5,  /* rcase */ 0,  /* evc_no */ 29, /* near */ -1.5f,       /* far */ -20000.0f }, 
+        { /* room */ 12, /* rcase */ 2,  /* evc_no */ 13, /* near */ -1.0f,       /* far */ -20000.0f }, 
+        { /* room */ -1, /* rcase */ -1, /* evc_no */ -1, /* near */ 0.0f,        /* far */ 0.0f      }
+    };
+    static VIEW_CLIP ViewClipSt2[10] = 
+	{
+        { /* room */ 3,  /* rcase */ 0,  /* evc_no */ 12, /* near */ -5.0f,       /* far */ -20000.0f }, 
+        { /* room */ 4,  /* rcase */ 0,  /* evc_no */ 8,  /* near */ -1.0f,       /* far */ -20000.0f }, 
+        { /* room */ 5,  /* rcase */ 0,  /* evc_no */ 0,  /* near */ -1.0f,       /* far */ -20000.0f }, 
+        { /* room */ 5,  /* rcase */ 0,  /* evc_no */ 1,  /* near */ -10.0f,      /* far */ -20000.0f }, 
+        { /* room */ 5,  /* rcase */ 0,  /* evc_no */ 7,  /* near */ -1.0f,       /* far */ -20000.0f }, 
+        { /* room */ 5,  /* rcase */ 0,  /* evc_no */ 8,  /* near */ -1.0f,       /* far */ -20000.0f }, 
+        { /* room */ 5,  /* rcase */ 0,  /* evc_no */ 19, /* near */ -1.8f,       /* far */ -20000.0f }, 
+        { /* room */ 5,  /* rcase */ 0,  /* evc_no */ 20, /* near */ -1.0f,       /* far */ -20000.0f }, 
+        { /* room */ 5,  /* rcase */ 0,  /* evc_no */ 22, /* near */ -1.0f,       /* far */ -20000.0f }, 
+        { /* room */ -1, /* rcase */ -1, /* evc_no */ -1, /* near */ 0.0f,        /* far */ 0.0f      }
+    };
+    static VIEW_CLIP ViewClipSt3[21] = 
+	{
+        { /* room */ 0,  /* rcase */ 0,  /* evc_no */ 3,  /* near */ -1.0f,       /* far */ -20000.0f }, 
+        { /* room */ 0,  /* rcase */ 0,  /* evc_no */ 5,  /* near */ -1.0f,       /* far */ -20000.0f }, 
+        { /* room */ 0,  /* rcase */ 0,  /* evc_no */ 7,  /* near */ -1.0f,       /* far */ -20000.0f }, 
+        { /* room */ 0,  /* rcase */ 0,  /* evc_no */ 31, /* near */ -1.0f,       /* far */ -20000.0f }, 
+        { /* room */ 0,  /* rcase */ 0,  /* evc_no */ 40, /* near */ -1.0f,       /* far */ -20000.0f }, 
+        { /* room */ 1,  /* rcase */ 0,  /* evc_no */ 2,  /* near */ -1.0f,       /* far */ -20000.0f }, 
+        { /* room */ 2,  /* rcase */ 0,  /* evc_no */ 9,  /* near */ -1.01f,      /* far */ -5000.0f  }, 
+        { /* room */ 8,  /* rcase */ 0,  /* evc_no */ 7,  /* near */ -1.0f,       /* far */ -20000.0f }, 
+        { /* room */ 10, /* rcase */ 0,  /* evc_no */ 18, /* near */ -1.0f,       /* far */ -20000.0f }, 
+        { /* room */ 10, /* rcase */ 0,  /* evc_no */ 21, /* near */ -1.7f,       /* far */ -20000.0f }, 
+        { /* room */ 13, /* rcase */ 0,  /* evc_no */ 28, /* near */ -20.799999f, /* far */ -20000.0f }, 
+        { /* room */ 14, /* rcase */ 0,  /* evc_no */ 7,  /* near */ -5.0f,       /* far */ -20000.0f }, 
+        { /* room */ 14, /* rcase */ 0,  /* evc_no */ 8,  /* near */ -1.1f,       /* far */ -20000.0f }, 
+        { /* room */ 23, /* rcase */ 0,  /* evc_no */ 11, /* near */ -1.0f,       /* far */ -20000.0f }, 
+        { /* room */ 24, /* rcase */ 0,  /* evc_no */ 4,  /* near */ -1.0f,       /* far */ -20000.0f }, 
+        { /* room */ 24, /* rcase */ 0,  /* evc_no */ 5,  /* near */ -1.0f,       /* far */ -20000.0f }, 
+        { /* room */ 24, /* rcase */ 0,  /* evc_no */ 6,  /* near */ -1.0f,       /* far */ -20000.0f }, 
+        { /* room */ 24, /* rcase */ 0,  /* evc_no */ 9,  /* near */ -60.0f,      /* far */ -20000.0f }, 
+        { /* room */ 24, /* rcase */ 0,  /* evc_no */ 11, /* near */ -1.5f,       /* far */ -20000.0f }, 
+        { /* room */ 24, /* rcase */ 0,  /* evc_no */ 28, /* near */ -26.0f,      /* far */ -20000.0f }, 
+        { /* room */ -1, /* rcase */ -1, /* evc_no */ -1, /* near */ 0.0f,        /* far */ 0.0f      }
+    };
+    static VIEW_CLIP ViewClipSt4[3] = 
+	{
+        { /* room */ 1,  /* rcase */ 0,  /* evc_no */ 8,  /* near */ -10.0f,      /* far */ -1000.0f  }, 
+        { /* room */ 4,  /* rcase */ 0,  /* evc_no */ 3,  /* near */ -20.0f,      /* far */ -20000.0f }, 
+        { /* room */ -1, /* rcase */ -1, /* evc_no */ -1, /* near */ 0.0f,        /* far */ 0.0f      }
+    };
+    static VIEW_CLIP ViewClipSt5[10] = 
+	{
+        { /* room */ 0,  /* rcase */ 1,  /* evc_no */ 1,  /* near */ -1.0f,       /* far */ -20000.0f }, 
+        { /* room */ 0,  /* rcase */ 1,  /* evc_no */ 9,  /* near */ -10.0f,      /* far */ -20000.0f }, 
+        { /* room */ 0,  /* rcase */ 1,  /* evc_no */ 11, /* near */ -60.0f,      /* far */ -20000.0f }, 
+        { /* room */ 0,  /* rcase */ 1,  /* evc_no */ 17, /* near */ -20.0f,      /* far */ -20000.0f }, 
+        { /* room */ 0,  /* rcase */ 1,  /* evc_no */ 19, /* near */ -10.0f,      /* far */ -20000.0f }, 
+        { /* room */ 0,  /* rcase */ 1,  /* evc_no */ 21, /* near */ -1.0f,       /* far */ -20000.0f }, 
+        { /* room */ 1,  /* rcase */ 0,  /* evc_no */ 26, /* near */ -1.5599999f, /* far */ -20000.0f }, 
+        { /* room */ 1,  /* rcase */ 0,  /* evc_no */ 30, /* near */ -1.2f,       /* far */ -20000.0f }, 
+        { /* room */ 1,  /* rcase */ 0,  /* evc_no */ 32, /* near */ -1.01f,      /* far */ -20000.0f }, 
+        { /* room */ -1, /* rcase */ -1, /* evc_no */ -1, /* near */ 0.0f,        /* far */ 0.0f      }
+    };
+    static VIEW_CLIP ViewClipSt6[16] = 
+	{
+        { /* room */ 0,  /* rcase */ 0,  /* evc_no */ 10, /* near */ -10.0f,      /* far */ -20000.0f }, 
+        { /* room */ 0,  /* rcase */ 0,  /* evc_no */ 8,  /* near */ -1.0f,       /* far */ -20000.0f }, 
+        { /* room */ 0,  /* rcase */ 0,  /* evc_no */ 40, /* near */ -44.0f,      /* far */ -20000.0f }, 
+        { /* room */ 4,  /* rcase */ 0,  /* evc_no */ 17, /* near */ -1.0f,       /* far */ -20000.0f }, 
+        { /* room */ 4,  /* rcase */ 0,  /* evc_no */ 18, /* near */ -1.0f,       /* far */ -20000.0f }, 
+        { /* room */ 4,  /* rcase */ 0,  /* evc_no */ 20, /* near */ -1.0f,       /* far */ -20000.0f }, 
+        { /* room */ 4,  /* rcase */ 0,  /* evc_no */ 21, /* near */ -1.0f,       /* far */ -20000.0f }, 
+        { /* room */ 4,  /* rcase */ 0,  /* evc_no */ 35, /* near */ -1.0f,       /* far */ -20000.0f }, 
+        { /* room */ 5,  /* rcase */ 1,  /* evc_no */ 13, /* near */ -1.2f,       /* far */ -20000.0f }, 
+        { /* room */ 6,  /* rcase */ 0,  /* evc_no */ 7,  /* near */ -1.0f,       /* far */ -20000.0f }, 
+        { /* room */ 10, /* rcase */ 0,  /* evc_no */ 16, /* near */ -1.1f,       /* far */ -20000.0f }, 
+        { /* room */ 10, /* rcase */ 0,  /* evc_no */ 17, /* near */ -5.0f,       /* far */ -20000.0f }, 
+        { /* room */ 10, /* rcase */ 0,  /* evc_no */ 19, /* near */ -1.0f,       /* far */ -20000.0f }, 
+        { /* room */ 10, /* rcase */ 0,  /* evc_no */ 30, /* near */ -1.01f,      /* far */ -20000.0f }, 
+        { /* room */ 10, /* rcase */ 0,  /* evc_no */ 32, /* near */ -550.0f,     /* far */ -20000.0f }, 
+        { /* room */ -1, /* rcase */ -1, /* evc_no */ -1, /* near */ 0.0f,        /* far */ 0.0f      }
+    };
+    static VIEW_CLIP ViewClipSt7[9] = 
+	{
+        { /* room */ 7,  /* rcase */ 0,  /* evc_no */ 0,  /* near */ -1.0f,       /* far */ -20000.0f }, 
+        { /* room */ 7,  /* rcase */ 0,  /* evc_no */ 1,  /* near */ -5.0f,       /* far */ -20000.0f }, 
+        { /* room */ 7,  /* rcase */ 0,  /* evc_no */ 4,  /* near */ -20.0f,      /* far */ -20000.0f }, 
+        { /* room */ 7,  /* rcase */ 0,  /* evc_no */ 15, /* near */ -1.5f,       /* far */ -20000.0f }, 
+        { /* room */ 7,  /* rcase */ 0,  /* evc_no */ 26, /* near */ -1.0f,       /* far */ -20000.0f }, 
+        { /* room */ 8,  /* rcase */ 0,  /* evc_no */ 2,  /* near */ -1.01f,      /* far */ -20000.0f }, 
+        { /* room */ 10, /* rcase */ 0,  /* evc_no */ 5,  /* near */ -1.0f,       /* far */ -20000.0f }, 
+        { /* room */ 24, /* rcase */ 0,  /* evc_no */ 2,  /* near */ -1.0f,       /* far */ -20000.0f }, 
+        { /* room */ -1, /* rcase */ -1, /* evc_no */ -1, /* near */ 0.0f,        /* far */ 0.0f      }
+    };
+    static VIEW_CLIP ViewClipSt8[4] = 
+	{
+        { /* room */ 3,  /* rcase */ 0,  /* evc_no */ 0,  /* near */ -1.01f,      /* far */ -20000.0f }, 
+        { /* room */ 3,  /* rcase */ 0,  /* evc_no */ 4,  /* near */ -35.0f,      /* far */ -20000.0f }, 
+        { /* room */ 3,  /* rcase */ 0,  /* evc_no */ 9,  /* near */ -1.1f,       /* far */ -20000.0f }, 
+        { /* room */ -1, /* rcase */ -1, /* evc_no */ -1, /* near */ 0.0f,        /* far */ 0.0f      }
+    };
+    static VIEW_CLIP ViewClipSt9[27] = 
+	{
+        { /* room */ 5,  /* rcase */ 0,  /* evc_no */ 2,  /* near */ -1.0f,       /* far */ -20000.0f }, 
+        { /* room */ 5,  /* rcase */ 0,  /* evc_no */ 4,  /* near */ -1.0f,       /* far */ -20000.0f }, 
+        { /* room */ 5,  /* rcase */ 0,  /* evc_no */ 8,  /* near */ -1.0f,       /* far */ -20000.0f }, 
+        { /* room */ 5,  /* rcase */ 0,  /* evc_no */ 14, /* near */ -10.0f,      /* far */ -20000.0f }, 
+        { /* room */ 5,  /* rcase */ 0,  /* evc_no */ 34, /* near */ -1.0f,       /* far */ -20000.0f }, 
+        { /* room */ 9,  /* rcase */ 0,  /* evc_no */ 4,  /* near */ -1.1f,       /* far */ -20000.0f }, 
+        { /* room */ 9,  /* rcase */ 0,  /* evc_no */ 6,  /* near */ -27.0f,      /* far */ -20000.0f }, 
+        { /* room */ 9,  /* rcase */ 0,  /* evc_no */ 16, /* near */ -35.0f,      /* far */ -8000.0f  }, 
+        { /* room */ 9,  /* rcase */ 0,  /* evc_no */ 28, /* near */ -125.0f,     /* far */ -20000.0f }, 
+        { /* room */ 9,  /* rcase */ 0,  /* evc_no */ 43, /* near */ -1.0f,       /* far */ -20000.0f }, 
+        { /* room */ 9,  /* rcase */ 0,  /* evc_no */ 58, /* near */ -5.0f,       /* far */ -20000.0f }, 
+        { /* room */ 9,  /* rcase */ 0,  /* evc_no */ 61, /* near */ -30.0f,      /* far */ -20000.0f }, 
+        { /* room */ 16, /* rcase */ 0,  /* evc_no */ 0,  /* near */ -10.0f,      /* far */ -1000.0f  }, 
+        { /* room */ 28, /* rcase */ 0,  /* evc_no */ 10, /* near */ -1.01f,      /* far */ -170.0f   }, 
+        { /* room */ 28, /* rcase */ 0,  /* evc_no */ 34, /* near */ -2.0f,       /* far */ -183.0f   }, 
+        { /* room */ 29, /* rcase */ 0,  /* evc_no */ 3,  /* near */ -1.2f,       /* far */ -20000.0f }, 
+        { /* room */ 32, /* rcase */ 1,  /* evc_no */ 41, /* near */ -1.01f,      /* far */ -20000.0f }, 
+        { /* room */ 34, /* rcase */ 0,  /* evc_no */ 13, /* near */ -150.0f,     /* far */ -20000.0f }, 
+        { /* room */ 34, /* rcase */ 0,  /* evc_no */ 27, /* near */ -1.0f,       /* far */ -20000.0f }, 
+        { /* room */ 35, /* rcase */ 0,  /* evc_no */ 11, /* near */ -10.0f,      /* far */ -20000.0f }, 
+        { /* room */ 35, /* rcase */ 0,  /* evc_no */ 20, /* near */ -1.0f,       /* far */ -20000.0f }, 
+        { /* room */ 35, /* rcase */ 0,  /* evc_no */ 26, /* near */ -1.01f,      /* far */ -20000.0f }, 
+        { /* room */ 35, /* rcase */ 0,  /* evc_no */ 41, /* near */ -1.2f,       /* far */ -20000.0f }, 
+        { /* room */ 35, /* rcase */ 0,  /* evc_no */ 48, /* near */ -1.0f,       /* far */ -20000.0f }, 
+        { /* room */ 37, /* rcase */ 0,  /* evc_no */ 33, /* near */ -1.0f,       /* far */ -20000.0f }, 
+        { /* room */ 37, /* rcase */ 0,  /* evc_no */ 62, /* near */ -1.0f,       /* far */ -20000.0f }, 
+        { /* room */ -1, /* rcase */ -1, /* evc_no */ -1, /* near */ 0.0f,        /* far */ 0.0f      }
+    };
+    static VIEW_CLIP* ViewClipStage[10] = 
+	{
+        ViewClipSt0,
+        ViewClipSt1,
+        ViewClipSt2,
+        ViewClipSt3,
+        ViewClipSt4,
+        ViewClipSt5,
+        ViewClipSt6,
+        ViewClipSt7,
+        ViewClipSt8,
+        ViewClipSt9
+    };
+    
+    if ((sys->ts_flg & 0x200)) 
+	{
+        near = -2.0f;
+        far = -20000.0f;
+    } 
+	else 
+	{
+        near = -1.0f;
+        far = -99.0f;
+    }
+
+	for (i = 0, ViewClipTbl = ViewClipStage[stg_no]; ; i++) 
+	{
+        if (((rom_no == ViewClipTbl[i].room) && (rcase == ViewClipTbl[i].rcase)) && (evc_no == ViewClipTbl[i].evc_no)) 
+		{
+            near = ViewClipTbl[i].near;
+            far = ViewClipTbl[i].far;
+            break;
+        } 
+		else if (ViewClipTbl[i].room < 0) 
+		{
+            break;
+        }
+    }
+    
+    njClipZ(near, far);
+        
+    if ((stg_no == 9) && (rom_no == 5)) 
+	{
+        if (evc_no == 36) 
+		{
+			Ps2_ice_flag = 0;
+		}
+        else 
+		{
+			Ps2_ice_flag = 1;
+		}
+    }
+}
+
+// 100% matching!
+void bhChangeViewClipRM()
+{
+	int i;
+    static VIEW_CLIP* ViewClipTbl;
+    static VIEW_CLIP ViewClipSt0[9] = 
+	{
+        { /* room */ 0,  /* rcase */ 0,  /* evc_no */ 1,  /* near */ -10.0f,     /* far */ -1000.0f  },
+        { /* room */ 1,  /* rcase */ 0,  /* evc_no */ 0,  /* near */ -1.5,       /* far */ -20000.0f },
+        { /* room */ 1,  /* rcase */ 0,  /* evc_no */ 1,  /* near */ -1.01f,     /* far */ -20000.0f },
+        { /* room */ 2,  /* rcase */ 0,  /* evc_no */ 4,  /* near */ -4.0f,      /* far */ -20000.0f },
+        { /* room */ 2,  /* rcase */ 1,  /* evc_no */ 4,  /* near */ -4.0f,      /* far */ -20000.0f },
+        { /* room */ 10, /* rcase */ 0,  /* evc_no */ 1,  /* near */ -8.72,      /* far */ -20000.0f },
+        { /* room */ 10, /* rcase */ 0,  /* evc_no */ 2,  /* near */ -5.0f,      /* far */ -20000.0f },
+        { /* room */ 16, /* rcase */ 0,  /* evc_no */ 2,  /* near */ -6.0f,      /* far */ -20000.0f },
+        { /* room */ -1, /* rcase */ -1, /* evc_no */ -1, /* near */ 0.0f,       /* far */ 0.0f      }
+    };
+    static VIEW_CLIP ViewClipSt1[6] = 
+	{
+        { /* room */ 2,  /* rcase */ 0,  /* evc_no */ 6,  /* near */ -10.0f,     /* far */ -1000.0f  },
+        { /* room */ 4,  /* rcase */ 0,  /* evc_no */ 0,  /* near */ -10.0f,     /* far */ -1000.0f  },
+        { /* room */ 4,  /* rcase */ 0,  /* evc_no */ 1,  /* near */ -22.0f,     /* far */ -20000.0f },
+        { /* room */ 5,  /* rcase */ 0,  /* evc_no */ 1,  /* near */ -20.0f,     /* far */ -20000.0f },
+        { /* room */ 11, /* rcase */ 0,  /* evc_no */ 2,  /* near */ -10.0f,     /* far */ -20000.0f },
+        { /* room */ -1, /* rcase */ -1, /* evc_no */ -1, /* near */ 0.0f,       /* far */ 0.0f      }
+    };
+    static VIEW_CLIP ViewClipSt2[6] = 
+	{
+        { /* room */ 2,  /* rcase */ 0,  /* evc_no */ 0,  /* near */ -10.0f,     /* far */ -1000.0f  },
+        { /* room */ 2,  /* rcase */ 0,  /* evc_no */ 2,  /* near */ -10.0f,     /* far */ -1000.0f  },
+        { /* room */ 3,  /* rcase */ 0,  /* evc_no */ 2,  /* near */ -3.1199999, /* far */ -20000.0f },
+        { /* room */ 4,  /* rcase */ 0,  /* evc_no */ 0,  /* near */ -10.0f,     /* far */ -2000.0f  },
+        { /* room */ 5,  /* rcase */ 0,  /* evc_no */ 1,  /* near */ -10.0f,     /* far */ -1000.0f  },
+        { /* room */ -1, /* rcase */ -1, /* evc_no */ -1, /* near */ 0.0f,       /* far */ 0.0f      }
+    };
+    static VIEW_CLIP ViewClipSt3[5] = 
+	{
+        { /* room */ 7,  /* rcase */ 0,  /* evc_no */ 0,  /* near */ -3.5,       /* far */ -20000.0f },
+        { /* room */ 8,  /* rcase */ 0,  /* evc_no */ 5,  /* near */ -1.0f,      /* far */ -20000.0f },
+        { /* room */ 10, /* rcase */ 0,  /* evc_no */ 8,  /* near */ -9.0f,      /* far */ -20000.0f },
+        { /* room */ 15, /* rcase */ 0,  /* evc_no */ 1,  /* near */ -1.0f,      /* far */ -600.0f   },
+        { /* room */ -1, /* rcase */ -1, /* evc_no */ -1, /* near */ 0.0f,       /* far */ 0.0f      }
+    };
+    static VIEW_CLIP ViewClipSt4[5] = 
+	{
+        { /* room */ 0,  /* rcase */ 0,  /* evc_no */ 2,  /* near */ -4.0f,      /* far */ -20000.0f },
+        { /* room */ 4,  /* rcase */ 0,  /* evc_no */ 1,  /* near */ -22.0f,     /* far */ -20000.0f },
+        { /* room */ 4,  /* rcase */ 0,  /* evc_no */ 2,  /* near */ -22.0f,     /* far */ -20000.0f },
+        { /* room */ 4,  /* rcase */ 0,  /* evc_no */ 3,  /* near */ -15.0f,     /* far */ -20000.0f },
+        { /* room */ -1, /* rcase */ -1, /* evc_no */ -1, /* near */ 0.0f,       /* far */ 0.0f      }
+    };
+    static VIEW_CLIP ViewClipSt5[4] = 
+	{
+        { /* room */ 0,  /* rcase */ 0,  /* evc_no */ 1,  /* near */ -10.0f,     /* far */ -1000.0f  },
+        { /* room */ 1,  /* rcase */ 0,  /* evc_no */ 0,  /* near */ -1.1,       /* far */ -20000.0f },
+        { /* room */ 51, /* rcase */ 0,  /* evc_no */ 2,  /* near */ -10.0f,     /* far */ -20000.0f },
+        { /* room */ -1, /* rcase */ -1, /* evc_no */ -1, /* near */ 0.0f,       /* far */ 0.0f      }
+    };
+    static VIEW_CLIP ViewClipSt6[7] = 
+	{
+        { /* room */ 0,  /* rcase */ 0,  /* evc_no */ 1,  /* near */ -44.0f,     /* far */ -20000.0f },
+        { /* room */ 3,  /* rcase */ 0,  /* evc_no */ 0,  /* near */ -1.0f,      /* far */ -1000.0f  },
+        { /* room */ 3,  /* rcase */ 0,  /* evc_no */ 1,  /* near */ -1.4,       /* far */ -20000.0f },
+        { /* room */ 4,  /* rcase */ 0,  /* evc_no */ 0,  /* near */ -20.0f,     /* far */ -20000.0f },
+        { /* room */ 9,  /* rcase */ 0,  /* evc_no */ 2,  /* near */ -25.5,      /* far */ -1000.0f  },
+        { /* room */ 9,  /* rcase */ 0,  /* evc_no */ 3,  /* near */ -25.5,      /* far */ -1000.0f  },
+        { /* room */ -1, /* rcase */ -1, /* evc_no */ -1, /* near */ 0.0f,       /* far */ 0.0f      }
+    };
+    static VIEW_CLIP ViewClipSt7[4] = 
+	{
+        { /* room */ 9,  /* rcase */ 0,  /* evc_no */ 1,  /* near */ -15.0f,     /* far */ -20000.0f },
+        { /* room */ 15, /* rcase */ 0,  /* evc_no */ 1,  /* near */ -10.0f,     /* far */ -20000.0f },
+        { /* room */ 16, /* rcase */ 0,  /* evc_no */ 3,  /* near */ -10.0f,     /* far */ -20000.0f },
+        { /* room */ -1, /* rcase */ -1, /* evc_no */ -1, /* near */ 0.0f,       /* far */ 0.0f      }
+    };
+    static VIEW_CLIP ViewClipSt8[2] = 
+	{
+        { /* room */ 0,  /* rcase */ 0,  /* evc_no */ 2,  /* near */ -4.0f,      /* far */ -20000.0f },
+        { /* room */ -1, /* rcase */ -1, /* evc_no */ -1, /* near */ 0.0f,       /* far */ 0.0f      }
+    };
+    static VIEW_CLIP ViewClipSt9[13] = 
+	{
+        { /* room */ 0,  /* rcase */ 0,  /* evc_no */ 1,  /* near */ -44.0f,     /* far */ -20000.0f },
+        { /* room */ 3,  /* rcase */ 0,  /* evc_no */ 0,  /* near */ -1.0f,      /* far */ -20000.0f },
+        { /* room */ 3,  /* rcase */ 0,  /* evc_no */ 1,  /* near */ -1.0f,      /* far */ -20000.0f },
+        { /* room */ 4,  /* rcase */ 0,  /* evc_no */ 0,  /* near */ -20.0f,     /* far */ -20000.0f },
+        { /* room */ 5,  /* rcase */ 0,  /* evc_no */ 1,  /* near */ -10.0f,     /* far */ -1000.0f  },
+        { /* room */ 5,  /* rcase */ 0,  /* evc_no */ 2,  /* near */ -10.0f,     /* far */ -20000.0f },
+        { /* room */ 8,  /* rcase */ 0,  /* evc_no */ 2,  /* near */ -11.33,     /* far */ -20000.0f },
+        { /* room */ 12, /* rcase */ 0,  /* evc_no */ 1,  /* near */ -3.4,       /* far */ -20000.0f },
+        { /* room */ 14, /* rcase */ 0,  /* evc_no */ 0,  /* near */ -10.0f,     /* far */ -20000.0f },
+        { /* room */ 14, /* rcase */ 0,  /* evc_no */ 2,  /* near */ -12.0f,     /* far */ -20000.0f },
+        { /* room */ 15, /* rcase */ 0,  /* evc_no */ 3,  /* near */ -4.0f,      /* far */ -1000.0f  },
+        { /* room */ 22, /* rcase */ 0,  /* evc_no */ 0,  /* near */ -5.0f,      /* far */ -20000.0f },
+        { /* room */ -1, /* rcase */ -1, /* evc_no */ -1, /* near */ 0.0f,       /* far */ 0.0f      }
+    };
+    static VIEW_CLIP* ViewClipStage[10] =
+	{
+        ViewClipSt0,
+        ViewClipSt1,
+        ViewClipSt2,
+        ViewClipSt3,
+        ViewClipSt4,
+        ViewClipSt5,
+        ViewClipSt6,
+        ViewClipSt7,
+        ViewClipSt8,
+        ViewClipSt9
+    };
+
+    GameNear = -2.0f;
+    GameFar = -20000.0f;
+
+    if (!(cam.flg & 0x40)) 
+	{
+        for (i = 0, ViewClipTbl = ViewClipStage[sys->stg_no]; ; i++) 
+		{
+            if ((sys->rom_no == ViewClipTbl[i].room) && (cam.ncut == ViewClipTbl[i].evc_no)) 
+			{
+                GameNear = ViewClipTbl[i].near;
+                GameFar = ViewClipTbl[i].far;
+                break;
+            } 
+			else if (ViewClipTbl[i].room < 0) 
+			{
+                break;
+            }
+        }
+    } 
+	else 
+	{
+        GameNear = -1.0f;
+    }
+    
+    njClipZ(GameNear, GameFar);
+    
+    if ((sys->stg_no == 9) && (sys->rom_no == 5)) 
+	{
+        Ps2_ice_flag = 1;
+    }
+}
+
+// 100% matching!
+void bhChangeClipVolume(char stg_no, char rom_no, char rcase, int evc_no)
+{
+	int i;
+	float x, y;
+	static VIEW_CLIP* ViewClipTbl;
+    static VIEW_CLIP ViewClipSt0[1] = 
+	{
+        { /* room */ -1, /* rcase */ -1, /* evc_no */ -1, /* near */ 0.0f,    /* far */ 0.0f    }
+    };
+    static VIEW_CLIP ViewClipSt1[1] = 
+	{
+        { /* room */ -1, /* rcase */ -1, /* evc_no */ -1, /* near */ 0.0f,    /* far */ 0.0f    }
+    };
+    static VIEW_CLIP ViewClipSt2[1] = 
+	{
+        { /* room */ -1, /* rcase */ -1, /* evc_no */ -1, /* near */ 0.0f,    /* far */ 0.0f    }
+    };
+    static VIEW_CLIP ViewClipSt3[2] = 
+	{
+        { /* room */ 15, /* rcase */ 0,  /* evc_no */ 3,  /* near */ -320.0f, /* far */ -240.0f },
+        { /* room */ -1, /* rcase */ -1, /* evc_no */ -1, /* near */ 0.0f,    /* far */ 0.0f    }
+    };
+    static VIEW_CLIP ViewClipSt4[1] = 
+	{
+        { /* room */ -1, /* rcase */ -1, /* evc_no */ -1, /* near */ 0.0f,    /* far */ 0.0f    }
+    };
+    static VIEW_CLIP ViewClipSt5[2] = 
+	{
+        { /* room */ 0,  /* rcase */ 1,  /* evc_no */ 0,  /* near */ 1024.0f, /* far */ 960.0f  },
+        { /* room */ -1, /* rcase */ -1, /* evc_no */ -1, /* near */ 0.0f,    /* far */ 0.0f    }
+    };
+    static VIEW_CLIP ViewClipSt6[3] = 
+	{
+        { /* room */ 10, /* rcase */ 0,  /* evc_no */ 24, /* near */ 1024.0f, /* far */ 960.0f  },
+        { /* room */ 10, /* rcase */ 0,  /* evc_no */ 30, /* near */ 1024.0f, /* far */ 960.0f  },
+        { /* room */ -1, /* rcase */ -1, /* evc_no */ -1, /* near */ 0.0f,    /* far */ 0.0f    }
+    };
+    static VIEW_CLIP ViewClipSt7[1] = 
+	{
+        { /* room */ -1, /* rcase */ -1, /* evc_no */ -1, /* near */ 0.0f,    /* far */ 0.0f    }
+    };
+    static VIEW_CLIP ViewClipSt8[1] = 
+	{
+        { /* room */ -1, /* rcase */ -1, /* evc_no */ -1, /* near */ 0.0f,    /* far */ 0.0f    }
+    };
+    static VIEW_CLIP ViewClipSt9[4] = 
+	{
+        { /* room */ 28, /* rcase */ 0,  /* evc_no */ 7,  /* near */ 1024.0f, /* far */ 960.0f  },
+        { /* room */ 29, /* rcase */ 0,  /* evc_no */ 0,  /* near */ -320.0f, /* far */ -240.0f },
+        { /* room */ 35, /* rcase */ 0,  /* evc_no */ 45, /* near */ 1024.0f, /* far */ 960.0f  },
+        { /* room */ -1, /* rcase */ -1, /* evc_no */ -1, /* near */ 0.0f,    /* far */ 0.0f    }
+    };
+    static VIEW_CLIP* ViewClipStage[10] = 
+	{
+        ViewClipSt0,
+        ViewClipSt1,
+        ViewClipSt2,
+        ViewClipSt3,
+        ViewClipSt4,
+        ViewClipSt5,
+        ViewClipSt6,
+        ViewClipSt7,
+        ViewClipSt8,
+        ViewClipSt9
+    };
+    
+    x = 320.0f;
+    y = 240.0f;
+
+    for (i = 0, ViewClipTbl = ViewClipStage[stg_no]; ; i++) 
+	{
+        if (((rom_no == ViewClipTbl[i].room) && (rcase == ViewClipTbl[i].rcase)) && (evc_no == ViewClipTbl[i].evc_no)) 
+		{
+            x = ViewClipTbl[i].near;
+            y = ViewClipTbl[i].far;
+            break;
+        } 
+		else if (ViewClipTbl[i].room < 0) 
+		{
+            break;
+        }
+    }
+
+    _Make_ClipVolume(x, y);
+}
+
+// 100% matching!
+void bhChangeClipVolumeRM()
+{
+    int i;
+	float x, y;
+	static VIEW_CLIP* ViewClipTbl;
+    static VIEW_CLIP ViewClipSt0[5] =
+	{
+        { /* room */ 7,  /* rcase */ 0,  /* evc_no */ 6,  /* near */ 1024.0f, /* far */ 960.0f  },
+        { /* room */ 9,  /* rcase */ 0,  /* evc_no */ 0,  /* near */ 1024.0f, /* far */ 960.0f  },
+        { /* room */ 9,  /* rcase */ 0,  /* evc_no */ 2,  /* near */ 1024.0f, /* far */ 960.0f  },
+        { /* room */ 15, /* rcase */ 0,  /* evc_no */ 0,  /* near */ 1740.0f, /* far */ 1740.0f },
+        { /* room */ -1, /* rcase */ -1, /* evc_no */ -1, /* near */ 0.0f,    /* far */ 0.0f    }
+    };
+    static VIEW_CLIP ViewClipSt1[3] = 
+	{
+        { /* room */ 0,  /* rcase */ 0,  /* evc_no */ 1,  /* near */ 1024.0f, /* far */ 960.0f  },
+        { /* room */ 6,  /* rcase */ 0,  /* evc_no */ 1,  /* near */ 1024.0f, /* far */ 960.0f  },
+        { /* room */ -1, /* rcase */ -1, /* evc_no */ -1, /* near */ 0.0f,    /* far */ 0.0f    }
+    };
+    static VIEW_CLIP ViewClipSt2[1] = 
+	{
+        { /* room */ -1, /* rcase */ -1, /* evc_no */ -1, /* near */ 0.0f,    /* far */ 0.0f    }
+    };
+    static VIEW_CLIP ViewClipSt3[4] = 
+	{
+        { /* room */ 8,  /* rcase */ 0,  /* evc_no */ 7,  /* near */ 1024.0f, /* far */ 960.0f  },
+        { /* room */ 12, /* rcase */ 0,  /* evc_no */ 3,  /* near */ 1024.0f, /* far */ 960.0f  },
+        { /* room */ 16, /* rcase */ 0,  /* evc_no */ 1,  /* near */ 1024.0f, /* far */ 960.0f  },
+        { /* room */ -1, /* rcase */ -1, /* evc_no */ -1, /* near */ 0.0f,    /* far */ 0.0f    }
+    };
+    static VIEW_CLIP ViewClipSt4[1] = 
+	{
+        { /* room */ -1, /* rcase */ -1, /* evc_no */ -1, /* near */ 0.0f,    /* far */ 0.0f    }
+    };
+    static VIEW_CLIP ViewClipSt5[5] = 
+	{
+        { /* room */ 54, /* rcase */ 0,  /* evc_no */ 7,  /* near */ 1024.0f, /* far */ 960.0f  },
+        { /* room */ 63, /* rcase */ 0,  /* evc_no */ 3,  /* near */ 1024.0f, /* far */ 960.0f  },
+        { /* room */ 66, /* rcase */ 0,  /* evc_no */ 1,  /* near */ 1024.0f, /* far */ 960.0f  },
+        { /* room */ 68, /* rcase */ 0,  /* evc_no */ 1,  /* near */ 1024.0f, /* far */ 960.0f  },
+        { /* room */ -1, /* rcase */ -1, /* evc_no */ -1, /* near */ 0.0f,    /* far */ 0.0f    }
+    };
+    static VIEW_CLIP ViewClipSt6[5] = 
+	{
+        { /* room */ 3,  /* rcase */ 0,  /* evc_no */ 0,  /* near */ 1024.0f, /* far */ 960.0f  },
+        { /* room */ 3,  /* rcase */ 0,  /* evc_no */ 1,  /* near */ 1024.0f, /* far */ 960.0f  },
+        { /* room */ 9,  /* rcase */ 0,  /* evc_no */ 0,  /* near */ 1024.0f, /* far */ 960.0f  },
+        { /* room */ 9,  /* rcase */ 0,  /* evc_no */ 1,  /* near */ 1024.0f, /* far */ 960.0f  },
+        { /* room */ -1, /* rcase */ -1, /* evc_no */ -1, /* near */ 0.0f,    /* far */ 0.0f    }
+    };
+    static VIEW_CLIP ViewClipSt7[8] = 
+	{
+        { /* room */ 3,  /* rcase */ 1,  /* evc_no */ 3,  /* near */ 1024.0f, /* far */ 960.0f  },
+        { /* room */ 7,  /* rcase */ 0,  /* evc_no */ 5,  /* near */ 1024.0f, /* far */ 960.0f  },
+        { /* room */ 8,  /* rcase */ 0,  /* evc_no */ 3,  /* near */ 1024.0f, /* far */ 960.0f  },
+        { /* room */ 8,  /* rcase */ 0,  /* evc_no */ 4,  /* near */ 1024.0f, /* far */ 960.0f  },
+        { /* room */ 9,  /* rcase */ 0,  /* evc_no */ 1,  /* near */ 1024.0f, /* far */ 960.0f  },
+        { /* room */ 20, /* rcase */ 0,  /* evc_no */ 1,  /* near */ 1024.0f, /* far */ 960.0f  },
+        { /* room */ 22, /* rcase */ 0,  /* evc_no */ 1,  /* near */ 1024.0f, /* far */ 960.0f  },
+        { /* room */ -1, /* rcase */ -1, /* evc_no */ -1, /* near */ 0.0f,    /* far */ 0.0f    }
+    };
+    static VIEW_CLIP ViewClipSt8[1] = 
+	{
+        { /* room */ -1, /* rcase */ -1, /* evc_no */ -1, /* near */ 0.0f,    /* far */ 0.0f    }
+    };
+    static VIEW_CLIP ViewClipSt9[15] = 
+	{
+        { /* room */ 3,  /* rcase */ 0,  /* evc_no */ 0,  /* near */ 1024.0f, /* far */ 960.0f  },
+        { /* room */ 3,  /* rcase */ 0,  /* evc_no */ 1,  /* near */ 1024.0f, /* far */ 960.0f  },
+        { /* room */ 3,  /* rcase */ 0,  /* evc_no */ 2,  /* near */ 1024.0f, /* far */ 960.0f  },
+        { /* room */ 5,  /* rcase */ 0,  /* evc_no */ 0,  /* near */ 1740.0f, /* far */ 1740.0f },
+        { /* room */ 5,  /* rcase */ 0,  /* evc_no */ 1,  /* near */ 1740.0f, /* far */ 1740.0f },
+        { /* room */ 5,  /* rcase */ 0,  /* evc_no */ 2,  /* near */ 1740.0f, /* far */ 1740.0f },
+        { /* room */ 5,  /* rcase */ 0,  /* evc_no */ 3,  /* near */ 1740.0f, /* far */ 1740.0f },
+        { /* room */ 12, /* rcase */ 0,  /* evc_no */ 1,  /* near */ 1740.0f, /* far */ 1740.0f },
+        { /* room */ 12, /* rcase */ 0,  /* evc_no */ 2,  /* near */ 1740.0f, /* far */ 1740.0f },
+        { /* room */ 15, /* rcase */ 0,  /* evc_no */ 3,  /* near */ 1024.0f, /* far */ 960.0f  },
+        { /* room */ 15, /* rcase */ 0,  /* evc_no */ 8,  /* near */ 1024.0f, /* far */ 960.0f  },
+        { /* room */ 18, /* rcase */ 0,  /* evc_no */ 1,  /* near */ 1740.0f, /* far */ 1740.0f },
+        { /* room */ 32, /* rcase */ 0,  /* evc_no */ 8,  /* near */ 1024.0f, /* far */ 960.0f  },
+        { /* room */ 32, /* rcase */ 1,  /* evc_no */ 8,  /* near */ 1024.0f, /* far */ 960.0f  },
+        { /* room */ -1, /* rcase */ -1, /* evc_no */ -1, /* near */ 0.0f,    /* far */ 0.0f    }
+    };
+    static VIEW_CLIP* ViewClipStage[10] = 
+	{
+        ViewClipSt0,
+        ViewClipSt1,
+        ViewClipSt2,
+        ViewClipSt3,
+        ViewClipSt4,
+        ViewClipSt5,
+        ViewClipSt6,
+        ViewClipSt7,
+        ViewClipSt8,
+        ViewClipSt9
+    };
+
+    x = 320.0f;
+    y = 240.0f;
+
+    for (i = 0, ViewClipTbl = ViewClipStage[sys->stg_no]; ; i++)
+	{
+        if ((sys->rom_no == ViewClipTbl[i].room) && (cam.ncut == ViewClipTbl[i].evc_no)) 
+		{
+            x = ViewClipTbl[i].near;
+            y = ViewClipTbl[i].far;
+            break;
+        } 
+		else if (ViewClipTbl[i].room < 0) 
+		{
+            break;
+        }
+    }
+	
+    _Make_ClipVolume(x, y);
+}

@@ -1,0 +1,166 @@
+# Builds Linux (i686), Windows (i686, mingw-w64 cross build) and the co-op server, runs the tests,
+# packages the release archives (pc/tools/package.sh) and, for a v* tag, publishes a GitHub release.
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+defaults:
+  run:
+    shell: bash   # explicit: -e and pipefail
+
+jobs:
+  linux-i686:
+    runs-on: ubuntu-24.04
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_MAXSIZE: 500M
+      CMAKE_C_COMPILER_LAUNCHER: ccache     # CMake reads these as the default launchers
+      CMAKE_CXX_COMPILER_LAUNCHER: ccache
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive   # decomp + its header submodules; the mwcc submodule is `update = none` and skipped
+      - name: Install dependencies
+        run: |
+          sudo dpkg --add-architecture i386
+          sudo apt-get update
+          # SDL is built from source and dlopen()s these at run time; the :i386 -dev packages give it
+          # the headers and sonames of the backends (X11, Wayland, ALSA, PipeWire, ...); libpulse-dev:i386
+          # is left out: it pulls libglib2.0-dev:i386, which conflicts with the runner's amd64 GLib tools
+          # (PulseAudio systems still play through ALSA's pulse plugin)
+          sudo apt-get install -y --no-install-recommends gcc-multilib g++-multilib ninja-build ccache nftables \
+            libx11-dev:i386 libxext-dev:i386 libxcursor-dev:i386 libxi-dev:i386 libxfixes-dev:i386 \
+            libxrandr-dev:i386 libxss-dev:i386 libxtst-dev:i386 libxkbcommon-dev:i386 \
+            libwayland-dev:i386 libdecor-0-dev:i386 libgl-dev:i386 libegl-dev:i386 \
+            libasound2-dev:i386 libpipewire-0.3-dev:i386 libudev-dev:i386 libdbus-1-dev:i386
+      - uses: actions/cache@v6
+        with:
+          path: .ccache
+          key: ccache-${{ github.job }}-${{ github.sha }}
+          restore-keys: ccache-${{ github.job }}-
+      - name: Configure
+        run: |
+          cmake -B build -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/linux-i686.cmake -DCMAKE_BUILD_TYPE=RelWithDebInfo | tee configure.log
+          # a game without these would only open the dummy video/audio drivers
+          for b in 'Video drivers:.*wayland' 'Video drivers:.*x11' 'Audio drivers:.*alsa' 'Audio drivers:.*pipewire'; do
+            grep -q "$b" configure.log || { echo "::error::SDL backend missing: $b"; exit 1; }
+          done
+      - name: Build
+        run: cmake --build build && ccache -s
+      - name: Check the glibc floor (2.34)
+        run: |
+          max=$(objdump -T build/pc/recvx | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -n 1)
+          echo "newest glibc symbol: $max"
+          [ "$(printf '%s\n' "$max" GLIBC_2.34 | sort -V | tail -n 1)" = GLIBC_2.34 ]
+      - name: Test
+        # tests needing the disc image skip themselves; rdv_paths/rdv_nat run in the server job
+        run: ctest --test-dir build --output-on-failure -j4 -E 'rdv_paths|rdv_nat'
+      - name: Package
+        run: pc/tools/package.sh dist --linux build
+      - uses: actions/upload-artifact@v7
+        with:
+          name: linux-i686
+          path: |
+            dist/*.tar.gz
+          if-no-files-found: error
+
+  windows-x86:
+    runs-on: ubuntu-24.04
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_MAXSIZE: 500M
+      CMAKE_C_COMPILER_LAUNCHER: ccache     # CMake reads these as the default launchers
+      CMAKE_CXX_COMPILER_LAUNCHER: ccache
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+      - name: Install dependencies
+        # Ubuntu's mingw-w64 (GCC 13, msvcrt) with POSIX threads; the local reference build uses
+        # Arch's mingw-w64-gcc (GCC 16, UCRT): see docs/BUILDING.md "Continuous integration"
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends g++-mingw-w64-i686-posix gcc-mingw-w64-i686-posix \
+            binutils-mingw-w64-i686 mingw-w64-i686-dev ninja-build ccache zip
+          sudo update-alternatives --set i686-w64-mingw32-gcc /usr/bin/i686-w64-mingw32-gcc-posix
+          sudo update-alternatives --set i686-w64-mingw32-g++ /usr/bin/i686-w64-mingw32-g++-posix
+      - uses: actions/cache@v6
+        with:
+          path: .ccache
+          key: ccache-${{ github.job }}-${{ github.sha }}
+          restore-keys: ccache-${{ github.job }}-
+      - name: Configure
+        run: cmake -B build -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/mingw-i686.cmake -DMINGW_PREFIX=/usr -DCMAKE_BUILD_TYPE=RelWithDebInfo
+      - name: Build
+        run: cmake --build build --target recvx && ccache -s
+      - name: Package
+        run: MINGW_PREFIX=/usr pc/tools/package.sh dist --windows build
+      - uses: actions/upload-artifact@v7
+        with:
+          name: windows-x86
+          path: dist/*.zip
+          if-no-files-found: error
+
+  server:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7   # pc/server builds without the decomp
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends nftables
+      - name: Build
+        run: |
+          cmake -S pc/server -B build-server -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-server
+          build-server/recvx-server --version
+      - name: Test
+        # rdv_paths: a local server and two clients; rdv_nat: NAT types in user namespaces (skips itself where not allowed)
+        run: ctest --test-dir build-server --output-on-failure
+      - name: Package
+        run: pc/tools/package.sh dist --server build-server
+      - uses: actions/upload-artifact@v7
+        with:
+          name: server
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [linux-i686, windows-x86, server]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7   # CHANGELOG.md, README.md and pc/tools/package.sh for the notes
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Release notes and checksums
+        run: |
+          ver=$(sed -n 's/^project(recvx_pc VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)
+          case "${GITHUB_REF_NAME#v}" in
+            "$ver"|"$ver"-*) ;;
+            *) echo "::error::tag $GITHUB_REF_NAME does not match the CMake version $ver"; exit 1 ;;
+          esac
+          pc/tools/package.sh dist
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          pre=
+          case "$GITHUB_REF_NAME" in *-rc*|v0.*) pre=--prerelease ;; esac
+          gh release create "$GITHUB_REF_NAME" $pre --verify-tag --title "recvx-enhanced-recomp ${GITHUB_REF_NAME#v}" \
+            --notes-file dist/RELEASE_NOTES.md dist/*.tar.gz dist/*.zip dist/SHA256SUMS

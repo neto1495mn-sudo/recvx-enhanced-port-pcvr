@@ -1,0 +1,52 @@
+# systemd unit for recvx-server (docs/SERVER.md "Running a server").
+#   sudo install -m 755 recvx-server /usr/local/bin/
+#   sudo install -m 644 recvx-server.conf.example /etc/recvx-server.conf   # optional: the defaults
+#   sudo cp recvx-server.service /etc/systemd/system/ && sudo systemctl enable --now recvx-server
+# Open UDP 7141 in the firewall. Log and a metrics line every 5 minutes: journalctl -u recvx-server.
+# After editing /etc/recvx-server.conf: systemctl reload recvx-server (limits, log level, stats
+# interval) or restart (port, listen, max_rooms). Metrics: recvx-client 127.0.0.1 status
+[Unit]
+Description=recvx co-op rendezvous and relay server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# reads /etc/recvx-server.conf when it exists; flags here would override it
+ExecStart=/usr/local/bin/recvx-server
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+# no state, no disk, no privileges: a throwaway user, read-only system, one UDP socket
+DynamicUser=yes
+ProtectSystem=strict
+# the config is only read (strict already makes /etc read-only; "-": it need not exist)
+ReadOnlyPaths=-/etc/recvx-server.conf
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+PrivateIPC=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+ProcSubset=pid
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_INET AF_INET6
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+UMask=0077
+MemoryMax=64M
+TasksMax=4
+
+[Install]
+WantedBy=multi-user.target

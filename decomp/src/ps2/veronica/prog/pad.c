@@ -1,0 +1,292 @@
+#include "../../../ps2/veronica/prog/pad.h"
+#include "../../../ps2/veronica/prog/message.h"
+#include "../../../ps2/veronica/prog/screen.h"
+#include "../../../ps2/veronica/prog/sdfunc.h"
+#include "../../../ps2/veronica/prog/system.h"
+#include "../../../ps2/veronica/prog/main.h"
+
+unsigned int pad_tab_a[18] = { 0x1000, 0x4000, 0x8000, 0x2000, 0x8, 0x1000, 0x4000, 0x4, 0xC0, 0xC0, 0x20, 0xC0, 0x20, 0x10, 0xC00, 0x100, 0x100, 0x800 };
+unsigned int pad_tab_b[18] = { 0x1000, 0x4000, 0x8000, 0x2000, 0x8, 0x1000, 0x4000, 0x4, 0x60, 0x60, 0x80, 0x60, 0x80, 0x10, 0xC00, 0x100, 0x100, 0x800 };
+unsigned int pad_tab_c[18] = { 0x1000, 0x4000, 0x8000, 0x2000, 0x8, 0x1000, 0x4000, 0x4, 0xA0, 0xA0, 0x40, 0xA0, 0x40, 0x10, 0xC00, 0x100, 0x100, 0x800 };
+unsigned int pad_tab_d[18] = { 0x1000, 0x4000, 0x8000, 0x2000, 0x8, 0x1000, 0x4000, 0x4, 0x80, 0x80, 0x40, 0x80, 0x40, 0x10, 0x4, 0x1, 0x10, 0x800 } ;
+unsigned int* pad_type[4] = { pad_tab_a, pad_tab_b, pad_tab_c, pad_tab_d };
+const unsigned short pdm_mes[10] = { 0x24, 0x25, 0x2D, 0x2F, 0xFF01, 0x30, 0x2C, 0x21, 0x39, 0xFFFF };
+const unsigned short pdm_palmes[19] = { 0x30, 0x32, 0x25, 0x33, 0x33, 0xFF01, 0x33, 0x34, 0x21, 0x32, 0x34, 0xFF01, 0x42, 0x55, 0x54, 0x54, 0x4F, 0x4E, 0xFFFF };
+
+// 100% matching!
+void bhSetPad() 
+{ 
+	unsigned int* pd;
+    int i;
+    unsigned int pad;
+    unsigned int pon;
+    unsigned int argb;
+    unsigned int padwork;
+    
+    if ((sys->ss_flg & 0x800000))
+    { 
+        if (!(sys->cb_flg & 0x2))
+        { 
+            sys->keytype = sys->pdm_keytpb; 
+            
+            njFogDisable();
+            
+            njSetBackColor(0x00000000, 0x00000000, 0x00000000);  
+            
+            bhReturnTitle();
+            
+            sys->ss_flg &= ~0xC00000; 
+            
+            sys->pdm_no++;
+            
+            if (sys->pdm_no > 2) 
+            {
+                sys->pdm_no = 0; 
+            }
+        }
+        
+        return;  
+    } 
+    else if ((sys->ss_flg & 0x400000)) 
+    { 
+        if (pd_port == -1) 
+        {
+            sys->p1per = NULL;
+        }
+        else 
+        {
+            sys->p1per = njGetPeripheral(pd_port); 
+        }
+        
+        pon = *(unsigned int*)sys->pdm_pd; 
+        
+        {
+        unsigned int padtbl[18] = { 0x00000000, 0x00000800, 0x00000040, 0x00000100, 0x00001000, 0x00004000, 0x00008000, 0x00002000,
+                                    0x00000000, 0x00000010, 0x00000080, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 
+                                    0x00000008, 0x00000004 }; 
+            
+        if (pon != -1) 
+        { 
+            padwork = 0; 
+            
+            for (i = 0; i < 18; i++) 
+            { 
+                if ((pon & (1 << i))) 
+                {
+                    padwork |= padtbl[i];
+                }
+            }
+            
+            pon = padwork; 
+        }
+        }
+        
+        sys->pdm_pd += 4; 
+        
+        if ((pon == -1) || ((sys->p1per != NULL) && ((sys->p1per->on & 0x800)) && (!(sys->cb_flg & 0x2)))) 
+        { 
+            if (pon == -1) 
+            {
+                sys->ss_flg |= 0x200000;
+            }
+            
+            sys->ss_flg |= 0x800000; 
+            
+            sys->sp_flg = 0;
+            sys->sp_flg |= 0x20;
+            
+            bhSetScreenFade(0xFF000000, 10.0f); 
+            
+            RequestAllStopSoundEx(1, 1, 10);
+            return; 
+        }
+        
+        if (!(sys->cb_flg & 0x2)) 
+        { 
+            sys->mes_tp = pdm_mes;
+            
+            argb = ((int)(128.0f + (127.0f * njSin((sys->eor_ct & 0xF) * 2048))) << 24) | 0xE0E000; 
+            
+            bhDispMessageEx(320.0f - (bhMesLen(pdm_mes) / 2.0f), 88.0f, -0.9f, 2, 0, argb, 0);    
+            bhDispMessageEx(320.0f - (bhMesLen(pdm_mes) / 2.0f), 88.0f, -0.9f, 2, 0, -2039808, 0); 
+            
+            sys->mes_tp = pdm_palmes; 
+            
+            bhDispMessageEx(320.0f - (bhMesLen(pdm_palmes) / 2.0f), 392.0f, -0.9f, 2, 0, argb, 0); 
+        }
+    }
+    else
+    { 
+        if (pd_port == -1) 
+        {
+            sys->p1per = NULL; 
+        }
+        else 
+        {
+            sys->p1per = njGetPeripheral(pd_port);
+        }
+        
+        if (sys->p1per == NULL) 
+        { 
+            sys->pad_on = sys->pad_oncpy = sys->pad_ps = sys->pad_old = 0; 
+            
+            sys->pad_ay = sys->pad_ax = sys->pad_al = sys->pad_ar = 0;
+            return; 
+        }
+        
+        pon = sys->p1per->on; 
+        
+        sys->pad_ar = sys->p1per->r; 
+        sys->pad_al = sys->p1per->l; 
+    
+        sys->pad_ax = -sys->p1per->x1;
+        sys->pad_ay = -sys->p1per->y1; 
+    }
+    
+    sys->pad_old = sys->pad_on; 
+    
+    pad = 0; 
+    
+    pd = pad_type[sys->keytype]; 
+    
+    for (i = 0; i < 18; i++) 
+    { 
+        if ((pon & pd[i]))
+        {
+            pad |= 1 << i;
+        }
+    } 
+    
+    if (!(sys->gm_flg & 0x80001)) 
+    { 
+        if (sys->pad_ay > 63) 
+        {
+            pad |= 0x42;
+        }
+        
+        if (sys->pad_ay < -63) 
+        {
+            pad |= 0x21;
+        }
+        
+        if (sys->pad_ax > 63) 
+        {
+            pad |= 0x8;
+        }
+        
+        if (sys->pad_ax < -63) 
+        {
+            pad |= 0x4; 
+        }
+    }
+    
+    if ((pad & 0x1)) 
+    {
+        pad &= ~0x42; 
+    }
+    
+    if ((pad & 0x8)) 
+    {
+        pad &= ~0x4;
+    }
+    
+    if ((pad & 0xC)) 
+    { 
+        if ((pad & 0x8)) 
+        { 
+            if (sys->pad_dx >= 0) 
+            {
+                sys->pad_dx += 4;
+            }
+            else 
+            {
+                sys->pad_dx = 0;
+            }
+        }
+        
+        if ((pad & 0x4)) 
+        { 
+            if (sys->pad_dx <= 0) 
+            {
+                sys->pad_dx -= 4;
+            }
+            else 
+            {
+                sys->pad_dx = 0;
+            }
+        }
+        
+        if (sys->pad_dx > 127) 
+        {
+            sys->pad_dx = 127;
+        }
+        
+        if (sys->pad_dx < -128) 
+        {
+            sys->pad_dx = -128;
+        }
+    } 
+    else
+    { 
+        sys->pad_dx = sys->pad_dx / 2; 
+    }
+    
+    if ((pad & 0x3)) 
+    { 
+        if ((pad & 0x2))
+        { 
+            if (sys->pad_dy >= 0) 
+            {
+                sys->pad_dy += 4;
+            }
+            else 
+            {
+                sys->pad_dy = 0;
+            }
+        }
+        
+        if ((pad & 0x1)) 
+        { 
+            if (sys->pad_dy <= 0) 
+            {
+                sys->pad_dy -= 4;
+            }
+            else 
+            {
+                sys->pad_dy = 0;
+            }
+        }
+        
+        if (sys->pad_dy > 127) 
+        {
+            sys->pad_dy = 127;
+        }
+        
+        if (sys->pad_dy < -128) 
+        {
+            sys->pad_dy = -128; 
+        }
+    } 
+    else 
+    { 
+        sys->pad_dy = sys->pad_dy / 2; 
+    }
+    
+#ifdef TARGET_PC
+    if (tps_on)
+    {
+        pad = tps_pad(pad);
+    }
+    
+    pad = modern_pad(pad);   /* modern controls for the fixed cameras (modern_glue.c) */
+    pad = knife_pad(pad);
+    pad = menu_pad(pad);
+    pad = trade_pad(pad);   /* co-op trade screen: its input, the player stands still */
+    pad = selmenu_pad(pad);   /* vr145: Select pauses with a menu (options_glue.c) */
+#endif
+    
+    sys->pad_ps = pad & ~sys->pad_oncpy; 
+    sys->pad_rs = pad ^ (sys->pad_oncpy | sys->pad_ps); 
+    
+    sys->pad_on = sys->pad_oncpy = pad; 
+} 

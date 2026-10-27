@@ -1,0 +1,3245 @@
+#ifdef TARGET_PC
+#include "ee_asm.h"
+#endif
+#include "../../../ps2/veronica/prog/ps2_dummy.h"
+#include "../../../ps2/veronica/prog/ps2_loadtim2.h"
+#include "../../../ps2/veronica/prog/ps2_NaDraw2D.h"
+#include "../../../ps2/veronica/prog/ps2_NaMath.h"
+#include "../../../ps2/veronica/prog/ps2_NaSystem.h"
+#include "../../../ps2/veronica/prog/ps2_NaTextureFunction.h"
+#include "../../../ps2/veronica/prog/ps2_sg_pad.h"
+#include "../../../ps2/veronica/prog/ps2_texture.h"
+#include "../../../ps2/veronica/prog/sdfunc.h"
+#include "../../../ps2/veronica/prog/main.h"
+#ifdef TARGET_PC
+static void pc_native_packet_test(unsigned int h, unsigned long test);
+static unsigned long pc_ot_poly;   /* Ps2AddOT: the entry is this effect polygon (pc_effect_poly) */
+#endif
+
+// the three vars below were originally defined as unsigned int in ps2_NaFog.c, and redeclared as unsigned long here
+extern unsigned long ulNaFogR;
+extern unsigned long ulNaFogG;
+extern unsigned long ulNaFogB;
+
+sceGsDBuffDc Db;
+void (*EorFunc)();
+void (*VsyncFunc)();
+unsigned int Ps2_vcount;
+unsigned int Ps2_dbuff;
+unsigned int Ps2_njControl3D_flag;
+unsigned int Ps2_sys_cnt;
+unsigned char Ps2_DRAW_TMP[16384];
+NJS_SCREEN _nj_screen_;
+unsigned int _nj_control_3d_flag_;
+NJS_VERTEX_BUF* _nj_vertex_buf_;
+Uint8* _BSG_END;
+unsigned int Ps2_use_pt_flag;
+NJS_MATRIX crmat;
+float cmmat[2][16]; 
+NJS_MATRIX lcmat[12];
+float mbuf[128][16];
+unsigned int palbuf[4096];
+#ifdef TARGET_PC
+unsigned char Ps2_tex_mem[PC_TEX_HEAP_SIZE];   /* PS2: 10 MB (pc_prelude.h) */
+#else
+unsigned char Ps2_tex_mem[10485760];
+#endif
+PS2_OT* Ps2_OT[4096][2] __attribute__((aligned(128)));
+#ifdef TARGET_PC
+unsigned char Ps2_PBUFF[PC_PBUFF_SIZE] __attribute__((aligned(64)));   /* PS2: 1835008 (pc_prelude.h) */
+void* Ps2_PP;
+PS2_OT Ps2_ot_list[PC_OT_ENTRIES];                                      /* PS2: 8192 */
+#else
+unsigned char Ps2_PBUFF[1835008] __attribute__((aligned(64)));
+void* Ps2_PP;
+PS2_OT Ps2_ot_list[8192];
+#endif
+unsigned int Ps2_ot_list_no;
+PS2_TP_TAG Ps2_tp_tag[64] __attribute__((aligned(64)));
+PS2_TP_CACHE ps2_tp_cache[64];
+float Ps2_shadow_vec[4];
+float Ps2_shadow_fog;
+int Ps2_shadow_z;
+void* Ps2_tex_cache_buff[4];
+unsigned int Ps2_tex_cache_beflag[4];
+unsigned int Ps2_tex_cache_num;
+PS2_GS_SAVE Ps2_gs_save __attribute__((aligned(64)));
+NJS_TEXMEMLIST* Ps2_now_tex;
+unsigned int Ps2_now_bank;
+float Ps2AddPrimPrio;
+int ViewType;
+unsigned int Ps2_albinoid_flag;
+unsigned int Ps2_ice_flag;
+unsigned int PS2_Render_tex_sub_flag;
+unsigned int Ps2_tex_load_tp_cancel;
+/* unused below
+unsigned int Ps2_highlight;
+float Ps2_rand_seed[4];
+unsigned int Ps2_divide_flag;
+int _nj_tex_count;*/
+
+unsigned char* Ps2_MOVIE = &Ps2_PBUFF[1179648]; 
+
+extern int ps2_vu0sub0 __attribute__((section(".vudata")));
+extern int ps2_vu1sub0 __attribute__((section(".vudata")));
+extern int ps2_vu1sub1 __attribute__((section(".vudata")));
+
+// 100% matching!
+void _builtin_set_imask(int mask) 
+{
+
+}
+
+// 100% matching! 
+void Ps2Init() 
+{ 
+    Ps2_tex_buff = &Ps2_tex_mem; 
+    
+    sceDmaReset(1); 
+    sceVpu0Reset(); 
+    
+    sceGsResetPath(); 
+    sceGsResetGraph(0, SCE_GS_INTERLACE, SCE_GS_NTSC, SCE_GS_FIELD); 
+    
+    sceGsSyncV(0); 
+    
+    sceGsSetDefDBuffDc(&Db, SCE_GS_PSMCT32, DISP_WIDTH, DISP_HEIGHT, SCE_GS_ZGEQUAL, SCE_GS_PSMZ16S, 1); 
+    
+    Db.disp[0].dispfb.FBP = 150; 
+    Db.disp[0].dispfb.PSM = SCE_GS_PSMCT32;
+    
+    Db.draw01.frame1.FBP = 0; 
+    Db.draw01.frame1.PSM = SCE_GS_PSMCT32;
+    
+    Db.draw01.zbuf1.ZBP = 300;
+    
+    Db.draw02.frame2.FBP = 0; 
+    Db.draw02.frame2.PSM = SCE_GS_PSMCT32;
+    
+    Db.draw02.zbuf2.ZBP = 300; 
+    
+    Db.disp[1].dispfb.FBP = 150; 
+    Db.disp[1].dispfb.PSM = SCE_GS_PSMCT32;
+    
+    Db.draw11.frame1.FBP = 0; 
+    Db.draw11.frame1.PSM = SCE_GS_PSMCT32; 
+    
+    Db.draw11.zbuf1.ZBP = 300; 
+    
+    Db.draw12.frame2.FBP = 0; 
+    Db.draw12.frame2.PSM = SCE_GS_PSMCT32; 
+    
+    Db.draw12.zbuf2.ZBP = 300; 
+    
+    Db.disp[0].display.DY = 636; 
+    Db.disp[1].display.DY = 32; 
+    
+    ClearVram(); 
+    
+    *T0_MODE = 139; 
+    
+    FlushCache(0); 
+    
+    sceSifInitRpc(0); 
+    
+    while (sceCdInit(SCECdINIT) == 0); 
+    
+    sceCdMmode(SCECdDVD); 
+    
+    while (sceSifRebootIop("cdrom0:\\PS2_DATA\\MODULES\\IOPRP213.IMG;1") == 0);
+    
+    while (sceSifSyncIop() == 0);  
+    
+    sceSifInitRpc(0); 
+    
+    while (sceCdInit(SCECdINIT) == 0); 
+    
+    sceCdMmode(SCECdDVD); 
+    
+    sceFsReset(); 
+    
+    if (sceSifInitIopHeap() != 0)
+    { 
+        printf("Error:sceSifInitIopHeap Error\n");
+        
+        exit(-1);
+    }
+    
+    Ps2LoadModule("cdrom0:\\PS2_DATA\\MODULES\\SIO2MAN.IRX;1"); 
+    Ps2LoadModule("cdrom0:\\PS2_DATA\\MODULES\\PADMAN.IRX;1"); 
+    Ps2LoadModule("cdrom0:\\PS2_DATA\\MODULES\\MCMAN.IRX;1"); 
+    Ps2LoadModule("cdrom0:\\PS2_DATA\\MODULES\\MCSERV.IRX;1"); 
+    Ps2LoadModule("cdrom0:\\PS2_DATA\\MODULES\\LIBSD.IRX;1"); 
+    Ps2LoadModule("cdrom0:\\PS2_DATA\\MODULES\\MODHSYN.IRX;1"); 
+    Ps2LoadModule("cdrom0:\\PS2_DATA\\MODULES\\MODMIDI.IRX;1"); 
+    Ps2LoadModule("cdrom0:\\PS2_DATA\\MODULES\\MODMSIN.IRX;1"); 
+    Ps2LoadModule("cdrom0:\\PS2_DATA\\MODULES\\TSNDDRV.IRX;1"); 
+    
+    Snd_init(); 
+    Cd_init(); 
+    Card_init(); 
+    Pad_init(); 
+    
+    Ps2SetVSyncCounter(); 
+    
+    Ps2InitFunc(); 
+    
+    Ps2DispScreenClear(); 
+    Ps2ScreenClear(); 
+    
+    Db.disp[0].pmode.EN2 = 0; 
+    Db.disp[1].pmode.EN2 = 0;
+    
+    FlushCache(0); 
+    
+    Ps2SwapDBuff(); 
+    
+    Db.disp[0].pmode.EN2 = 1; 
+    Db.disp[1].pmode.EN2 = 1; 
+    
+    FlushCache(0); 
+    
+    Ps2InitTexCache(); 
+    Ps2InitPS2_GS_SAVE(); 
+    
+    njColorBlendingMode(0, 8); 
+    njColorBlendingMode(1, 6); 
+
+    njUserClipping(0, NULL); 
+    
+    _Make_SinTable(); 
+    
+    Ps2Vu0ProgSend(0); 
+    Ps2Vu1ProgSend(0); 
+    Ps2Vu1ProgSend(1); 
+}
+
+// 100% matching!
+void Ps2LoadModule(char* p)
+{
+    if (sceSifLoadModule(p, 0, NULL) < 0) 
+    {
+        printf("LOAD ERROR!!! %s\n", p); 
+        
+        exit(0); 
+    }
+}
+
+// 100% matching! 
+void Snd_init()
+{
+
+}
+
+// 100% matching! 
+void Cd_init()
+{
+
+}
+
+// 100% matching! 
+void Card_init()
+{
+
+}
+
+// 100% matching!
+void PS2_jikken()
+{ 
+    pdGetPeripheral(PDD_PORT_A0); 
+    
+    Ps2SwapDBuff(); 
+} 
+
+// 99.92% matching 
+void PS2_swap()
+{
+    unsigned long *p;
+
+    p = (unsigned long*)WORKBASE;
+
+    D2_SyncTag();
+
+    *p++ = DMAend | 0xF;
+    *p++ = 0;
+
+    *p++ = SCE_GIF_SET_TAG(14, SCE_GS_TRUE, SCE_GS_FALSE, 0, SCE_GIF_PACKED, 1);
+    *p++ = SCE_GIF_PACKED_AD;
+
+    *p++ = SCE_GS_SET_FRAME_2(150, 10, SCE_GS_PSMCT32, 0);
+    *p++ = SCE_GS_FRAME_2;
+
+    *p++ = 0;
+    *p++ = SCE_GS_TEXFLUSH;
+
+    *p++ = SCE_GS_SET_TEX1_2(0, 0, SCE_GS_NEAREST, SCE_GS_NEAREST, 0, 0, 0);
+    *p++ = SCE_GS_TEX1_2;
+
+    *p++ = SCE_GS_SET_PABE(0);
+    *p++ = SCE_GS_PABE;
+
+#ifndef TARGET_PC
+    if (MovieInfo.ExecMovieSystemFlag != 0)
+#else
+    if (MovieInfo.ExecMovieSystemFlag != 0 || !pc_frame_blend())   /* option: plain copy, no trail */
+#endif
+    {
+        *p++ = SCE_GS_SET_ALPHA_2(SCE_GS_ALPHA_CS, SCE_GS_ALPHA_CD, SCE_GS_ALPHA_FIX, SCE_GS_ALPHA_CD, 128);
+    }
+    else
+    {
+        *p++ = SCE_GS_SET_ALPHA_2(SCE_GS_ALPHA_CS, SCE_GS_ALPHA_CD, SCE_GS_ALPHA_FIX, SCE_GS_ALPHA_CD, 96);
+    }
+
+    *p++ = SCE_GS_ALPHA_2;
+
+    *p++ = SCE_GS_SET_TEST_2(0, SCE_GS_ALPHA_NEVER, 0, SCE_GS_AFAIL_KEEP, 0, 0, 1, SCE_GS_DEPTH_ALWAYS);
+    *p++ = SCE_GS_TEST_2;
+
+    *p++ = SCE_GS_SET_TEX0_2(0, 10, SCE_GS_PSMCT32, 10, 9, 1, SCE_GS_MODULATE, 0, SCE_GS_PSMCT32, 0, 0, 0);
+    *p++ = SCE_GS_TEX0_2;
+
+    *p++ = SCE_GS_SET_PRIM(SCE_GS_PRIM_SPRITE, 0, 1, 0, 1, 0, 1, 1, 0);
+    *p++ = SCE_GS_PRIM;
+
+    *p++ = SCE_GS_SET_RGBAQ(128, 128, 128, 128, 0);
+    *p++ = SCE_GS_RGBAQ;
+
+    *p++ = SCE_GS_SET_UV(8, 8);
+    *p++ = SCE_GS_UV;
+
+    *p++ = SCE_GS_SET_XYZF2(GS_X_COORD(0), GS_Y_COORD(-128), 256, 0);
+    *p++ = SCE_GS_XYZF2;
+
+    *p++ = SCE_GS_SET_UV(8 + (DISP_WIDTH * 16), 8 + (DISP_HEIGHT * 16));
+    *p++ = SCE_GS_UV;
+
+    *p++ = SCE_GS_SET_XYZF2(GS_X_COORD(SCR_WIDTH), GS_Y_COORD(352), 256, 0);
+    *p++ = SCE_GS_XYZF2;
+
+    *p++ = SCE_GS_SET_TEST_2(0, SCE_GS_ALPHA_NEVER, 0, SCE_GS_AFAIL_KEEP, 0, 0, 1, SCE_GS_DEPTH_GEQUAL);
+    *p++ = SCE_GS_TEST_2;
+    
+    loadImage((void*)0xF0000000);
+    
+    D2_SyncTag();
+    SyncPath();
+}
+
+// 99.93% matching
+void Ps2AddPrim(unsigned long prim, void* dp, unsigned int num, unsigned int clip_3d_on)
+{
+    unsigned long* p;           
+    unsigned int i;             
+    unsigned int clip_flag;     
+    unsigned int sc_flag;       
+    unsigned int out_clip_flag; 
+    unsigned int st_clip_flag;  
+    unsigned int nf_flag;       
+    float z;                    
+    float invz;                 
+    float sz;                   
+    float x;                   
+    float y;                    
+
+    clip_flag = 0; 
+    sc_flag = 0;
+    st_clip_flag = 0x8000;
+    nf_flag = 0; 
+    
+    if ((prim & 0x8000000000000))
+    { 
+        if (Ps2_now_tex == NULL) 
+        { 
+            return;
+        }
+        
+        if (((prim & 0x20000000000000)) && (Ps2_use_pt_flag != 0)) 
+        { 
+            prim &= ~0x20000000000000; 
+        }
+        
+        if ((!(prim & 0x20000000000000)) && (((TIM2_PICTUREHEADER_EX*)(Ps2_now_tex->texinfo.texsurface.pSurface))->TpFlag != 0)) 
+        { 
+            Ps2_tex_load_tp_cancel = 1; 
+            
+            Ps2TexLoad(Ps2_now_tex);
+            
+            Ps2_tex_load_tp_cancel = 0; 
+        }
+    } 
+    
+#ifdef TARGET_PC
+    if (pc_native_3d()) 
+    {
+        /* native path (pc/glue/native_glue.c): triangles as native triangles, points,
+           lines and sprites as the register values the GS would get */
+        float key;
+        unsigned int t = (unsigned int)((prim >> 47) & 7);
+        unsigned int h = t >= 3 && t <= 5
+            ? pc_native_prim((unsigned int)((prim >> 47) & 0x7FF), (const unsigned int*)dp, (int)num, (int)clip_3d_on,
+                             (prim & 0x20000000000000) != 0, &key)
+            : pc_native_prim_raw((unsigned int)((prim >> 47) & 0x7FF), (const unsigned int*)dp, (int)num, (int)clip_3d_on, &key);
+        pc_native_packet_test(h, SCE_GS_SET_TEST(1, 6, 0, 0, 0, 0, 1, 2));
+        if ((prim & 0x20000000000000)) 
+        {
+            Ps2AddOT((void*)WORKBASE, 1, key, prim);
+        }
+        else
+        {
+            SyncPath();
+            loadImage((void*)0xF0000000);
+        }
+        return;
+    }
+#endif
+    p = (unsigned long*)WORKBASE; 
+    
+    D2_SyncTag(); 
+    
+    *p++ = DMAend | ((num * 3) + 3); 
+    *p++ = 0; 
+    
+    *p++ = SCE_GIF_SET_TAG(1, 0, 0, 0, 0, 1); 
+    *p++ = SCE_GIF_PACKED_AD; 
+    
+    if ((prim & 0x20000000000000)) 
+    { 
+        *p++ = Ps2_gs_save.TEST = SCE_GS_SET_TEST(1, 6, 0, 0, 0, 0, 1, 2); 
+    }
+    else
+    { 
+        *p++ = Ps2_gs_save.TEST = SCE_GS_SET_TEST(1, 6, 0, 0, 0, 0, 1, 2); 
+    }
+    
+    *p++ = SCE_GS_TEST_1; 
+    *p++ = SCE_GIF_SET_TAG(prim, 1, 1, 0, 0, 3) | num; // should be SCE_GIF_SET_TAG(num, ...) - maybe it's a custom macro and not the official one?
+    
+    if ((prim & 0x80000000000000)) 
+    {
+        *p++ = SCE_GS_UV << (0 * 4) | SCE_GS_RGBAQ << (1 * 4) | SCE_GS_XYZF2 << (2 * 4); 
+    } 
+    else 
+    { 
+        *p++ = SCE_GS_ST << (0 * 4) | SCE_GS_RGBAQ << (1 * 4) | SCE_GS_XYZF2 << (2 * 4); 
+    }
+    
+    for (i = 0; i < num; i++) 
+    { 
+        clip_flag >>= 1; 
+        nf_flag >>= 1; 
+        
+        ((u_long128*)p)[0] = ((u_long128*)dp)[0]; 
+        
+        out_clip_flag = ((UNKNOWN*)p)->unkC; 
+        
+        invz = ((float*)p)[2]; 
+        
+        ((u_long128*)p)[1] = ((u_long128*)dp)[1]; 
+        ((u_long128*)p)[2] = ((u_long128*)dp)[2]; 
+        
+        x = ((float*)p)[8]; 
+        y = ((float*)p)[9]; 
+            
+        sc_flag >>= 4;
+
+        if (((x < 0) || (x > 4095.0f)) || ((y < 0) || (y > 4095.0f))) 
+        { 
+            clip_flag |= 0x4;
+        }
+
+        z = ((float*)p)[3] = ((UNKNOWN*)(p + 4))->unk8;
+        
+        if ((z < 1.0f) || (z > 65535.0f)) 
+        { 
+            clip_flag |= 0x4;
+            nf_flag |= 0x4; 
+        }
+        
+        if (clip_3d_on != 0)
+        { 
+            sz = (-Ps2_zbuff_b * invz) - Ps2_zbuff_a; 
+            
+            if (sz < 0) 
+            {
+                sz = 0;
+            }
+            
+            if (sz > 65534.0f) 
+            {
+                sz = 65534.0f; 
+            }
+            
+            ((UNKNOWN*)(p + 4))->unk8 = sz; 
+        } 
+        else 
+        { 
+            sz = Ps2_zbuff_a + (Ps2_zbuff_b / z); 
+            
+            if (sz < 0) 
+            {
+                sz = 0; 
+            }
+            
+            if (sz > 65534.0f) 
+            {
+                sz = 65534.0f; 
+            }
+               
+            ((UNKNOWN*)(p + 4))->unk8 = sz; 
+        } 
+        
+        sceVu0FTOI4Vector((void*)(p + 4), (void*)(p + 4)); 
+        
+        if (clip_flag != 0) 
+        { 
+            ((UNKNOWN*)(p + 4))->unkC |= 0x8000;
+        }
+        
+        ((UNKNOWN*)(p + 4))->unkC |= out_clip_flag; 
+        
+        st_clip_flag &= ((UNKNOWN*)(p + 4))->unkC; 
+        
+        if (clip_3d_on == 0) 
+        { 
+            ((UNKNOWN*)(p + 4))->unkC &= ~0x8000;
+        }
+        
+        p = (unsigned long*)((int)p + 48); 
+        dp = (unsigned long*)((int)dp + 48);
+    } 
+    
+    if ((prim & 0x20000000000000)) 
+    { 
+        Ps2AddOT((void*)WORKBASE, num, sz, prim); 
+    } 
+    else
+    { 
+        SyncPath(); 
+        
+        loadImage((void*)0xF0000000); 
+    }
+} 
+
+// 100% matching!
+void Ps2AddPrim2D(unsigned long prim, void* dp, unsigned int num)
+{
+    Ps2AddPrim(prim, dp, num, 0);
+}
+
+// 100% matching!
+void Ps2AddPrim3D(unsigned long prim, void* dp, unsigned int num)
+{
+    unsigned long* p;             
+    TIM2_PICTUREHEADER_EX* timp;  
+    unsigned int clip_flag;    // needs use   
+    unsigned int clut_flag;    // needs use
+    unsigned int st_clip_flag; // needs use
+    float zsum;                  
+    float zbuff_ab_vec[4] = { 0 }; 
+    static const float clip_vec[4] = { 2048.0f, 2048.0f, 0, 2047.0f };  
+    static const float near_far_vec[4] = { 1.0f, 65534.0f, 0, 0 };
+    static const float zclip_ab_vec[4] = { 0.062501907f, 0, -2048.0625f, 0 };
+    
+    zbuff_ab_vec[0] = -Ps2_zbuff_b;
+    zbuff_ab_vec[2] = -Ps2_zbuff_a;
+    zbuff_ab_vec[3] = *(float*)&num;  
+    
+    if ((prim & 0x8000000000000)) 
+    {
+        if (Ps2_now_tex == NULL) 
+        {
+            return;
+        }
+
+        if ((prim & 0x20000000000000)) 
+        {
+            if (Ps2_use_pt_flag != 0)
+            {
+                prim &= ~SCE_GIF_SET_TAG(0, 0, 0, SCE_GS_SET_PRIM(0, 0, 0, 0, 1, 0, 0, 0, 0), 0, 0);
+            }
+        }
+        
+        if (!(prim & 0x20000000000000)) 
+        {
+            timp = (TIM2_PICTUREHEADER_EX*)Ps2_now_tex->texinfo.texsurface.pSurface;
+            
+            if (timp->TpFlag != 0) 
+            {
+                Ps2_tex_load_tp_cancel = 1;
+                
+                Ps2TexLoad(Ps2_now_tex);
+                
+                Ps2_tex_load_tp_cancel = 0;
+            }
+        }
+    } 
+
+    p = (unsigned long*)WORKBASE;
+    
+    D2_SyncTag();
+
+    *p++ = ((num * 3) + 3) | 0x70000000;
+    *p++ = 0;
+    
+    *p++ = SCE_GIF_SET_TAG(1, 0, SCE_GIF_PACKED, 0, 0, 1);
+    *p++ = SCE_GIF_PACKED_AD;
+    
+    *p++ = Ps2_gs_save.TEST = SCE_GS_SET_TEST_1(1, SCE_GS_ALPHA_GREATER, 0, SCE_GS_AFAIL_KEEP, 0, 0, 1, SCE_GS_DEPTH_GEQUAL);
+    *p++ = SCE_GS_TEST_1;
+    
+    *p++ = (SCE_GIF_SET_TAG(0, 1, SCE_GIF_REGLIST, 0, 0, 3) | prim) | num;
+    *p++ = GIF_REGLIST(SCE_GS_ST, SCE_GS_RGBAQ, SCE_GS_XYZF2);
+    
+#ifndef TARGET_PC
+    asm volatile
+    ("
+    .set noreorder
+        lqc2        vf10, 0(%3)
+        lqc2        vf13, 0(%0)
+        lqc2        vf12, 0(%1)
+        lqc2        vf11, 0(%2)
+        
+        vitof0.w    vf10, vf10
+        
+        vsub.xyzw   vf9, vf9, vf9
+        
+        lui         at, (0x3FFFF >> 16)
+        
+        ori         v0, zero,  0x8000
+    
+        ori         a0,   at, (0x3FFFF & 0xFFFF)
+        
+        ctc2        zero, vi18
+        ctc2        v0,   vi2
+    
+        viaddi      vi4, vi0, 0
+    
+        addu        v0, %6, zero
+        
+        vdiv        Q, vf0w, vf10w
+    
+    l_002CBEBC:
+        lqc2        vf4,    0(%4)
+        lqc2        vf5, 0x10(%4)
+        lqc2        vf6, 0x20(%4)
+        
+        vmtir       vi3, vf4w
+    
+        vadda.z     ACC, vf6, vf11
+        vmaddx.z    vf7, vf6, vf11x
+        
+        vsub.xy     vf7, vf6, vf13
+        
+        vclipw.xyz  vf7, vf13w        
+        
+        vadda.z     ACC, vf0, vf10
+        vmaddx.z    vf6, vf4, vf10x
+        
+        vmax.z      vf6, vf6, vf0
+        
+        vminiy.z    vf6, vf6, vf12y
+        
+        vaddz.w     vf9, vf9, vf6z
+        
+        vftoi4.xyzw vf6, vf6
+        
+        vmtir       vi5, vf6w
+    
+        cfc2        v1, vi18
+    
+        and         v1, v1, a0
+    
+        beqz        v1, l_002CBF0C
+        nop
+    
+        vior        vi3, vi3, vi2
+        
+    l_002CBF0C:
+        vior        vi5, vi5, vi3
+        viand       vi4, vi4, vi5
+    
+        vmfir.w     vf6, vi5
+        
+        sqc2        vf4,    0(%5)
+        sqc2        vf5, 0x10(%5)
+        sqc2        vf6, 0x20(%5) 
+        
+        addi        v0, v0, -1
+        addiu       %5, %5, 48
+        
+        bnez        v0, l_002CBEBC
+        
+        addiu       %4, %4, 48
+        
+        cfc2        v1, vi4
+        
+        bnez        v0, l_002CBF9C
+        nop
+    
+        vmulq.w     vf4, vf9, Q
+        
+        sqc2        vf4, 0(%5) 
+    .set reorder
+    " : : "r"(clip_vec), "r"(near_far_vec), "r"(zclip_ab_vec), "r"(zbuff_ab_vec), "r"(dp), "r"(p), "r"(num) : 
+    );
+#else
+    { /* asm2c */
+        ee_reg R1 = {{0}}, R2 = {{0}}, R3 = {{0}}, R4 = {{0}};
+        int ee_cond;
+        const ee_reg ee_zero = {{0}};
+        ee_reg op0 = {{0}};
+        ee_reg op1 = {{0}};
+        ee_reg op2 = {{0}};
+        ee_reg op3 = {{0}};
+        ee_reg op4 = {{0}};
+        ee_reg op5 = {{0}};
+        ee_reg op6 = {{0}};
+        op0.sd[0] = (int32_t)(uintptr_t)(clip_vec);
+        op1.sd[0] = (int32_t)(uintptr_t)(near_far_vec);
+        op2.sd[0] = (int32_t)(uintptr_t)(zclip_ab_vec);
+        op3.sd[0] = (int32_t)(uintptr_t)(zbuff_ab_vec);
+        op4.sd[0] = (int32_t)(uintptr_t)(dp);
+        op5.sd[0] = (int32_t)(uintptr_t)(p);
+        op6.sd[0] = (int32_t)(uintptr_t)(num);
+        vu_load_vf(10, EE_PTR((op3.w[0] + (uint32_t)(0))));
+        vu_load_vf(13, EE_PTR((op0.w[0] + (uint32_t)(0))));
+        vu_load_vf(12, EE_PTR((op1.w[0] + (uint32_t)(0))));
+        vu_load_vf(11, EE_PTR((op2.w[0] + (uint32_t)(0))));
+        vu_upper(U_ITOF0, 1, 10, 10, 0, BC_NONE);
+        vu_upper(U_SUB, 15, 9, 9, 9, BC_NONE);
+        R1.sd[0] = (int32_t)((uint32_t)(((0x3FFFF >> 16))) << 16);
+        R2.d[0] = ee_zero.d[0] | (uint64_t)(uint16_t)(32768);
+        R4.d[0] = R1.d[0] | (uint64_t)(uint16_t)(((0x3FFFF & 0xFFFF)));
+        vu_ctc2(18, ee_zero.w[0]);
+        vu_ctc2(2, R2.w[0]);
+        g_vu0.vi[4] = (uint16_t)(g_vu0.vi[0] + (0));
+        R2.sd[0] = (int32_t)(op6.w[0] + ee_zero.w[0]);
+        vu_div(0, 3, 10, 3);
+    l_002CBEBC:;
+        vu_load_vf(4, EE_PTR((op4.w[0] + (uint32_t)(0))));
+        vu_load_vf(5, EE_PTR((op4.w[0] + (uint32_t)(16))));
+        vu_load_vf(6, EE_PTR((op4.w[0] + (uint32_t)(32))));
+        vu_mtir(3, 4, 3);
+        vu_upper(U_ADDA, 2, 0, 6, 11, BC_NONE);
+        vu_upper(U_MADD, 2, 7, 6, 11, BC_X);
+        vu_upper(U_SUB, 12, 7, 6, 13, BC_NONE);
+        vu_clipw(7, 13);
+        vu_upper(U_ADDA, 2, 0, 0, 10, BC_NONE);
+        vu_upper(U_MADD, 2, 6, 4, 10, BC_X);
+        vu_upper(U_MAX, 2, 6, 6, 0, BC_NONE);
+        vu_upper(U_MINI, 2, 6, 6, 12, BC_Y);
+        vu_upper(U_ADD, 1, 9, 9, 6, BC_Z);
+        vu_upper(U_FTOI4, 15, 6, 6, 0, BC_NONE);
+        vu_mtir(5, 6, 3);
+        R3.sd[0] = (int32_t)(vu_cfc2(18));
+        R3.d[0] = R3.d[0] & R4.d[0];
+        ee_cond = (R3.sd[0] == 0);
+        if (ee_cond) goto l_002CBF0C;
+        g_vu0.vi[3] = (uint16_t)(g_vu0.vi[3] | g_vu0.vi[2]);
+    l_002CBF0C:;
+        g_vu0.vi[5] = (uint16_t)(g_vu0.vi[5] | g_vu0.vi[3]);
+        g_vu0.vi[4] = (uint16_t)(g_vu0.vi[4] & g_vu0.vi[5]);
+        vu_mfir(1, 6, 5);
+        vu_store_vf(EE_PTR((op5.w[0] + (uint32_t)(0))), 4);
+        vu_store_vf(EE_PTR((op5.w[0] + (uint32_t)(16))), 5);
+        vu_store_vf(EE_PTR((op5.w[0] + (uint32_t)(32))), 6);
+        R2.sd[0] = (int32_t)(R2.w[0] + (uint32_t)(-1));
+        op5.sd[0] = (int32_t)(op5.w[0] + (uint32_t)(48));
+        ee_cond = (R2.sd[0] != 0);
+        op4.sd[0] = (int32_t)(op4.w[0] + (uint32_t)(48));
+        if (ee_cond) goto l_002CBEBC;
+        R3.sd[0] = (int32_t)(vu_cfc2(4));
+        ee_cond = (R2.sd[0] != 0);
+        if (ee_cond) goto l_002CBF9C;
+        vu_upper(U_MUL, 1, 4, 9, 0, BC_Q);
+        vu_store_vf(EE_PTR((op5.w[0] + (uint32_t)(0))), 4);
+    }
+#endif
+
+    if ((prim & 0x20000000000000)) 
+    {
+#ifdef TARGET_PC
+        pc_ot_poly = pc_effect_poly();   /* frame interpolation: drawn later from the ordering table */
+#endif
+        Ps2AddOT((void*)0x70000000, num, ((float*)p)[(12 * num) + 3], prim);
+    }
+    else 
+    {
+        SyncPath();
+        
+        loadImage((void*)0xF0000000); 
+    }
+    
+l_002CBF9C:
+    return;
+}
+
+// 100% matching!
+void Ps2AddPrim3DEx(unsigned long prim, void* dp, unsigned int num)
+{
+    unsigned long* p;             
+    TIM2_PICTUREHEADER_EX* timp;  
+    unsigned int clip_flag;    // needs use   
+    unsigned int clut_flag;    // needs use
+    unsigned int st_clip_flag; // needs use
+    float zsum;                  
+    float zbuff_ab_vec[4] = { 0 }; 
+    static const float clip_vec[4] = { 2048.0f, 2048.0f, 0, 2047.0f };  
+    static const float near_far_vec[4] = { 1.0f, 65534.0f, 0, 0 };
+    static const float zclip_ab_vec[4] = { 0.062501907f, 0, -2048.0625f, 0 };
+    
+    zbuff_ab_vec[0] = -Ps2_zbuff_b;
+    zbuff_ab_vec[2] = -Ps2_zbuff_a;
+    zbuff_ab_vec[3] = *(float*)&num;  
+    
+    if ((prim & 0x8000000000000)) 
+    {
+        if (Ps2_now_tex == NULL) 
+        {
+            return;
+        }
+
+        if ((prim & 0x20000000000000)) 
+        {
+            if (Ps2_use_pt_flag != 0)
+            {
+                prim &= ~SCE_GIF_SET_TAG(0, 0, 0, SCE_GS_SET_PRIM(0, 0, 0, 0, 1, 0, 0, 0, 0), 0, 0);
+            }
+        }
+        
+        if (!(prim & 0x20000000000000)) 
+        {
+            timp = (TIM2_PICTUREHEADER_EX*)Ps2_now_tex->texinfo.texsurface.pSurface;
+            
+            if (timp->TpFlag != 0) 
+            {
+                Ps2_tex_load_tp_cancel = 1;
+                
+                Ps2TexLoad(Ps2_now_tex);
+                
+                Ps2_tex_load_tp_cancel = 0;
+            }
+        }
+    } 
+
+    p = (unsigned long*)WORKBASE;
+    
+    D2_SyncTag();
+
+    *p++ = ((num * 3) + 3) | 0x70000000;
+    *p++ = 0;
+    
+    *p++ = SCE_GIF_SET_TAG(1, 0, SCE_GIF_PACKED, 0, 0, 1);
+    *p++ = SCE_GIF_PACKED_AD;
+    
+    *p++ = Ps2_gs_save.TEST = SCE_GS_SET_TEST_1(1, SCE_GS_ALPHA_GREATER, 0, SCE_GS_AFAIL_KEEP, 0, 0, 1, SCE_GS_DEPTH_GEQUAL);
+    *p++ = SCE_GS_TEST_1;
+    
+    *p++ = (SCE_GIF_SET_TAG(0, 1, SCE_GIF_REGLIST, 0, 0, 3) | prim) | num;
+    *p++ = GIF_REGLIST(SCE_GS_ST, SCE_GS_RGBAQ, SCE_GS_XYZF2);
+    
+#ifndef TARGET_PC
+    asm volatile
+    ("
+    .set noreorder
+        lqc2        vf10, 0(%3)
+        lqc2        vf13, 0(%0)
+        lqc2        vf12, 0(%1)
+        lqc2        vf11, 0(%2)
+        
+        vitof0.w    vf10, vf10
+        
+        vsub.xyzw   vf9, vf9, vf9
+        
+        lui         at, (0x3FFFF >> 16)
+        
+        ori         v0, zero,  0x8000
+    
+        ori         a0,   at, (0x3FFFF & 0xFFFF)
+        
+        ctc2        zero, vi18
+        ctc2        v0,   vi2
+    
+        viaddi      vi4, vi0, 0
+    
+        addu        v0, %6, zero
+        
+        vdiv        Q, vf0w, vf10w
+    
+    l_002CC1CC:
+        lqc2        vf4,    0(%4)
+        lqc2        vf5, 0x10(%4)
+        lqc2        vf6, 0x20(%4)
+        
+        vmtir       vi3, vf4w
+    
+        vadda.z     ACC, vf6, vf11
+        vmaddx.z    vf7, vf6, vf11x
+        
+        vsub.xy     vf7, vf6, vf13
+        
+        vclipw.xyz  vf7, vf13w        
+        
+        vadda.z     ACC, vf0, vf10
+        vmaddx.z    vf6, vf4, vf10x
+        
+        vmax.z      vf6, vf6, vf0
+        
+        vftoi0.xyzw vf5, vf5
+        
+        vminiy.z    vf6, vf6, vf12y
+        
+        vaddz.w     vf9, vf9, vf6z
+        
+        vftoi4.xyzw vf6, vf6
+        
+        vmtir       vi5, vf6w
+    
+        cfc2        v1, vi18
+    
+        and         v1, v1, a0
+    
+        beqz        v1, l_002CC220
+        nop
+    
+        vior        vi3, vi3, vi2
+        
+    l_002CC220:
+        vior        vi5, vi5, vi3
+        viand       vi4, vi4, vi5
+    
+        vmfir.w     vf6, vi5
+        
+        sqc2        vf4,    0(%5)
+        sqc2        vf5, 0x10(%5)
+        sqc2        vf6, 0x20(%5) 
+        
+        addi        v0, v0, -1
+        addiu       %5, %5, 48
+        
+        bnez        v0, l_002CC1CC
+        
+        addiu       %4, %4, 48
+        
+        cfc2        v1, vi4
+        
+        bnez        v0, l_002CC2B0
+        nop
+    
+        vmulq.w     vf4, vf9, Q
+        
+        sqc2        vf4, 0(%5) 
+    .set reorder
+    " : : "r"(clip_vec), "r"(near_far_vec), "r"(zclip_ab_vec), "r"(zbuff_ab_vec), "r"(dp), "r"(p), "r"(num) : 
+    );
+#else
+    { /* asm2c */
+        ee_reg R1 = {{0}}, R2 = {{0}}, R3 = {{0}}, R4 = {{0}};
+        int ee_cond;
+        const ee_reg ee_zero = {{0}};
+        ee_reg op0 = {{0}};
+        ee_reg op1 = {{0}};
+        ee_reg op2 = {{0}};
+        ee_reg op3 = {{0}};
+        ee_reg op4 = {{0}};
+        ee_reg op5 = {{0}};
+        ee_reg op6 = {{0}};
+        op0.sd[0] = (int32_t)(uintptr_t)(clip_vec);
+        op1.sd[0] = (int32_t)(uintptr_t)(near_far_vec);
+        op2.sd[0] = (int32_t)(uintptr_t)(zclip_ab_vec);
+        op3.sd[0] = (int32_t)(uintptr_t)(zbuff_ab_vec);
+        op4.sd[0] = (int32_t)(uintptr_t)(dp);
+        op5.sd[0] = (int32_t)(uintptr_t)(p);
+        op6.sd[0] = (int32_t)(uintptr_t)(num);
+        vu_load_vf(10, EE_PTR((op3.w[0] + (uint32_t)(0))));
+        vu_load_vf(13, EE_PTR((op0.w[0] + (uint32_t)(0))));
+        vu_load_vf(12, EE_PTR((op1.w[0] + (uint32_t)(0))));
+        vu_load_vf(11, EE_PTR((op2.w[0] + (uint32_t)(0))));
+        vu_upper(U_ITOF0, 1, 10, 10, 0, BC_NONE);
+        vu_upper(U_SUB, 15, 9, 9, 9, BC_NONE);
+        R1.sd[0] = (int32_t)((uint32_t)(((0x3FFFF >> 16))) << 16);
+        R2.d[0] = ee_zero.d[0] | (uint64_t)(uint16_t)(32768);
+        R4.d[0] = R1.d[0] | (uint64_t)(uint16_t)(((0x3FFFF & 0xFFFF)));
+        vu_ctc2(18, ee_zero.w[0]);
+        vu_ctc2(2, R2.w[0]);
+        g_vu0.vi[4] = (uint16_t)(g_vu0.vi[0] + (0));
+        R2.sd[0] = (int32_t)(op6.w[0] + ee_zero.w[0]);
+        vu_div(0, 3, 10, 3);
+    l_002CC1CC:;
+        vu_load_vf(4, EE_PTR((op4.w[0] + (uint32_t)(0))));
+        vu_load_vf(5, EE_PTR((op4.w[0] + (uint32_t)(16))));
+        vu_load_vf(6, EE_PTR((op4.w[0] + (uint32_t)(32))));
+        vu_mtir(3, 4, 3);
+        vu_upper(U_ADDA, 2, 0, 6, 11, BC_NONE);
+        vu_upper(U_MADD, 2, 7, 6, 11, BC_X);
+        vu_upper(U_SUB, 12, 7, 6, 13, BC_NONE);
+        vu_clipw(7, 13);
+        vu_upper(U_ADDA, 2, 0, 0, 10, BC_NONE);
+        vu_upper(U_MADD, 2, 6, 4, 10, BC_X);
+        vu_upper(U_MAX, 2, 6, 6, 0, BC_NONE);
+        vu_upper(U_FTOI0, 15, 5, 5, 0, BC_NONE);
+        vu_upper(U_MINI, 2, 6, 6, 12, BC_Y);
+        vu_upper(U_ADD, 1, 9, 9, 6, BC_Z);
+        vu_upper(U_FTOI4, 15, 6, 6, 0, BC_NONE);
+        vu_mtir(5, 6, 3);
+        R3.sd[0] = (int32_t)(vu_cfc2(18));
+        R3.d[0] = R3.d[0] & R4.d[0];
+        ee_cond = (R3.sd[0] == 0);
+        if (ee_cond) goto l_002CC220;
+        g_vu0.vi[3] = (uint16_t)(g_vu0.vi[3] | g_vu0.vi[2]);
+    l_002CC220:;
+        g_vu0.vi[5] = (uint16_t)(g_vu0.vi[5] | g_vu0.vi[3]);
+        g_vu0.vi[4] = (uint16_t)(g_vu0.vi[4] & g_vu0.vi[5]);
+        vu_mfir(1, 6, 5);
+        vu_store_vf(EE_PTR((op5.w[0] + (uint32_t)(0))), 4);
+        vu_store_vf(EE_PTR((op5.w[0] + (uint32_t)(16))), 5);
+        vu_store_vf(EE_PTR((op5.w[0] + (uint32_t)(32))), 6);
+        R2.sd[0] = (int32_t)(R2.w[0] + (uint32_t)(-1));
+        op5.sd[0] = (int32_t)(op5.w[0] + (uint32_t)(48));
+        ee_cond = (R2.sd[0] != 0);
+        op4.sd[0] = (int32_t)(op4.w[0] + (uint32_t)(48));
+        if (ee_cond) goto l_002CC1CC;
+        R3.sd[0] = (int32_t)(vu_cfc2(4));
+        ee_cond = (R2.sd[0] != 0);
+        if (ee_cond) goto l_002CC2B0;
+        vu_upper(U_MUL, 1, 4, 9, 0, BC_Q);
+        vu_store_vf(EE_PTR((op5.w[0] + (uint32_t)(0))), 4);
+    }
+#endif
+
+    if ((prim & 0x20000000000000)) 
+    {
+        Ps2AddOT((void*)0x70000000, num, ((float*)p)[(12 * num) + 3], prim);
+    }
+    else 
+    {
+        SyncPath();
+        
+        loadImage((void*)0xF0000000); 
+    }
+    
+l_002CC2B0:
+    return;
+}
+
+#ifdef TARGET_PC
+/* Rendering rework: Ps2AddPrim3DEx (mode 0), Ps2AddPrim3DEx1P (1) and Ps2AddPrim3DExI (2) for
+   the strips of ps2_Vu1Strip.c in the native 3D path. Same texture handling, TEST and
+   ordering-table/immediate split (and, for ExI, the per-triangle sorting with the ViewType
+   keys) as the originals, but the strip goes to pc/glue/native_glue.c and the GS packet
+   carries, in place of the vertices, a write of the deferred strip's number to
+   NATIVE_MARKER_REG (laid out as one vertex of three qwords, so Ps2AddOT copies it like an
+   original entry). */
+static void pc_native_packet_test(unsigned int h, unsigned long test)
+{
+    unsigned long* p = (unsigned long*)WORKBASE;
+    D2_SyncTag();
+    *p++ = 6 | 0x70000000;
+    *p++ = 0;
+    *p++ = SCE_GIF_SET_TAG(1, 0, SCE_GIF_PACKED, 0, 0, 1);
+    *p++ = SCE_GIF_PACKED_AD;
+    *p++ = Ps2_gs_save.TEST = test;
+    *p++ = SCE_GS_TEST_1;
+    *p++ = SCE_GIF_SET_TAG(3, 1, 0, 0, SCE_GIF_PACKED, 1);
+    *p++ = SCE_GIF_PACKED_AD;
+    *p++ = h;           *p++ = NATIVE_MARKER_REG;
+    *p++ = 0xFFFFFFFF;  *p++ = NATIVE_MARKER_REG;   /* padding (ignored) */
+    *p++ = 0xFFFFFFFF;  *p++ = NATIVE_MARKER_REG;
+}
+
+static void pc_native_packet(unsigned int h)
+{
+    pc_native_packet_test(h, SCE_GS_SET_TEST_1(1, SCE_GS_ALPHA_GREATER, 0, SCE_GS_AFAIL_KEEP, 0, 0, 1, SCE_GS_DEPTH_GEQUAL));
+}
+
+/* GS depth as the packet holds it (FTOI4 of the clamped depth), read back like ITOF4 */
+static float pc_gs_depth(const VU1_PRIM_BUF* v)
+{
+    float z = -Ps2_zbuff_b * v->fQ - Ps2_zbuff_a;
+    z = z < 0.0f ? 0.0f : z > 65534.0f ? 65534.0f : z;
+    return (float)(int)(z * 16.0f) / 16.0f;
+}
+
+void Ps2AddPrim3DExNative(unsigned long prim, void* dp, unsigned int num, int mode)
+{
+    TIM2_PICTUREHEADER_EX* timp;
+    float zavg;
+    int ot;
+    if ((prim & 0x8000000000000)) 
+    {
+        if (Ps2_now_tex == NULL) 
+        {
+            return;
+        }
+        if ((prim & 0x20000000000000)) 
+        {
+            if (Ps2_use_pt_flag != 0)
+            {
+                prim &= ~SCE_GIF_SET_TAG(0, 0, 0, SCE_GS_SET_PRIM(0, 0, 0, 0, 1, 0, 0, 0, 0), 0, 0);
+            }
+        }
+        if (!(prim & 0x20000000000000)) 
+        {
+            timp = (TIM2_PICTUREHEADER_EX*)Ps2_now_tex->texinfo.texsurface.pSurface;
+            if (timp->TpFlag != 0) 
+            {
+                Ps2_tex_load_tp_cancel = 1;
+                Ps2TexLoad(Ps2_now_tex);
+                Ps2_tex_load_tp_cancel = 0;
+            }
+        }
+        else if (mode == 1 && Ps2_albinoid_flag != 0) 
+        {
+            Ps2_tex_load_tp_cancel = 1;
+            Ps2TexLoad(Ps2_now_tex);
+            Ps2_tex_load_tp_cancel = 0;
+        }
+    } 
+    ot = (prim & 0x20000000000000) && (mode != 1 || Ps2_albinoid_flag == 0);
+    if (mode == 2 && ot && ViewType < 3 && num > 3 && (prim & 0x3800000000000) == 0x2000000000000 && ((num * 3) - 6) < 167)
+    {
+        /* ExI: every triangle sorted on its own */
+        const VU1_PRIM_BUF* v = (const VU1_PRIM_BUF*)dp;
+        prim &= ~SCE_GIF_SET_TAG(0, 0, 0, SCE_GS_SET_PRIM(7, 0, 0, 0, 0, 0, 0, 0, 0), 0, 0);
+        prim |= SCE_GIF_SET_TAG(0, 0, 0, SCE_GS_SET_PRIM(SCE_GS_PRIM_TRI, 0, 0, 0, 0, 0, 0, 0, 0), 0, 0);
+        for (unsigned int j = 0; j + 2 < num; j++) 
+        {
+            float z0 = pc_gs_depth(&v[j]), z1 = pc_gs_depth(&v[j + 1]), z2 = pc_gs_depth(&v[j + 2]), key;
+            unsigned int h = pc_native_prim3d((unsigned int)((prim >> 47) & 0x7FF), &v[j], 3, 1, &zavg);
+            if (ViewType == 0) key = MIN(MIN(z0, z1), z2);
+            else if (ViewType == 1) key = 0.33333334f * ((float)(int)(v[j].fX * 16.0f) / 16.0f + (float)(int)(v[j].fY * 16.0f) / 16.0f + z0);
+            else key = MAX(MAX(z0, z1), z2);
+            pc_native_packet(h);
+            Ps2AddOT((void*)0x70000000, 1, key, prim);
+        }
+        return;
+    }
+    pc_native_packet(pc_native_prim3d((unsigned int)((prim >> 47) & 0x7FF), (const VU1_PRIM_BUF*)dp, (int)num, ot, &zavg));
+    if (ot) 
+    {
+        Ps2AddOT((void*)0x70000000, 1, zavg, prim);
+    }
+    else 
+    {
+        SyncPath();
+        loadImage((void*)0xF0000000); 
+    }
+}
+#endif
+
+// 100% matching!
+void Ps2AddPrim3DEx1P(unsigned long prim, void* dp, unsigned int num)
+{
+    unsigned long* p;             
+    TIM2_PICTUREHEADER_EX* timp;  
+    unsigned int clip_flag;    // needs use   
+    unsigned int clut_flag;    // needs use
+    unsigned int st_clip_flag; // needs use
+    float zsum;                  
+    float zbuff_ab_vec[4] = { 0 }; 
+    static const float clip_vec[4] = { 2048.0f, 2048.0f, 0, 2047.0f };  
+    static const float near_far_vec[4] = { 1.0f, 65534.0f, 0, 0 };
+    static const float zclip_ab_vec[4] = { 0.062501907f, 0, -2048.0625f, 0 };
+    
+    zbuff_ab_vec[0] = -Ps2_zbuff_b;
+    zbuff_ab_vec[2] = -Ps2_zbuff_a;
+    zbuff_ab_vec[3] = *(float*)&num;  
+    
+    if ((prim & 0x8000000000000)) 
+    {
+        if (Ps2_now_tex == NULL) 
+        {
+            return;
+        }
+
+        if ((prim & 0x20000000000000)) 
+        {
+            if (Ps2_use_pt_flag != 0)
+            {
+                prim &= ~SCE_GIF_SET_TAG(0, 0, 0, SCE_GS_SET_PRIM(0, 0, 0, 0, 1, 0, 0, 0, 0), 0, 0);
+            }
+        } 
+        
+        if (!(prim & 0x20000000000000)) 
+        {
+            timp = (TIM2_PICTUREHEADER_EX*)Ps2_now_tex->texinfo.texsurface.pSurface;
+            
+            if (timp->TpFlag != 0) 
+            {
+                Ps2_tex_load_tp_cancel = 1;
+                
+                Ps2TexLoad(Ps2_now_tex);
+                
+                Ps2_tex_load_tp_cancel = 0;
+            }
+        } 
+        else if (Ps2_albinoid_flag != 0) 
+        {
+            Ps2_tex_load_tp_cancel = 1;
+                
+            Ps2TexLoad(Ps2_now_tex);
+            
+            Ps2_tex_load_tp_cancel = 0;
+        }
+    } 
+
+    p = (unsigned long*)WORKBASE;
+    
+    D2_SyncTag();
+
+    *p++ = ((num * 3) + 3) | 0x70000000;
+    *p++ = 0;
+    
+    *p++ = SCE_GIF_SET_TAG(1, 0, SCE_GIF_PACKED, 0, 0, 1);
+    *p++ = SCE_GIF_PACKED_AD;
+    
+    *p++ = Ps2_gs_save.TEST = SCE_GS_SET_TEST_1(1, SCE_GS_ALPHA_GREATER, 0, SCE_GS_AFAIL_KEEP, 0, 0, 1, SCE_GS_DEPTH_GEQUAL);
+    *p++ = SCE_GS_TEST_1;
+    
+    *p++ = (SCE_GIF_SET_TAG(0, 1, SCE_GIF_REGLIST, 0, 0, 3) | prim) | num;
+    *p++ = GIF_REGLIST(SCE_GS_ST, SCE_GS_RGBAQ, SCE_GS_XYZF2);
+    
+#ifndef TARGET_PC
+    asm volatile
+    ("
+    .set noreorder
+        lqc2        vf10, 0(%3)
+        lqc2        vf13, 0(%0)
+        lqc2        vf12, 0(%1)
+        lqc2        vf11, 0(%2)
+        
+        vitof0.w    vf10, vf10
+        
+        vsub.xyzw   vf9, vf9, vf9
+        
+        lui         at, (0x3FFFF >> 16)
+        
+        ori         v0, zero,  0x8000
+    
+        ori         a0,   at, (0x3FFFF & 0xFFFF)
+        
+        ctc2        zero, vi18
+        ctc2        v0,   vi2
+    
+        viaddi      vi4, vi0, 0
+    
+        addu        v0, %6, zero
+        
+        vdiv        Q, vf0w, vf10w
+    
+    l_002CC51C:
+        lqc2        vf4,    0(%4)
+        lqc2        vf5, 0x10(%4)
+        lqc2        vf6, 0x20(%4)
+        
+        vmtir       vi3, vf4w
+    
+        vadda.z     ACC, vf6, vf11
+        vmaddx.z    vf7, vf6, vf11x
+        
+        vsub.xy     vf7, vf6, vf13
+        
+        vclipw.xyz  vf7, vf13w        
+        
+        vadda.z     ACC, vf0, vf10
+        vmaddx.z    vf6, vf4, vf10x
+        
+        vmax.z      vf6, vf6, vf0
+        
+        vftoi0.xyzw vf5, vf5
+        
+        vminiy.z    vf6, vf6, vf12y
+        
+        vaddz.w     vf9, vf9, vf6z
+        
+        vftoi4.xyzw vf6, vf6
+        
+        vmtir       vi5, vf6w
+    
+        cfc2        v1, vi18
+    
+        and         v1, v1, a0
+    
+        beqz        v1, l_002CC570
+        nop
+    
+        vior        vi3, vi3, vi2
+        
+    l_002CC570:
+        vior        vi5, vi5, vi3
+        viand       vi4, vi4, vi5
+    
+        vmfir.w     vf6, vi5
+        
+        sqc2        vf4,    0(%5)
+        sqc2        vf5, 0x10(%5)
+        sqc2        vf6, 0x20(%5) 
+        
+        addi        v0, v0, -1
+        addiu       %5, %5, 48
+        
+        bnez        v0, l_002CC51C
+        
+        addiu       %4, %4, 48
+        
+        cfc2        v1, vi4
+        
+        bnez        v0, l_002CC600
+        nop
+    
+        vmulq.w     vf4, vf9, Q
+        
+        sqc2        vf4, 0(%5) 
+    .set reorder
+    " : : "r"(clip_vec), "r"(near_far_vec), "r"(zclip_ab_vec), "r"(zbuff_ab_vec), "r"(dp), "r"(p), "r"(num) : 
+    );
+#else
+    { /* asm2c */
+        ee_reg R1 = {{0}}, R2 = {{0}}, R3 = {{0}}, R4 = {{0}};
+        int ee_cond;
+        const ee_reg ee_zero = {{0}};
+        ee_reg op0 = {{0}};
+        ee_reg op1 = {{0}};
+        ee_reg op2 = {{0}};
+        ee_reg op3 = {{0}};
+        ee_reg op4 = {{0}};
+        ee_reg op5 = {{0}};
+        ee_reg op6 = {{0}};
+        op0.sd[0] = (int32_t)(uintptr_t)(clip_vec);
+        op1.sd[0] = (int32_t)(uintptr_t)(near_far_vec);
+        op2.sd[0] = (int32_t)(uintptr_t)(zclip_ab_vec);
+        op3.sd[0] = (int32_t)(uintptr_t)(zbuff_ab_vec);
+        op4.sd[0] = (int32_t)(uintptr_t)(dp);
+        op5.sd[0] = (int32_t)(uintptr_t)(p);
+        op6.sd[0] = (int32_t)(uintptr_t)(num);
+        vu_load_vf(10, EE_PTR((op3.w[0] + (uint32_t)(0))));
+        vu_load_vf(13, EE_PTR((op0.w[0] + (uint32_t)(0))));
+        vu_load_vf(12, EE_PTR((op1.w[0] + (uint32_t)(0))));
+        vu_load_vf(11, EE_PTR((op2.w[0] + (uint32_t)(0))));
+        vu_upper(U_ITOF0, 1, 10, 10, 0, BC_NONE);
+        vu_upper(U_SUB, 15, 9, 9, 9, BC_NONE);
+        R1.sd[0] = (int32_t)((uint32_t)(((0x3FFFF >> 16))) << 16);
+        R2.d[0] = ee_zero.d[0] | (uint64_t)(uint16_t)(32768);
+        R4.d[0] = R1.d[0] | (uint64_t)(uint16_t)(((0x3FFFF & 0xFFFF)));
+        vu_ctc2(18, ee_zero.w[0]);
+        vu_ctc2(2, R2.w[0]);
+        g_vu0.vi[4] = (uint16_t)(g_vu0.vi[0] + (0));
+        R2.sd[0] = (int32_t)(op6.w[0] + ee_zero.w[0]);
+        vu_div(0, 3, 10, 3);
+    l_002CC51C:;
+        vu_load_vf(4, EE_PTR((op4.w[0] + (uint32_t)(0))));
+        vu_load_vf(5, EE_PTR((op4.w[0] + (uint32_t)(16))));
+        vu_load_vf(6, EE_PTR((op4.w[0] + (uint32_t)(32))));
+        vu_mtir(3, 4, 3);
+        vu_upper(U_ADDA, 2, 0, 6, 11, BC_NONE);
+        vu_upper(U_MADD, 2, 7, 6, 11, BC_X);
+        vu_upper(U_SUB, 12, 7, 6, 13, BC_NONE);
+        vu_clipw(7, 13);
+        vu_upper(U_ADDA, 2, 0, 0, 10, BC_NONE);
+        vu_upper(U_MADD, 2, 6, 4, 10, BC_X);
+        vu_upper(U_MAX, 2, 6, 6, 0, BC_NONE);
+        vu_upper(U_FTOI0, 15, 5, 5, 0, BC_NONE);
+        vu_upper(U_MINI, 2, 6, 6, 12, BC_Y);
+        vu_upper(U_ADD, 1, 9, 9, 6, BC_Z);
+        vu_upper(U_FTOI4, 15, 6, 6, 0, BC_NONE);
+        vu_mtir(5, 6, 3);
+        R3.sd[0] = (int32_t)(vu_cfc2(18));
+        R3.d[0] = R3.d[0] & R4.d[0];
+        ee_cond = (R3.sd[0] == 0);
+        if (ee_cond) goto l_002CC570;
+        g_vu0.vi[3] = (uint16_t)(g_vu0.vi[3] | g_vu0.vi[2]);
+    l_002CC570:;
+        g_vu0.vi[5] = (uint16_t)(g_vu0.vi[5] | g_vu0.vi[3]);
+        g_vu0.vi[4] = (uint16_t)(g_vu0.vi[4] & g_vu0.vi[5]);
+        vu_mfir(1, 6, 5);
+        vu_store_vf(EE_PTR((op5.w[0] + (uint32_t)(0))), 4);
+        vu_store_vf(EE_PTR((op5.w[0] + (uint32_t)(16))), 5);
+        vu_store_vf(EE_PTR((op5.w[0] + (uint32_t)(32))), 6);
+        R2.sd[0] = (int32_t)(R2.w[0] + (uint32_t)(-1));
+        op5.sd[0] = (int32_t)(op5.w[0] + (uint32_t)(48));
+        ee_cond = (R2.sd[0] != 0);
+        op4.sd[0] = (int32_t)(op4.w[0] + (uint32_t)(48));
+        if (ee_cond) goto l_002CC51C;
+        R3.sd[0] = (int32_t)(vu_cfc2(4));
+        ee_cond = (R2.sd[0] != 0);
+        if (ee_cond) goto l_002CC600;
+        vu_upper(U_MUL, 1, 4, 9, 0, BC_Q);
+        vu_store_vf(EE_PTR((op5.w[0] + (uint32_t)(0))), 4);
+    }
+#endif
+
+    if ((Ps2_albinoid_flag == 0) && ((prim & 0x20000000000000))) 
+    {
+        Ps2AddOT((void*)0x70000000, num, Ps2AddPrimPrio, prim);
+    }
+    else 
+    {
+        SyncPath();
+        
+        loadImage((void*)0xF0000000); 
+    }
+    
+l_002CC600:
+    return;
+}
+
+// 100% matching!
+void Ps2AddPrim3DMod(unsigned long prim, void* dp, unsigned int num)
+{
+    unsigned long* p;             
+    unsigned int clip_flag;      
+    unsigned int st_clip_flag;    
+    float zsum;                   
+    float zbuff_ab_vec[4] = { 0 }; 
+    static const float clip_vec[4] = { 2048.0f, 2048.0f, 0, 2047.0f };  
+    static const float near_far_vec[4] = { 1.0f, 65534.0f, 0, 0 };
+    static const float zclip_ab_vec[4] = { 0.062501907f, 0, -2048.0625f, 0 };
+    
+    zbuff_ab_vec[0] = -Ps2_zbuff_b;
+    zbuff_ab_vec[2] = -Ps2_zbuff_a;
+    zbuff_ab_vec[3] = *(float*)&num;  
+    
+    p = (unsigned long*)WORKBASE;
+    
+    D2_SyncTag();
+    
+    *p++ = ((num * 3) + 3) | 0x70000000;
+    *p++ = 0;
+    
+    *p++ = SCE_GIF_SET_TAG(1, 0, SCE_GIF_PACKED, 0, 0, 1);
+    *p++ = SCE_GIF_PACKED_AD;
+    
+    *p++ = SCE_GS_SET_TEST_2(0, 0, 0, 0, 0, 0, 1, 2);
+    *p++ = SCE_GS_TEST_2;
+    
+    prim |= SCE_GIF_SET_TAG(0, 0, 0, SCE_GS_SET_PRIM(0, 0, 0, 0, 0, 0, 0, 1, 0), 0, 0);
+    
+    *p++ = (SCE_GIF_SET_TAG(0, 1, SCE_GIF_REGLIST, 0, 0, 3) | prim) | num;
+    *p++ = GIF_REGLIST(SCE_GS_ST, SCE_GS_RGBAQ, SCE_GS_XYZF2);
+    
+#ifndef TARGET_PC
+    asm volatile
+    ("
+    .set noreorder
+        lqc2        vf10, 0(%3)
+        lqc2        vf13, 0(%0)
+        lqc2        vf12, 0(%1)
+        lqc2        vf11, 0(%2)
+        
+        vitof0.w    vf10, vf10
+        
+        vsub.xyzw   vf9, vf9, vf9
+        
+        lui         at, (0x3FFFF >> 16)
+        
+        ori         v0, zero,  0x8000
+    
+        ori         a0,   at, (0x3FFFF & 0xFFFF)
+        
+        ctc2        zero, vi18
+        ctc2        v0,   vi2
+    
+        viaddi      vi4, vi0, 0
+    
+        addu        v0, %6, zero
+        
+        vdiv        Q, vf0w, vf10w
+    
+    l_002CC78C:
+        lqc2        vf4,    0(%4)
+        lqc2        vf5, 0x10(%4)
+        lqc2        vf6, 0x20(%4)
+        
+        vmtir       vi3, vf4w
+    
+        vadda.z     ACC, vf6, vf11
+        vmaddx.z    vf7, vf6, vf11x
+        
+        vsub.xy     vf7, vf6, vf13
+        
+        vclipw.xyz  vf7, vf13w        
+        
+        vadda.z     ACC, vf0, vf10
+        vmaddx.z    vf6, vf4, vf10x
+        
+        vmax.z      vf6, vf6, vf0
+        
+        vftoi0.xyzw vf5, vf5
+        
+        vminiy.z    vf6, vf6, vf12y
+        
+        vaddz.w     vf9, vf9, vf6z
+        
+        vftoi4.xyzw vf6, vf6
+        
+        vmtir       vi5, vf6w
+    
+        cfc2        v1, vi18
+    
+        and         v1, v1, a0
+    
+        beqz        v1, l_002CC7E0
+        nop
+    
+        vior        vi3, vi3, vi2
+        
+    l_002CC7E0:
+        vior        vi5, vi5, vi3
+        viand       vi4, vi4, vi5
+    
+        vmfir.w     vf6, vi5
+        
+        sqc2        vf4,    0(%5)
+        sqc2        vf5, 0x10(%5)
+        sqc2        vf6, 0x20(%5) 
+        
+        addi        v0, v0, -1
+        addiu       %5, %5, 48
+        
+        bnez        v0, l_002CC78C
+        
+        addiu       %4, %4, 48
+        
+        cfc2        v1, vi4
+        
+        bnez        v0, l_002CC82C
+        nop
+    
+        vmulq.w     vf4, vf9, Q
+        
+        sqc2        vf4, 0(%5) 
+    .set reorder
+    " : : "r"(clip_vec), "r"(near_far_vec), "r"(zclip_ab_vec), "r"(zbuff_ab_vec), "r"(dp), "r"(p), "r"(num) : 
+    );
+#else
+    { /* asm2c */
+        ee_reg R1 = {{0}}, R2 = {{0}}, R3 = {{0}}, R4 = {{0}};
+        int ee_cond;
+        const ee_reg ee_zero = {{0}};
+        ee_reg op0 = {{0}};
+        ee_reg op1 = {{0}};
+        ee_reg op2 = {{0}};
+        ee_reg op3 = {{0}};
+        ee_reg op4 = {{0}};
+        ee_reg op5 = {{0}};
+        ee_reg op6 = {{0}};
+        op0.sd[0] = (int32_t)(uintptr_t)(clip_vec);
+        op1.sd[0] = (int32_t)(uintptr_t)(near_far_vec);
+        op2.sd[0] = (int32_t)(uintptr_t)(zclip_ab_vec);
+        op3.sd[0] = (int32_t)(uintptr_t)(zbuff_ab_vec);
+        op4.sd[0] = (int32_t)(uintptr_t)(dp);
+        op5.sd[0] = (int32_t)(uintptr_t)(p);
+        op6.sd[0] = (int32_t)(uintptr_t)(num);
+        vu_load_vf(10, EE_PTR((op3.w[0] + (uint32_t)(0))));
+        vu_load_vf(13, EE_PTR((op0.w[0] + (uint32_t)(0))));
+        vu_load_vf(12, EE_PTR((op1.w[0] + (uint32_t)(0))));
+        vu_load_vf(11, EE_PTR((op2.w[0] + (uint32_t)(0))));
+        vu_upper(U_ITOF0, 1, 10, 10, 0, BC_NONE);
+        vu_upper(U_SUB, 15, 9, 9, 9, BC_NONE);
+        R1.sd[0] = (int32_t)((uint32_t)(((0x3FFFF >> 16))) << 16);
+        R2.d[0] = ee_zero.d[0] | (uint64_t)(uint16_t)(32768);
+        R4.d[0] = R1.d[0] | (uint64_t)(uint16_t)(((0x3FFFF & 0xFFFF)));
+        vu_ctc2(18, ee_zero.w[0]);
+        vu_ctc2(2, R2.w[0]);
+        g_vu0.vi[4] = (uint16_t)(g_vu0.vi[0] + (0));
+        R2.sd[0] = (int32_t)(op6.w[0] + ee_zero.w[0]);
+        vu_div(0, 3, 10, 3);
+    l_002CC78C:;
+        vu_load_vf(4, EE_PTR((op4.w[0] + (uint32_t)(0))));
+        vu_load_vf(5, EE_PTR((op4.w[0] + (uint32_t)(16))));
+        vu_load_vf(6, EE_PTR((op4.w[0] + (uint32_t)(32))));
+        vu_mtir(3, 4, 3);
+        vu_upper(U_ADDA, 2, 0, 6, 11, BC_NONE);
+        vu_upper(U_MADD, 2, 7, 6, 11, BC_X);
+        vu_upper(U_SUB, 12, 7, 6, 13, BC_NONE);
+        vu_clipw(7, 13);
+        vu_upper(U_ADDA, 2, 0, 0, 10, BC_NONE);
+        vu_upper(U_MADD, 2, 6, 4, 10, BC_X);
+        vu_upper(U_MAX, 2, 6, 6, 0, BC_NONE);
+        vu_upper(U_FTOI0, 15, 5, 5, 0, BC_NONE);
+        vu_upper(U_MINI, 2, 6, 6, 12, BC_Y);
+        vu_upper(U_ADD, 1, 9, 9, 6, BC_Z);
+        vu_upper(U_FTOI4, 15, 6, 6, 0, BC_NONE);
+        vu_mtir(5, 6, 3);
+        R3.sd[0] = (int32_t)(vu_cfc2(18));
+        R3.d[0] = R3.d[0] & R4.d[0];
+        ee_cond = (R3.sd[0] == 0);
+        if (ee_cond) goto l_002CC7E0;
+        g_vu0.vi[3] = (uint16_t)(g_vu0.vi[3] | g_vu0.vi[2]);
+    l_002CC7E0:;
+        g_vu0.vi[5] = (uint16_t)(g_vu0.vi[5] | g_vu0.vi[3]);
+        g_vu0.vi[4] = (uint16_t)(g_vu0.vi[4] & g_vu0.vi[5]);
+        vu_mfir(1, 6, 5);
+        vu_store_vf(EE_PTR((op5.w[0] + (uint32_t)(0))), 4);
+        vu_store_vf(EE_PTR((op5.w[0] + (uint32_t)(16))), 5);
+        vu_store_vf(EE_PTR((op5.w[0] + (uint32_t)(32))), 6);
+        R2.sd[0] = (int32_t)(R2.w[0] + (uint32_t)(-1));
+        op5.sd[0] = (int32_t)(op5.w[0] + (uint32_t)(48));
+        ee_cond = (R2.sd[0] != 0);
+        op4.sd[0] = (int32_t)(op4.w[0] + (uint32_t)(48));
+        if (ee_cond) goto l_002CC78C;
+        R3.sd[0] = (int32_t)(vu_cfc2(4));
+        ee_cond = (R2.sd[0] != 0);
+        if (ee_cond) goto l_002CC82C;
+        vu_upper(U_MUL, 1, 4, 9, 0, BC_Q);
+        vu_store_vf(EE_PTR((op5.w[0] + (uint32_t)(0))), 4);
+    }
+#endif
+
+    SyncPath();
+    
+    loadImage((void*)0xF0000000); 
+    
+l_002CC82C:
+    return;
+}
+
+// 100% matching! 
+void Ps2ClearOT()
+{
+    int i;
+
+    Ps2_ot_list->tp = NULL;
+    
+    Ps2_ot_list_no = 0;
+    
+    Ps2_PP = (void*)((int)&Ps2_PBUFF | PS2_WINDOW); 
+    
+    for (i = 0; i < 4096; i++) 
+    {
+        *(unsigned long*)&Ps2_OT[i][0] = 0;
+    } 
+}
+
+// 100% matching!
+void Ps2AddOT(void* p, unsigned int num, float z, unsigned long prim)
+{
+    unsigned int i; 
+    unsigned int size; 
+    register unsigned int otz = 0; 
+    unsigned int id;
+
+#ifdef TARGET_PC
+    /* neither the list nor the packet buffer was bounds-checked: a full one drops the primitive
+       (translucent and sorted strips of a very large room, docs/modding/ROOM_FORMAT.md "Limits and budgets") */
+    if ((Ps2_ot_list_no >= PC_OT_ENTRIES) || (((unsigned char*)Ps2_PP + 64 + (((num * 3) + 1) * 16)) > (unsigned char*)((int)&Ps2_PBUFF | PS2_WINDOW) + PC_PBUFF_SIZE))
+    {
+        static int warned;
+
+        if (warned++ == 0)
+        {
+            host_log("Ps2AddOT: ordering table full (%u entries), primitives dropped\n", Ps2_ot_list_no);
+        }
+
+        pc_ot_poly = 0;
+        return;
+    }
+
+    if ((pc_ot_poly != 0) && (((unsigned char*)Ps2_PP + 64 + (((num * 3) + 3) * 16)) > (unsigned char*)((int)&Ps2_PBUFF | PS2_WINDOW) + PC_PBUFF_SIZE))
+    {
+        pc_ot_poly = 0;   /* no room for the tag: the entry as the original */
+    }
+
+#endif
+    if (Ps2_ice_flag != 0)
+    { 
+        id = Ps2_now_tex->globalIndex & 0xFFFFF; 
+        
+        if (((id >= 26510) && (id <= 26614)) || (id == 107170)) 
+        { 
+#ifndef TARGET_PC
+            asm volatile (cvt.w.s f12, f12);
+#else
+            otz = (unsigned int)(int)z;   /* cvt.w.s (truncates) of the float argument in f12 */
+#endif 
+#ifndef TARGET_PC
+            asm volatile (mfc1      otz, f12);
+#endif 
+            
+            otz >>= 12;
+        } 
+        else 
+        { 
+#ifndef TARGET_PC
+            asm volatile (cvt.w.s f12, f12);
+#else
+            otz = (unsigned int)(int)z;   /* cvt.w.s (truncates) of the float argument in f12 */
+#endif 
+#ifndef TARGET_PC
+            asm volatile (mfc1      otz, f12);
+#endif 
+            
+            otz >>= 4;
+        }
+    } 
+    else 
+    { 
+#ifndef TARGET_PC
+        asm volatile (cvt.w.s f12, f12);
+#else
+        otz = (unsigned int)(int)z;   /* cvt.w.s (truncates) of the float argument in f12 */
+#endif 
+#ifndef TARGET_PC
+        asm volatile (mfc1      otz, f12);
+#endif 
+        
+        otz >>= 4; 
+    }
+        
+    if (otz > 4095) 
+    {
+        otz = 4095; 
+    }
+        
+    if (Ps2_OT[otz][0] != NULL) 
+    { 
+        Ps2_OT[otz][1]->op = (void*)&Ps2_ot_list[Ps2_ot_list_no]; 
+        
+        Ps2_OT[otz][1] = &Ps2_ot_list[Ps2_ot_list_no]; 
+        
+        Ps2_OT[otz][1]->op = NULL; 
+    } 
+    else 
+    { 
+        Ps2_OT[otz][0] = Ps2_OT[otz][1] = &Ps2_ot_list[Ps2_ot_list_no]; 
+        
+        Ps2_OT[otz][1]->op = NULL; 
+    }
+        
+    if ((prim & 0x8000000000000)) 
+    { 
+        Ps2_ot_list[Ps2_ot_list_no].tp = Ps2_now_tex; 
+        Ps2_ot_list[Ps2_ot_list_no].bank = Ps2_now_bank; 
+    }
+    else 
+    { 
+        Ps2_ot_list[Ps2_ot_list_no].tp = (void*)-1; 
+    }
+        
+    Ps2_ot_list[Ps2_ot_list_no].p = Ps2_PP; 
+    
+    Ps2_ot_list[Ps2_ot_list_no].TEX0 = Ps2_gs_save.TEX0 & 0xE0F8001FFFFFC000; 
+    Ps2_ot_list[Ps2_ot_list_no].TEX0_NEXT = Ps2_gs_save.TEX0_NEXT & 0xE0F8001FFFFFC000; 
+    
+    Ps2_ot_list[Ps2_ot_list_no].ALPHA = Ps2_gs_save.ALPHA; 
+    
+    num = (num * 3) + 1; 
+    
+    PS2_PTRADD(Ps2_PP, 16); 
+        
+#ifdef TARGET_PC
+    PS2_POSTINC(long, Ps2_PP) = DMAnext | (((*(long*)p) & 0xFFFFFFF) + (pc_ot_poly != 0 ? 2 : 0));
+#else
+    PS2_POSTINC(long, Ps2_PP) = DMAnext | ((*(long*)p) & 0xFFFFFFF); 
+#endif
+    PS2_POSTINC(long, Ps2_PP) = 0; 
+    
+    PS2_POSTINC(long, Ps2_PP) = SCE_GIF_SET_TAG(1, 0, 0, 0, 0, 1); 
+    PS2_POSTINC(long, Ps2_PP) = SCE_GIF_PACKED_AD; 
+    
+    PS2_POSTINC(long, Ps2_PP) = Ps2_gs_save.ALPHA; 
+    PS2_POSTINC(long, Ps2_PP) = SCE_GS_ALPHA_1; 
+    
+    PS2_PTRADD(p, 48); 
+    
+    for (i = 0; i < num; i++) 
+    { 
+        PS2_POSTINC(u_long128, Ps2_PP) = PS2_POSTINC(u_long128, p); 
+    } 
+#ifdef TARGET_PC
+    if (pc_ot_poly != 0)   /* after the vertices (the walker patches the entry's first qwords): the effect's tag (pc/src/gs/native.h STREAM_TAG_REG) */
+    {
+        PS2_POSTINC(long, Ps2_PP) = SCE_GIF_SET_TAG(1, 1, 0, 0, SCE_GIF_PACKED, 1);
+        PS2_POSTINC(long, Ps2_PP) = SCE_GIF_PACKED_AD;
+        PS2_POSTINC(long, Ps2_PP) = pc_ot_poly;
+        PS2_POSTINC(long, Ps2_PP) = STREAM_TAG_REG;
+        pc_ot_poly = 0;
+    }
+#endif
+    
+    Ps2_ot_list_no++; 
+} 
+
+// 100% matching! 
+void Ps2DrawOTag()
+{
+    int i;
+
+    Ps2ZbuffOff();
+    
+    for (i = 0; i < 4096; )
+    {
+        i = Ps2DrawOTagSub(i);
+    } 
+    
+    Ps2ZbuffOn();
+    
+    Ps2_current_texbreak = 1;
+}
+
+// 98.96% matching
+int Ps2DrawOTagSub(int start_no)
+{ 
+    int i; 
+    int j; 
+    PS2_OT* p; 
+    PS2_OT* old_p; 
+    int save_alpha[3]; 
+    TIM2_PICTUREHEADER_EX* timp; 
+    unsigned int tex_cache_num; 
+    PS2_OT *temp; // not from the debugging symbols 
+    unsigned int t_flag;
+    unsigned int p_flag; 
+    unsigned int t_no; 
+    unsigned int np_no; 
+    unsigned int tex_addr;
+    unsigned int clt_addr;
+    unsigned int exit_no; 
+    void* start_addr;
+    
+    old_p = NULL;
+    
+    t_no = 0; 
+    np_no = 0;
+    
+    tex_cache_num = 0; 
+    
+    tex_addr = 0x2F80; 
+    clt_addr = 0x2E44;
+    
+    exit_no = 4096; 
+    
+    for (i = 0; i < 64; i++) 
+    { 
+#ifndef TARGET_PC
+        *(u_long128*)&ps2_tp_cache[i] = 0; 
+#else
+        memset(&ps2_tp_cache[i], 0, sizeof(u_long128));
+#endif
+    } 
+    
+    for (i = start_no; i < 4096; i++) 
+    { 
+        for (p = Ps2_OT[i][0]; p != NULL; ) 
+        { 
+            if (old_p != NULL) 
+            { 
+                ((long*)old_p->p)[2] |= ((unsigned long)p->p & 0xFFFFFFF) << 32; 
+            }
+            else
+            { 
+                start_addr = p->p; 
+            }
+            
+            p_flag = 0; 
+            t_flag = 0; 
+            
+            if (p->tp == NULL)
+            {
+                return 4096;
+            }
+            
+            if ((int)p->tp != -1) 
+            { 
+                if (tex_cache_num >= 64) 
+                { 
+#ifndef TARGET_PC
+                    printf("Ps2DrawOTag ERROR!\n");
+                    
+                    exit(0); 
+#else
+                    /* more distinct textures in one pass than the walker's cache holds:
+                       draw what is chained and continue in a new pass, as when its GS
+                       memory is full, instead of quitting the game */
+                    exit_no = i; 
+                    Ps2_OT[i][0] = p; 
+                    goto block; 
+#endif
+                }
+
+                timp = (TIM2_PICTUREHEADER_EX*)p->tp->texinfo.texsurface.pSurface; 
+                
+                if (timp != NULL) 
+                { 
+                    for (j = 0; j < tex_cache_num; j++) 
+                    { 
+                        if (ps2_tp_cache[j].tp == p->tp->texinfo.texsurface.pSurface) 
+                        { 
+                            t_flag = 1; 
+                            
+                            np_no = j;
+                            
+                            if (ps2_tp_cache[j].bank == p->bank) 
+                            { 
+                                p_flag = 1;
+                                
+                                t_no = j; 
+                            }
+                        }
+                    } 
+                    
+                    if (t_flag != 0)
+                    { 
+                        if (p_flag == 0) 
+                        { 
+                            ps2_tp_cache[tex_cache_num].tex_addr = ps2_tp_cache[np_no].tex_addr; 
+                            ps2_tp_cache[tex_cache_num].clt_addr = ps2_tp_cache[np_no].clt_addr; 
+                        } 
+                        else 
+                        { 
+                            ((long*)p->p)[0] = DMAref | 0x4 | ((long)&Ps2_tp_tag[t_no] << 32); 
+                            ((long*)p->p)[1] = 0; 
+                            
+                            goto loop_end; 
+                        }
+                    } 
+                    else if ((tex_addr + (timp->ImageSize >> 8)) >= 0x3F80) 
+                    { 
+                        exit_no = i; 
+                        
+                        Ps2_OT[i][0] = p; 
+                        
+                        goto block; 
+                    } 
+                    else 
+                    {
+                        Send_Tim2_dataEx(timp, (int)tex_addr, (int)clt_addr); 
+                        
+                        timp->TpFlag = 1; 
+                        
+                        ps2_tp_cache[tex_cache_num].tex_addr = tex_addr; 
+                        ps2_tp_cache[tex_cache_num].clt_addr = clt_addr; 
+                        
+                        tex_addr += timp->ImageSize >> 8; 
+                        clt_addr += 8; 
+                    }
+                    
+                    ps2_tp_cache[tex_cache_num].tp = timp; 
+                    ps2_tp_cache[tex_cache_num].bank = p->bank; 
+                    
+                    Ps2_tp_tag[tex_cache_num].GIF_TAG[0] = SCE_GIF_SET_TAG(3, SCE_GS_FALSE, SCE_GS_FALSE, 0, SCE_GIF_PACKED, 1); 
+                    Ps2_tp_tag[tex_cache_num].GIF_TAG[1] = SCE_GIF_PACKED_AD; 
+                    
+                    if ((timp->PictFormat >= 5) && (timp->PictFormat < 9)) 
+                    { 
+                        Ps2_tp_tag[tex_cache_num].TEX0 = p->TEX0 | SCE_GS_SET_TEX0_1(ps2_tp_cache[tex_cache_num].tex_addr, 0, SCE_GS_PSMCT32, 0, 0, 0, SCE_GS_MODULATE, ((p->bank & 0x30) >> 2) + 0x3FF0, SCE_GS_PSMCT32, 0, 0, 2); 
+                        Ps2_tp_tag[tex_cache_num].TEX0_TAG = SCE_GS_TEX0_1; 
+                        Ps2_tp_tag[tex_cache_num].TEX0_NEXT = p->TEX0_NEXT | SCE_GS_SET_TEX0_1(ps2_tp_cache[tex_cache_num].tex_addr, 0, SCE_GS_PSMCT32, 0, 0, 0, SCE_GS_MODULATE, ((p->bank & 0x30) >> 2) + 0x3FF0, SCE_GS_PSMCT32, 0, p->bank & 0xF, 0);
+                        Ps2_tp_tag[tex_cache_num].TEX0_NEXT_TAG = SCE_GS_TEX0_1;
+                    } 
+                    else 
+                    { 
+                        Ps2_tp_tag[tex_cache_num].TEX0 = p->TEX0 | SCE_GS_SET_TEX0_1(ps2_tp_cache[tex_cache_num].tex_addr, 0, SCE_GS_PSMCT32, 0, 0, 1, SCE_GS_MODULATE, ps2_tp_cache[tex_cache_num].clt_addr, SCE_GS_PSMCT32, 0, 0, 2); 
+                        Ps2_tp_tag[tex_cache_num].TEX0_TAG = SCE_GS_TEX0_1; 
+                        Ps2_tp_tag[tex_cache_num].TEX0_NEXT = p->TEX0_NEXT | SCE_GS_SET_TEX0_1(ps2_tp_cache[tex_cache_num].tex_addr, 0, SCE_GS_PSMCT32, 0, 0, 1, SCE_GS_MODULATE, ps2_tp_cache[tex_cache_num].clt_addr, SCE_GS_PSMCT32, 0, 0, 2); 
+                        Ps2_tp_tag[tex_cache_num].TEX0_NEXT_TAG = SCE_GS_TEX0_1; 
+                    }
+
+                    Ps2_tp_tag[tex_cache_num].CLAMP = SCE_GS_SET_CLAMP_1(SCE_GS_CLAMP, SCE_GS_CLAMP, 255, 0, 255, 0); 
+                    Ps2_tp_tag[tex_cache_num].CLAMP_TAG = SCE_GS_CLAMP_1; 
+                    
+                    ((long*)p->p)[0] = DMAref | 0x4 | ((long)&Ps2_tp_tag[tex_cache_num] << 32); 
+                    ((long*)p->p)[1] = 0; 
+                    
+                    tex_cache_num++; 
+                }
+            } 
+            else 
+            { 
+                ((long*)p->p)[0] = DMAref | 0x4 | ((long)&Ps2_tp_tag[t_no] << 32); 
+                ((long*)p->p)[1] = 0; 
+            }
+            
+        loop_end:
+            old_p = p; 
+            p = (PS2_OT*)p->op; 
+        } 
+    } 
+
+    if (old_p != NULL) 
+    { 
+    block:
+        ((long*)old_p->p)[2] = (((long*)(temp = old_p)->p)[2] & 0xFFFFFFF) | 0x70000000; 
+        ((long*)old_p->p)[8] = ((long*)old_p->p)[8] | 0x8000; 
+        
+#ifndef TARGET_PC   /* a debug line per drawn ordering table */
+        printf("TEX %05d:%05d]", 0x3F80 - tex_addr, 0x3FCC - clt_addr); 
+#endif
+        
+        save_alpha[0] = Ps2_gs_save.mode_bk[0]; 
+        save_alpha[1] = Ps2_gs_save.mode_bk[1]; 
+        save_alpha[2] = Ps2_gs_save.set_last; 
+        
+        FlushCache(0); 
+        
+        SyncPath();
+        
+#ifndef TARGET_PC
+        loadImage((void*)((int)start_addr & 0xFFFFFF));
+#else
+        loadImage(start_addr); /* host packet buffers may lie beyond the 16 MB the mask assumes */
+#endif
+        
+        SyncPath(); 
+        
+        njColorBlendingMode(save_alpha[2] ^ 1, save_alpha[save_alpha[2] ^ 1]); 
+        njColorBlendingMode(save_alpha[2], save_alpha[save_alpha[2]]); 
+        
+        return exit_no; 
+    }
+    
+    return 4096; 
+} 
+
+// 100% matching!
+unsigned int Ps2BitCount(register unsigned int value)
+{
+#ifndef TARGET_PC
+    asm volatile
+    {
+        
+        addi  v0, value, -1
+        addi  v1, zero, 0x1F
+            
+        plzcw v0, v0
+            
+        subu  v0, v1, v0
+        
+        nop
+            
+    }
+#else
+    { /* asm2c */
+        ee_reg R2 = {{0}}, R3 = {{0}};
+        const ee_reg ee_zero = {{0}};
+        ee_reg cv_value = {{0}};
+        cv_value.sd[0] = (int32_t)(uintptr_t)(value);
+        R2.sd[0] = (int32_t)(cv_value.w[0] + (uint32_t)(-1));
+        R3.sd[0] = (int32_t)(ee_zero.w[0] + (uint32_t)(31));
+        ee_plzcw(&R2, &R2);
+        R2.sd[0] = (int32_t)(R3.w[0] + -R2.w[0]);
+        return R2.w[0]; /* the asm returned in v0 */
+    }
+#endif
+}
+
+// 100% matching!
+void Ps2InitTexCache()
+{
+    unsigned int i;
+
+    for (i = 0; i < 4; i++) 
+    {
+        Ps2_tex_cache_buff[i] = NULL;
+        
+        Ps2_tex_cache_beflag[i] = 0;
+    } 
+    
+    Ps2_tex_cache_num = 4;
+}
+
+// 100% matching!
+int Ps2GlobalIndexTexLoad(unsigned int index)
+{
+	int no;
+
+	no = SearchNumber(index, -1);
+
+    if (no >= 0) 
+	{
+        Ps2TexLoad(&Ps2_tex_info[no]);
+    }
+	else 
+	{
+    	printf("Ps2GlobalIndexTexLoad ERROR!!! %08x\n", index);
+	}
+}
+
+// 97.17% matching
+int Ps2TexLoad(NJS_TEXMEMLIST* addr)
+{
+    unsigned int tbw;       
+    unsigned int psm;     
+    unsigned int tw;       
+    unsigned int th;        
+    unsigned int i;          
+    unsigned long* p;        
+    TIM2_PICTUREHEADER_EX* timp; 
+    unsigned int cache_flag;  
+    unsigned int temp; // not from the debugging symbols
+
+    cache_flag = 1;
+
+    if ((addr == NULL) || (addr->texinfo.texsurface.pSurface == NULL)) 
+    {
+        return printf("Ps2CurrentTexLoad ERROR!!!!\n"); 
+    }
+
+    Ps2_now_tex = addr;
+
+    timp = (TIM2_PICTUREHEADER_EX*)addr->texinfo.texsurface.pSurface;
+
+    if (Ps2_current_texbreak != 0) 
+    {
+        for (i = 0; i < 4; i++) 
+        {
+            Ps2_tex_cache_buff[i] = NULL;
+            
+            Ps2_tex_cache_beflag[i] = 0;
+        }
+
+        Ps2_current_texbreak = 0;
+
+        goto label;
+    }
+    
+    if (timp == Ps2_tex_cache_buff[0]) 
+    {
+        cache_flag = 0;
+    } 
+    else if ((Ps2_tex_load_tp_cancel == 0) && (timp->TpFlag != 0)) 
+    {
+        cache_flag = 0;
+    } 
+    else 
+    {
+label:
+        Ps2_tex_cache_buff[0] = addr->texinfo.texsurface.pSurface;
+        
+        if ((PS2_Render_tex_sub_flag == 0) || ((timp->PictFormat >= 5) && (timp->PictFormat <= 8)) || ((timp->ImageType == 4) || (timp->ImageType == 5)))
+        {
+            Send_Tim2_dataEx(Ps2_tex_cache_buff[0], 190 * 64, 254 * 64);
+        }
+    }
+
+    p = (unsigned long*)WORKBASE;
+
+    D2_SyncTag();
+
+    *p++ = DMAend | 0x7;
+    *p++ = 0;
+
+    *p++ = SCE_GS_SET_TEX0_1(6, 2, SCE_GS_PSMCT32, 0, 0, 0, SCE_GS_MODULATE, 0, SCE_GS_PSMCT32, 0, 16, 0);
+    *p++ = 0xEEEEEE;
+
+    *p++ = 0;
+    *p++ = SCE_GS_TEXFLUSH;
+
+    tbw = timp->GsTex0.TBW;
+    
+    tw = Ps2BitCount(timp->ImageWidth);
+    th = Ps2BitCount(timp->ImageHeight);
+
+    switch (timp->ImageType) 
+    {
+    default:
+        psm = SCE_GS_PSMCT32;
+        break;
+    case 4:
+        psm = SCE_GS_PSMT4;
+        break;
+    case 5:
+        psm = SCE_GS_PSMT8;
+        break;
+    }
+
+    temp = 190;
+
+    if ((timp->PictFormat >= 5) && (timp->PictFormat <= 8)) 
+    {
+        Ps2_now_bank = addr->bank;
+     
+        *p++ = Ps2_gs_save.TEX0 = SCE_GS_SET_TEX0_1(temp * 64, tbw, SCE_GS_PSMT8, tw, th, 1, SCE_GS_MODULATE, ((addr->bank & 0x30) / 4) + 16368, SCE_GS_PSMCT32, 0, 0, 2);
+        *p++ = SCE_GS_TEX0_1;
+
+        *p++ = Ps2_gs_save.TEX0_NEXT = SCE_GS_SET_TEX0_1(temp * 64, tbw, psm, tw, th, 1, SCE_GS_MODULATE, ((addr->bank & 0x30) / 4) + 16368, SCE_GS_PSMCT32, 0, addr->bank & 0xF, 0);
+        *p++ = SCE_GS_TEX0_1;
+    } 
+    else if (psm != 0) 
+    {
+        *p++ = Ps2_gs_save.TEX0 = SCE_GS_SET_TEX0_1(temp * 64, tbw, psm, tw, th, 1, SCE_GS_MODULATE, 254 * 64, SCE_GS_PSMCT32, 0, 0, 2);
+        *p++ = SCE_GS_TEX0_1;
+
+        *p++ = Ps2_gs_save.TEX0_NEXT = SCE_GS_SET_TEX0_1(temp * 64, tbw, psm, tw, th, 1, SCE_GS_MODULATE, 254 * 64, SCE_GS_PSMCT32, 0, 0, 2);
+        *p++ = SCE_GS_TEX0_1;
+    } 
+    else if (PS2_Render_tex_sub_flag == 0)
+    {
+        *p++ = Ps2_gs_save.TEX0 = SCE_GS_SET_TEX0_1(temp * 64, tbw, psm, tw, th, 0, SCE_GS_MODULATE, 254 * 64, SCE_GS_PSMCT32, 0, 0, 2);
+        *p++ = SCE_GS_TEX0_1;
+
+        *p++ = Ps2_gs_save.TEX0_NEXT = SCE_GS_SET_TEX0_1(temp * 64, tbw, psm, tw, th, 0, SCE_GS_MODULATE, 254 * 64, SCE_GS_PSMCT32, 0, 0, 2);
+        *p++ = SCE_GS_TEX0_1;
+    } 
+    else 
+    {
+        *p++ = Ps2_gs_save.TEX0 = SCE_GS_SET_TEX0_1((temp * 64) + (48 * 64), 4, SCE_GS_PSMCT32, 8, 8, 0, SCE_GS_MODULATE, 0, SCE_GS_PSMCT32, 0, 0, 0);
+        *p++ = SCE_GS_TEX0_1;
+
+        *p++ = Ps2_gs_save.TEX0_NEXT = SCE_GS_SET_TEX0_1((temp * 64) + (48 * 64), 4, SCE_GS_PSMCT32, 8, 8, 0, SCE_GS_MODULATE, 0, SCE_GS_PSMCT32, 0, 0, 0);
+        *p++ = SCE_GS_TEX0_1;
+
+        PS2_Render_tex_sub_flag = 0;
+    }
+
+    *p++ = Ps2_gs_save.TEX1 = SCE_GS_SET_TEX1_1(0, 0, SCE_GS_LINEAR, SCE_GS_LINEAR, 0, 0, 0);
+    *p++ = SCE_GS_TEX1_1;
+
+    *p++ = Ps2_gs_save.CLAMP = SCE_GS_SET_CLAMP_1(timp->ClampFlag, SCE_GS_REPEAT, 255, 0, 255, 0);
+    *p++ = SCE_GS_CLAMP_1;
+
+    *p++ = Ps2_gs_save.TEST = SCE_GS_SET_TEST_1(1, SCE_GS_ALPHA_GREATER, 0, SCE_GS_AFAIL_KEEP, 0, 0, 1, SCE_GS_DEPTH_GEQUAL);
+    *p++ = SCE_GS_TEST_1;
+
+    loadImage((void*)0xF0000000);
+
+    return cache_flag;
+}
+
+// 100% matching!
+void Ps2SetFogColor()
+{
+	D2_SyncTag();
+    
+    ((u_long*)WORKBASE)[0] = DMAend | 0x2;
+    ((u_long*)WORKBASE)[1] = 0;
+    
+    ((u_long*)WORKBASE)[2] = SCE_GIF_SET_TAG(1, SCE_GS_TRUE, SCE_GS_FALSE, 0, SCE_GIF_PACKED, 1);
+    ((u_long*)WORKBASE)[3] = SCE_GIF_PACKED_AD;
+    
+    ((u_long*)WORKBASE)[4] = Ps2_gs_save.FOGCOL = SCE_GS_SET_RGBAQ(ulNaFogR, ulNaFogG, ulNaFogB, 0, 0);
+    ((u_long*)WORKBASE)[5] = SCE_GS_FOGCOL;
+    
+    loadImage((void*)0xF0000000); 
+    
+    D2_SyncTag();
+}
+
+// 100% matching!
+void Ps2SetFogColorSys(unsigned int r, unsigned int g, unsigned int b)
+{
+    D2_SyncTag();
+    
+    ((u_long*)WORKBASE)[0] = DMAend | 0x2;
+    ((u_long*)WORKBASE)[1] = 0;
+    
+    ((u_long*)WORKBASE)[2] = SCE_GIF_SET_TAG(1, SCE_GS_TRUE, SCE_GS_FALSE, 0, SCE_GIF_PACKED, 1);
+    ((u_long*)WORKBASE)[3] = SCE_GIF_PACKED_AD;
+    
+    ((u_long*)WORKBASE)[4] = Ps2_gs_save.FOGCOL = SCE_GS_SET_RGBAQ(r, g, b, 0, 0);
+    ((u_long*)WORKBASE)[5] = SCE_GS_FOGCOL;
+    
+    loadImage((void*)0xF0000000); 
+    
+    D2_SyncTag();
+}
+
+// 100% matching!
+void Ps2AlphaIs000(unsigned int* cp, unsigned int num)
+{
+    unsigned int i;
+    
+    for (i = 0; i < num; i++, cp++)
+    {
+        if ((((unsigned char*)cp)[3] != 0) && (((unsigned char*)cp)[0] == 0) && (((unsigned char*)cp)[1] == 0) && (((unsigned char*)cp)[2] == 0)) 
+        {
+            ((unsigned char*)cp)[3] = 0;
+        }
+    }
+}
+
+// 100% matching!
+unsigned int Ps2AlphaIsHalf(unsigned int* cp, unsigned int num)
+{
+    unsigned int i;
+    
+    for (i = 0; i < num; i++, cp++)
+    {
+        ((unsigned char*)cp)[3] = (((unsigned char*)cp)[3] + 1) >> 1;
+    }
+}
+
+// 100% matching!
+unsigned int Ps2Alpha4to8(unsigned int* cp, unsigned int num)
+{
+    unsigned int i;
+    unsigned int val;
+    
+    for (i = 0; i < num; i++, cp++)
+    {
+        val = ((unsigned char*)cp)[3];
+        
+        ((unsigned char*)cp)[3] = val | (val >> 4);
+    }
+}
+
+// 100% matching!
+int Ps2CheckTextureAlpha(void* pp)
+{
+    unsigned int *cp;  
+    unsigned int num;  
+    unsigned int flag; 
+    unsigned int temp; // not from the debugging symbols
+    TIM2_PICTUREHEADER_EX* temp2; // not from the debugging symbols
+
+    temp2 = pp;
+    
+    if (temp2->ClutChange != 0)
+    {
+        return (unsigned short)temp2->ClutChange;
+    }
+    
+    cp = (unsigned int*)((int)pp + temp2->ImageSize + 256);
+    
+    num = temp2->ClutSize >> 2;
+    
+    if (isVQ(temp2->PictFormat) != 0) 
+    {
+        switch (temp2->OrgColorType) 
+        {                       
+        case 0:                                     
+            flag = 0x8000;
+            
+            printf("ARGB1555\n", temp2->OrgColorType);
+            break;
+        case 1:                                    
+            flag = 0x8000;
+            
+            printf("RGB565\n", temp2->OrgColorType);
+            break;
+        case 2:                                    
+            flag = 0x8000;
+            
+            Ps2Alpha4to8(cp, num);
+            Ps2AlphaIsHalf(cp, num);
+            
+            printf("ARGB4444\n");
+            break;
+        case 6:                                  
+            flag = 0x8000;
+            
+            Ps2AlphaIsHalf(cp, num);
+            
+            printf("ARGB8888\n");
+            break;
+        default:                                   
+            printf("ERROR ERROR ERROR ERROR ERROR %04x\n", temp2->OrgColorType);
+            break;
+        }
+    } 
+    else 
+    {
+        switch (temp2->OrgColorType)
+        {                       
+        case 0:
+            flag = 0x8000;
+            
+            Ps2AlphaIs000(cp, num);
+            
+            printf("ARGB1555\n");
+            break;
+        case 1:
+            flag = 0x8000;
+            
+            Ps2AlphaIs000(cp, num);
+            
+            printf("RGB565\n");
+            break;
+        case 2:
+            flag = 0x8000;
+            
+            Ps2AlphaIs000(cp, num);
+            Ps2Alpha4to8(cp, num);
+            Ps2AlphaIsHalf(cp, num);
+            
+            printf("ARGB4444\n");
+            break;
+        case 6:
+            flag = 0x8000;
+            
+            Ps2AlphaIs000(cp, num);
+            Ps2AlphaIsHalf(cp, num);
+            
+            printf("ARGB8888\n");
+            break;
+        default:
+            printf("ERROR ERROR ERROR ERROR ERROR %04x\n", temp2->OrgColorType);
+            break;
+        }
+    }
+    
+    temp2->ClutChange = flag;
+    
+    temp = temp2->Gindex & 0xFFFFF;
+    
+    if ((temp == 20500) || (temp == 15205) || (temp == 15206) || (temp == 15207) || (temp == 15208) || (temp == 15209))
+    {
+        temp2->ClampFlag = 0xFF000FF0;
+    }
+    else 
+    {
+        temp2->ClampFlag = 0xFF000FF5;
+    }
+ 
+    Ps2PxlconvCheck(pp);
+    
+    return flag;
+}
+
+// 100% matching! 
+void Ps2InitPS2_GS_SAVE()
+{
+    Ps2_gs_save.SC_TAG[0] = DMAend | 0xA;
+    Ps2_gs_save.SC_TAG[1] = 0;
+    
+    Ps2_gs_save.GIF_TAG[0] = SCE_GIF_SET_TAG(9, SCE_GS_TRUE, SCE_GS_FALSE, 0, SCE_GIF_PACKED, 1);
+    Ps2_gs_save.GIF_TAG[1] = SCE_GIF_PACKED_AD;
+    
+    Ps2_gs_save.TEX0 = 0;
+    Ps2_gs_save.TEX0_TAG = SCE_GS_TEX0_1;
+    
+    Ps2_gs_save.TEX0_NEXT = 0;
+    Ps2_gs_save.TEX0_NEXT_TAG = SCE_GS_TEX0_1;
+    
+    Ps2_gs_save.TEX1 = 0;
+    Ps2_gs_save.TEX1_TAG = SCE_GS_TEX1_1;
+    
+    Ps2_gs_save.CLAMP = 0;
+    Ps2_gs_save.CLAMP_TAG = SCE_GS_CLAMP_1;
+    
+    Ps2_gs_save.TEST = 0;
+    Ps2_gs_save.TEST_TAG = SCE_GS_TEST_1;
+    
+    Ps2_gs_save.FOGCOL = 0;
+    Ps2_gs_save.FOGCOL_TAG = SCE_GS_FOGCOL;
+    
+    Ps2_gs_save.ALPHA = 0;
+    Ps2_gs_save.ALPHA_TAG = SCE_GS_ALPHA_1;
+    
+    Ps2_gs_save.FBA = 0;
+    Ps2_gs_save.FBA_TAG = SCE_GS_FBA_1;
+    
+    Ps2_gs_save.SCISSOR = 0;
+    Ps2_gs_save.SCISSOR_TAG = SCE_GS_SCISSOR_1;
+
+    Ps2_gs_save.dmy = 0;
+    Ps2_gs_save.pad64 = 0;
+    
+    FlushCache(0);
+}
+
+// 100% matching! 
+void Ps2ScreenClear()
+{
+    SyncPath();
+
+    ((u_long*)WORKBASE)[0] = DMAend | 0x8; 
+    ((u_long*)WORKBASE)[1] = 0;
+
+    ((u_long*)WORKBASE)[2] = SCE_GIF_SET_TAG(7, SCE_GS_TRUE, SCE_GS_FALSE, 0, SCE_GIF_PACKED, 1);
+    ((u_long*)WORKBASE)[3] = SCE_GIF_PACKED_AD;
+    
+    ((u_long*)WORKBASE)[4] = SCE_GS_SET_FRAME_2(0, 10, SCE_GS_PSMCT32, 0);
+    ((u_long*)WORKBASE)[5] = SCE_GS_FRAME_2;
+    
+    ((u_long*)WORKBASE)[6] = SCE_GS_SET_TEST_2(0, SCE_GS_ALPHA_NEVER, 0, SCE_GS_AFAIL_KEEP, 0, 0, 1, SCE_GS_DEPTH_ALWAYS);
+    ((u_long*)WORKBASE)[7] = SCE_GS_TEST_2;
+    
+    ((u_long*)WORKBASE)[8] = SCE_GS_SET_PRIM(SCE_GS_PRIM_SPRITE, 0, 0, 0, 0, 0, 0, 1, 0);
+    ((u_long*)WORKBASE)[9] = SCE_GS_PRIM;
+    
+    ((u_long*)WORKBASE)[10] = SCE_GS_SET_RGBAQ(0, 0, 0, 0, 0);
+    ((u_long*)WORKBASE)[11] = SCE_GS_RGBAQ;
+    
+    ((u_long*)WORKBASE)[12] = SCE_GS_SET_XYZF(GS_X_COORD(0), GS_Y_COORD(-128), 0, 0);
+    ((u_long*)WORKBASE)[13] = SCE_GS_XYZF2;
+    
+    ((u_long*)WORKBASE)[14] = SCE_GS_SET_XYZF(GS_X_COORD(640), GS_Y_COORD(352), 0, 0);
+    ((u_long*)WORKBASE)[15] = SCE_GS_XYZF2;
+    
+    ((u_long*)WORKBASE)[16] = SCE_GS_SET_TEST_2(0, SCE_GS_ALPHA_NEVER, 0, SCE_GS_AFAIL_KEEP, 0, 0, 1, SCE_GS_DEPTH_GEQUAL);
+    ((u_long*)WORKBASE)[17] = SCE_GS_TEST_2;
+    
+    loadImage((void*)0xF0000000);
+ 
+    D2_SyncTag();
+    SyncPath();
+}
+
+// 100% matching! 
+void Ps2DispScreenClear()
+{
+    SyncPath();
+
+    ((u_long*)WORKBASE)[0] = DMAend | 0x8; 
+    ((u_long*)WORKBASE)[1] = 0;
+
+    ((u_long*)WORKBASE)[2] = SCE_GIF_SET_TAG(7, SCE_GS_TRUE, SCE_GS_FALSE, 0, SCE_GIF_PACKED, 1);
+    ((u_long*)WORKBASE)[3] = SCE_GIF_PACKED_AD;
+    
+    ((u_long*)WORKBASE)[4] = SCE_GS_SET_FRAME_2(0, 10, SCE_GS_PSMCT32, 0) | 0x96;
+    ((u_long*)WORKBASE)[5] = SCE_GS_FRAME_2;
+    
+    ((u_long*)WORKBASE)[6] = SCE_GS_SET_TEST_2(0, SCE_GS_ALPHA_NEVER, 0, SCE_GS_AFAIL_KEEP, 0, 0, 1, SCE_GS_DEPTH_ALWAYS);
+    ((u_long*)WORKBASE)[7] = SCE_GS_TEST_2;
+    
+    ((u_long*)WORKBASE)[8] = SCE_GS_SET_PRIM(SCE_GS_PRIM_SPRITE, 0, 0, 0, 0, 0, 0, 1, 0);
+    ((u_long*)WORKBASE)[9] = SCE_GS_PRIM;
+    
+    ((u_long*)WORKBASE)[10] = SCE_GS_SET_RGBAQ(0, 0, 0, 0, 0);
+    ((u_long*)WORKBASE)[11] = SCE_GS_RGBAQ;
+    
+    ((u_long*)WORKBASE)[12] = SCE_GS_SET_XYZF(GS_X_COORD(0), GS_Y_COORD(-128), 0, 0);
+    ((u_long*)WORKBASE)[13] = SCE_GS_XYZF2;
+    
+    ((u_long*)WORKBASE)[14] = SCE_GS_SET_XYZF(GS_X_COORD(640), GS_Y_COORD(352), 0, 0);
+    ((u_long*)WORKBASE)[15] = SCE_GS_XYZF2;
+    
+    ((u_long*)WORKBASE)[16] = SCE_GS_SET_TEST_2(0, SCE_GS_ALPHA_NEVER, 0, SCE_GS_AFAIL_KEEP, 0, 0, 1, SCE_GS_DEPTH_GEQUAL);
+    ((u_long*)WORKBASE)[17] = SCE_GS_TEST_2;
+    
+    loadImage((void*)0xF0000000);
+ 
+    D2_SyncTag();
+    SyncPath();
+}
+
+// 100% matching! 
+void Ps2ZbuffOff()
+{
+    D2_SyncTag();
+    
+    ((u_long*)WORKBASE)[0] = DMAend | 0x2;
+    ((u_long*)WORKBASE)[1] = 0;
+    
+    ((u_long*)WORKBASE)[2] = SCE_GIF_SET_TAG(1, SCE_GS_TRUE, SCE_GS_FALSE, 0, SCE_GIF_PACKED, 1);
+    ((u_long*)WORKBASE)[3] = SCE_GIF_PACKED_AD;
+    
+    ((u_long*)WORKBASE)[4] = SCE_GS_SET_TEST_1(1, SCE_GS_ALPHA_GEQUAL, 128, SCE_GS_AFAIL_FB_ONLY, 0, 0, 1, SCE_GS_DEPTH_GEQUAL);
+    ((u_long*)WORKBASE)[5] = SCE_GS_TEST_1;
+    
+    loadImage((void*)0xF0000000);
+    
+    D2_SyncTag();
+}
+
+// 100% matching!
+void Ps2ZbuffOff2()
+{
+	D2_SyncTag();
+    
+    ((u_long*)WORKBASE)[0] = DMAend | 0x3;
+    ((u_long*)WORKBASE)[1] = 0;
+    
+    ((u_long*)WORKBASE)[2] = SCE_GIF_SET_TAG(2, SCE_GS_TRUE, SCE_GS_FALSE, 0, SCE_GIF_PACKED, 1);
+    ((u_long*)WORKBASE)[3] = SCE_GIF_PACKED_AD;
+
+	((u_long*)WORKBASE)[4] = SCE_GS_SET_ZBUF_1(300, SCE_GS_PSMCT16S, 1);
+    ((u_long*)WORKBASE)[5] = SCE_GS_ZBUF_1;
+    
+    ((u_long*)WORKBASE)[6] = SCE_GS_SET_TEST_1(1, SCE_GS_DEPTH_GEQUAL, 128, SCE_GS_AFAIL_KEEP, 0, 0, 1, SCE_GS_DEPTH_GEQUAL);
+    ((u_long*)WORKBASE)[7] = SCE_GS_TEST_1;
+
+    loadImage((void*)0xF0000000);
+    
+    D2_SyncTag();
+}
+
+// 100% matching! 
+void Ps2ZbuffOn()
+{
+    D2_SyncTag();
+    
+    ((u_long*)WORKBASE)[0] = DMAend | 0x3;
+    ((u_long*)WORKBASE)[1] = 0;
+    
+    ((u_long*)WORKBASE)[2] = SCE_GIF_SET_TAG(2, SCE_GS_TRUE, SCE_GS_FALSE, 0, SCE_GIF_PACKED, 1);
+    ((u_long*)WORKBASE)[3] = SCE_GIF_PACKED_AD;
+    
+    ((u_long*)WORKBASE)[4] = SCE_GS_SET_ZBUF_1(300, SCE_GS_PSMCT16S, 0);
+    ((u_long*)WORKBASE)[5] = SCE_GS_ZBUF_1;
+    
+    ((u_long*)WORKBASE)[6] = SCE_GS_SET_TEST_1(1, SCE_GS_ALPHA_GREATER, 0, SCE_GS_AFAIL_KEEP, 0, 0, 1, SCE_GS_DEPTH_GEQUAL);
+    ((u_long*)WORKBASE)[7] = SCE_GS_TEST_1;
+    
+    loadImage((void*)0xF0000000);
+    
+    D2_SyncTag();
+}
+
+// 100% matching! 
+void Ps2ShadowStart()
+{
+	Ps2_current_texbreak = 1;
+    
+    D2_SyncTag();
+    
+    ((u_long*)WORKBASE)[0] = DMAend | 0xA;
+    ((u_long*)WORKBASE)[1] = 0;
+    
+    ((u_long*)WORKBASE)[2] = SCE_GIF_SET_TAG(9, SCE_GS_TRUE, SCE_GS_FALSE, 0, SCE_GIF_PACKED, 1);
+    ((u_long*)WORKBASE)[3] = SCE_GIF_PACKED_AD;
+    
+    ((u_long*)WORKBASE)[4] = SCE_GS_SET_FRAME_2(380, 10, SCE_GS_PSMCT16S, 0); 
+    ((u_long*)WORKBASE)[5] = SCE_GS_FRAME_2;
+    
+    ((u_long*)WORKBASE)[6] = SCE_GS_SET_TEST_2(0, 0, 0, 0, 0, 0, 3, 0);
+    ((u_long*)WORKBASE)[7] = SCE_GS_TEST_2;
+    
+    ((u_long*)WORKBASE)[8] = SCE_GS_SET_ZBUF_2(300, SCE_GS_PSMZ16S, 1);
+    ((u_long*)WORKBASE)[9] = SCE_GS_ZBUF_2;
+    
+    ((u_long*)WORKBASE)[10] = SCE_GS_SET_PRIM(6, 0, 0, 0, 0, 0, 2, 0, 0);
+    ((u_long*)WORKBASE)[11] = SCE_GS_PRIM; 
+
+    ((u_long*)WORKBASE)[12] = SCE_GS_SET_RGBAQ(0, 0, 0, 0, 0);
+    ((u_long*)WORKBASE)[13] = SCE_GS_RGBAQ; 
+    
+    ((u_long*)WORKBASE)[14] = SCE_GS_SET_XYZ2(GS_X_COORD_MOD(0),          GS_Y_COORD_MOD(0),           0);
+    ((u_long*)WORKBASE)[15] = SCE_GS_XYZ2;
+    
+    ((u_long*)WORKBASE)[16] = SCE_GS_SET_XYZ2(GS_X_COORD_MOD(SCR_WIDTH2), GS_Y_COORD_MOD(SCR_HEIGHT2), 0);
+    ((u_long*)WORKBASE)[17] = SCE_GS_XYZ2;
+    
+    ((u_long*)WORKBASE)[18] = SCE_GS_SET_TEST_2(0, SCE_GS_ALPHA_NEVER, 0, SCE_GS_AFAIL_KEEP, 0, 0, 1, SCE_GS_DEPTH_GEQUAL);
+    ((u_long*)WORKBASE)[19] = SCE_GS_TEST_2;
+    
+    ((u_long*)WORKBASE)[20] = SCE_GS_SET_TEXA(0, 1, 128); 
+    ((u_long*)WORKBASE)[21] = SCE_GS_TEXA; 
+    
+    loadImage((void*)0xF0000000);
+}
+
+// 100% matching!
+void Ps2ShadowDraw()
+{
+    unsigned long uv0, uv1; 
+    unsigned long xy0, xy1; 
+    int iv4[4], iv0[4];       
+
+#ifdef TARGET_PC
+    {   /* VR: the shadow is a screen-space picture pasted over the frame - in a headset it floats
+           as a rectangle in the air (vr_glue.c, ini vr_shadows) */
+        extern int vr_hide_shadows(void);
+        if (vr_hide_shadows()) return;
+    }
+#endif
+
+    if ((Ps2_shadow_vec[0] < 1536.0f) || (Ps2_shadow_vec[0] >= 2560.0f))
+    {
+        return;
+    }
+
+    if ((Ps2_shadow_vec[1] < 1536.0f) || (Ps2_shadow_vec[1] >= 2560.0f))
+    {
+        return;
+    }
+
+    if ((Ps2_shadow_vec[2] < 1536.0f) || (Ps2_shadow_vec[2] >= 2560.0f))
+    {
+        return;
+    }
+
+    if ((Ps2_shadow_vec[3] < 1536.0f) || (Ps2_shadow_vec[3] >= 2560.0f))
+    {
+        return;
+    }
+
+    if (Ps2_shadow_vec[0] < 1728.0f) 
+    {
+        Ps2_shadow_vec[0] = 1728.0f;
+    }
+    
+    if (Ps2_shadow_vec[0] > 2368.0f) 
+    {
+        Ps2_shadow_vec[0] = 2368.0f;
+    }
+    
+    if (Ps2_shadow_vec[1] < 1808.0f) 
+    {
+        Ps2_shadow_vec[1] = 1808.0f;
+    }
+    
+    if (Ps2_shadow_vec[1] > 2288.0f) 
+    {
+        Ps2_shadow_vec[1] = 2288.0f;
+    }
+    
+    if (Ps2_shadow_vec[2] < 1728.0f) 
+    {
+        Ps2_shadow_vec[2] = 1728.0f;
+    }
+    
+    if (Ps2_shadow_vec[2] > 2368.0f)
+    {
+        Ps2_shadow_vec[2] = 2368.0f;
+    }
+    
+    if (Ps2_shadow_vec[3] < 1808.0f) 
+    {
+        Ps2_shadow_vec[3] = 1808.0f;
+    }
+    
+    if (Ps2_shadow_vec[3] > 2288.0f) 
+    {
+        Ps2_shadow_vec[3] = 2288.0f;
+    }
+    
+    if (Ps2_shadow_z != 0)
+    {
+        Ps2_shadow_vec[0] = 0;
+        Ps2_shadow_vec[1] = 0;
+        Ps2_shadow_vec[2] = 0;
+        Ps2_shadow_vec[3] = 0;
+    }
+    
+    sceVu0FTOI4Vector(iv4, Ps2_shadow_vec);
+    sceVu0FTOI0Vector(iv0, Ps2_shadow_vec);
+    
+    xy0 = *(unsigned long*)&iv4[0];
+    xy1 = *(unsigned long*)&iv4[2];
+
+    uv0 = SCE_GS_SET_UV(((iv0[0] - 1728) * 16) + 8, ((iv0[1] - 1808) * 16) + 8);
+    uv1 = SCE_GS_SET_UV(((iv0[2] - 1728) * 16) + 8, ((iv0[3] - 1808) * 16) + 8);
+
+    D2_SyncTag();
+    
+    ((u_long*)WORKBASE)[0] = DMAend | 0x11;
+    ((u_long*)WORKBASE)[1] = 0;
+    
+    ((u_long*)WORKBASE)[2] = SCE_GIF_SET_TAG(1, SCE_GS_TRUE, SCE_GS_TRUE, SCE_GS_SET_PRIM(SCE_GS_PRIM_SPRITE, 0, 1, 0, 1, 0, 1, 1, 0), SCE_GIF_PACKED, 0);
+    ((u_long*)WORKBASE)[3] = 0xE44EEEEE4E4EEEEE;
+    
+    ((u_long*)WORKBASE)[4] = SCE_GS_SET_FRAME_2(0, 10, SCE_GS_PSMCT32, 0);
+    ((u_long*)WORKBASE)[5] = SCE_GS_FRAME_2;
+    
+    ((u_long*)WORKBASE)[6] = SCE_GS_SET_TEST_2(1, SCE_GS_ALPHA_GREATER, 0, SCE_GS_AFAIL_KEEP, 0, 0, 1, SCE_GS_DEPTH_ALWAYS);
+    ((u_long*)WORKBASE)[7] = SCE_GS_TEST_2;
+    
+    ((u_long*)WORKBASE)[8] = SCE_GS_SET_TEX0_2(12160, 10, SCE_GS_PSMCT16S, 10, 9, 1, SCE_GS_MODULATE, 0, SCE_GS_PSMCT32, 0, 0, 0);
+    ((u_long*)WORKBASE)[9] = SCE_GS_TEX0_2;
+
+    ((u_long*)WORKBASE)[10] = SCE_GS_SET_RGBAQ(((unsigned int)Ps2_shadow_fog * 3) / 16, ((unsigned int)Ps2_shadow_fog * 3) / 16, ((unsigned int)Ps2_shadow_fog * 3) / 16, 128, 0);
+    ((u_long*)WORKBASE)[11] = SCE_GS_RGBAQ;
+    
+    ((u_long*)WORKBASE)[12] = uv0;
+    ((u_long*)WORKBASE)[13] = SCE_GS_UV;
+    
+    ((u_long*)WORKBASE)[14] = xy0;
+    ((u_long*)WORKBASE)[15] = SCE_GS_PRIM;
+    
+    ((u_long*)WORKBASE)[16] = uv1;
+    ((u_long*)WORKBASE)[17] = SCE_GS_UV;
+    
+    ((u_long*)WORKBASE)[18] = xy1;
+    ((u_long*)WORKBASE)[19] = SCE_GS_PRIM;
+    
+    ((u_long*)WORKBASE)[20] = 0;
+    ((u_long*)WORKBASE)[21] = SCE_GS_TEXFLUSH;
+    
+    ((u_long*)WORKBASE)[22] = SCE_GS_SET_FRAME_2(380, 10, SCE_GS_PSMCT16S, 0);
+    ((u_long*)WORKBASE)[23] = SCE_GS_FRAME_2;
+    
+    ((u_long*)WORKBASE)[24] = SCE_GS_SET_TEST_2(0, SCE_GS_ALPHA_NEVER, 0, SCE_GS_AFAIL_KEEP, 0, 0, 1, SCE_GS_DEPTH_ALWAYS);
+    ((u_long*)WORKBASE)[25] = SCE_GS_TEST_2;
+    
+    ((u_long*)WORKBASE)[26] = SCE_GS_SET_PRIM(SCE_GS_PRIM_SPRITE, 0, 0, 0, 0, 0, 0, 1, 0);
+    ((u_long*)WORKBASE)[27] = SCE_GS_PRIM;
+    
+    ((u_long*)WORKBASE)[28] = SCE_GS_SET_RGBAQ(0, 0, 0, 0, 0);
+    ((u_long*)WORKBASE)[29] = SCE_GS_RGBAQ;
+    
+    ((u_long*)WORKBASE)[30] = xy0;
+    ((u_long*)WORKBASE)[31] = SCE_GS_PRIM;
+    
+    ((u_long*)WORKBASE)[32] = xy1;
+    ((u_long*)WORKBASE)[33] = SCE_GS_PRIM;
+    
+    ((u_long*)WORKBASE)[34] = SCE_GS_SET_TEST_2(0, SCE_GS_ALPHA_NEVER, 0, SCE_GS_AFAIL_KEEP, 0, 0, 1, SCE_GS_DEPTH_GEQUAL);
+    ((u_long*)WORKBASE)[35] = SCE_GS_TEST_2;
+    
+    loadImage((void*)0xF0000000);
+}
+
+// 100% matching! 
+void Ps2ShadowMain0()
+{
+	static const unsigned long shadow_head[8] = { 0x70000003UL, 0x0UL, 0x1000000000008002UL, 0x0EUL, 0x13A00012CUL, 0x4FUL, 0x8000000029UL, 0x43UL };
+
+	Ps2_shadow_vec[0] =  65536.0f;
+	Ps2_shadow_vec[1] =  65536.0f;
+
+	Ps2_shadow_vec[2] = -65536.0f;
+	Ps2_shadow_vec[3] = -65536.0f;
+
+	loadImage((void*)shadow_head);
+}
+
+// 100% matching! 
+void Ps2ShadowMain1()
+{
+	static const unsigned long shadow_tail[6] = { 0x70000002UL, 0x0UL, 0x1000000000008001UL, 0x0EUL, 0x80000000A1UL, 0x43UL };
+
+	loadImage((void*)shadow_tail);
+}
+
+// 100% matching! 
+void Ps2ShadowEnd()
+{
+    D2_SyncTag();
+    
+    ((u_long*)WORKBASE)[0] = DMAend | 0x5;
+    ((u_long*)WORKBASE)[1] = 0;
+    
+    ((u_long*)WORKBASE)[2] = SCE_GIF_SET_TAG(4, SCE_GS_TRUE, SCE_GS_FALSE, 0, SCE_GIF_PACKED, 1);
+    ((u_long*)WORKBASE)[3] = SCE_GIF_PACKED_AD;
+    
+    ((u_long*)WORKBASE)[4] = SCE_GS_SET_FRAME_2(0, 10, SCE_GS_PSMCT32, 0); 
+    ((u_long*)WORKBASE)[5] = SCE_GS_FRAME_2;
+    
+    ((u_long*)WORKBASE)[6] = SCE_GS_SET_TEST_2(0, SCE_GS_ALPHA_NEVER, 0, SCE_GS_AFAIL_KEEP, 0, 0, 1, SCE_GS_DEPTH_GEQUAL);
+    ((u_long*)WORKBASE)[7] = SCE_GS_TEST_2;
+    
+    ((u_long*)WORKBASE)[8] = SCE_GS_SET_ZBUF_2(300, SCE_GS_PSMZ16S, 0);
+    ((u_long*)WORKBASE)[9] = SCE_GS_ZBUF_2;
+    
+    ((u_long*)WORKBASE)[10] = SCE_GS_SET_ALPHA_2(SCE_GS_ALPHA_CS, SCE_GS_ALPHA_CS, SCE_GS_ALPHA_AS, SCE_GS_ALPHA_CS, 0);
+    ((u_long*)WORKBASE)[11] = SCE_GS_ALPHA_2;
+    
+    loadImage((void*)0xF0000000);
+}
+
+// 99.44% matching
+void Ps2Vu0ProgSend(unsigned int prog_no)
+{
+    static void* prog_table[3] = {
+        &ps2_vu0sub0,
+        &ps2_vu0sub0, 
+        &ps2_vu0sub0
+    };
+    
+    sceDmaSend((sceDmaChan*)0x10008000, prog_table[prog_no]);
+    sceDmaSync((sceDmaChan*)0x10008000, 0, 0);
+}
+
+// 99.44% matching
+void Ps2Vu1ProgSend(unsigned int prog_no)
+{
+    static void* prog_table[2] = {
+        &ps2_vu1sub0,
+        &ps2_vu1sub1
+    };
+    
+    sceDmaSend((sceDmaChan*)0x10009000, prog_table[prog_no]);
+    sceDmaSync((sceDmaChan*)0x10009000, 0, 0);
+}
+
+// 100% matching!
+void Ps2AddPrim3DExI(unsigned long prim, void* dp, unsigned int num)
+{
+    unsigned long* p;                
+    TIM2_PICTUREHEADER_EX* timp;      
+    unsigned int clip_flag;        
+    unsigned int clut_flag;          
+    unsigned int st_clip_flag;      
+    float zsum;                    
+    float zbuff_ab_vec[4] = { -Ps2_zbuff_b, 0, -Ps2_zbuff_a, *(float*)&num };
+    unsigned long* pp;                
+    u_long128* p128;             
+    int j;                         
+    float fz[3][4];                    
+    static const float clip_vec[4] = { 2048.0f, 2048.0f, 0, 2047.0f };  
+    static const float near_far_vec[4] = { 1.0f, 65534.0f, 0, 0 };
+    static const float zclip_ab_vec[4] = { 0.062501907f, 0, -2048.0625f, 0 };
+
+    clip_flag = 0;
+    clut_flag = 0;
+    st_clip_flag = 0;
+    
+    if ((prim & 0x8000000000000)) 
+    {
+        if (Ps2_now_tex == NULL) 
+        {
+            return;
+        }
+
+        if ((prim & 0x20000000000000)) 
+        {
+            if (Ps2_use_pt_flag != 0)
+            {
+                prim &= ~SCE_GIF_SET_TAG(0, 0, 0, SCE_GS_SET_PRIM(0, 0, 0, 0, 1, 0, 0, 0, 0), 0, 0);
+            }
+        }
+        
+        if (!(prim & 0x20000000000000)) 
+        {
+            timp = (TIM2_PICTUREHEADER_EX*)Ps2_now_tex->texinfo.texsurface.pSurface;
+            
+            if (timp->TpFlag != 0) 
+            {
+                Ps2_tex_load_tp_cancel = 1;
+                
+                Ps2TexLoad(Ps2_now_tex);
+                
+                Ps2_tex_load_tp_cancel = 0;
+            }
+        }
+    } 
+
+    p = (unsigned long*)WORKBASE;
+    
+    D2_SyncTag();
+
+    *p++ = DMAend | ((num * 3) + 3);
+    *p++ = 0;
+    
+    *p++ = SCE_GIF_SET_TAG(1, 0, SCE_GIF_PACKED, 0, 0, 1);
+    *p++ = SCE_GIF_PACKED_AD;
+    
+    *p++ = Ps2_gs_save.TEST = SCE_GS_SET_TEST_1(1, SCE_GS_ALPHA_GREATER, 0, SCE_GS_AFAIL_KEEP, 0, 0, 1, SCE_GS_DEPTH_GEQUAL);
+    *p++ = SCE_GS_TEST_1;
+    
+    *p++ = (SCE_GIF_SET_TAG(0, 1, SCE_GIF_REGLIST, 0, 0, 3) | prim) | num;
+    *p++ = GIF_REGLIST(SCE_GS_ST, SCE_GS_RGBAQ, SCE_GS_XYZF2);
+    
+#ifndef TARGET_PC
+    asm volatile
+    ("
+    .set noreorder
+        lqc2        vf10, 0(%3)
+        lqc2        vf13, 0(%0)
+        lqc2        vf12, 0(%1)
+        lqc2        vf11, 0(%2)
+        
+        vitof0.w    vf10, vf10
+        
+        vsub.xyzw   vf9, vf9, vf9
+        
+        li          v0, 0x8000
+        li          %9, 0x3FFFF
+        
+        ctc2        zero, vi18
+        ctc2        v0,   vi2
+    
+        viaddi      vi4, vi0, 0
+    
+        move        v0, %6
+        
+        vdiv        Q, vf0w, vf10w
+    
+    l_002CED6C:
+        lqc2        vf4,    0(%4)
+        lqc2        vf5, 0x10(%4)
+        lqc2        vf6, 0x20(%4)
+        
+        vmtir       vi3, vf4w
+    
+        vadda.z     ACC, vf6, vf11
+        vmaddx.z    vf7, vf6, vf11x
+        
+        vsub.xy     vf7, vf6, vf13
+        
+        vclipw.xyz  vf7, vf13w        
+        
+        vadda.z     ACC, vf0, vf10
+        vmaddx.z    vf6, vf4, vf10x
+        
+        vmax.z      vf6, vf6, vf0
+        
+        vftoi0.xyzw vf5, vf5
+        
+        vminiy.z    vf6, vf6, vf12y
+        
+        vaddz.w     vf9, vf9, vf6z
+        
+        vftoi4.xyzw vf6, vf6
+        
+        vmtir       vi5, vf6w
+    
+        cfc2        %8, vi18
+        
+        and         %7, %8, %9
+        beqz        %7, l_002CEDC0
+        nop
+    
+        vior        vi3, vi3, vi2
+        
+    l_002CEDC0:
+        vior        vi5, vi5, vi3
+        viand       vi4, vi4, vi5
+    
+        vmfir.w     vf6, vi5
+        
+        sqc2        vf4,    0(%5)
+        sqc2        vf5, 0x10(%5)
+        sqc2        vf6, 0x20(%5) 
+        
+        addi        v0, v0, -1
+        addiu       %5, %5, 48
+        
+        bnez        v0, l_002CED6C
+        
+        addiu       %4, %4, 48
+        
+        cfc2        %7, vi4
+        
+        bnez        v0, l_002CF178
+        nop
+    
+        vmulq.w     vf4, vf9, Q
+        
+        sqc2        vf4, 0(%5) 
+    .set reorder
+    " : : "r"(clip_vec), "r"(near_far_vec), "r"(zclip_ab_vec), "r"(zbuff_ab_vec), "r"(dp), "r"(p), "r"(num), "r"(clip_flag), "r"(st_clip_flag), "r"(clut_flag)  : "v0", "memory" 
+    );
+#else
+    { /* asm2c */
+        ee_reg R2 = {{0}};
+        int ee_cond;
+        const ee_reg ee_zero = {{0}};
+        ee_reg op0 = {{0}};
+        ee_reg op1 = {{0}};
+        ee_reg op2 = {{0}};
+        ee_reg op3 = {{0}};
+        ee_reg op4 = {{0}};
+        ee_reg op5 = {{0}};
+        ee_reg op6 = {{0}};
+        ee_reg op7 = {{0}};
+        ee_reg op8 = {{0}};
+        ee_reg op9 = {{0}};
+        op0.sd[0] = (int32_t)(uintptr_t)(clip_vec);
+        op1.sd[0] = (int32_t)(uintptr_t)(near_far_vec);
+        op2.sd[0] = (int32_t)(uintptr_t)(zclip_ab_vec);
+        op3.sd[0] = (int32_t)(uintptr_t)(zbuff_ab_vec);
+        op4.sd[0] = (int32_t)(uintptr_t)(dp);
+        op5.sd[0] = (int32_t)(uintptr_t)(p);
+        op6.sd[0] = (int32_t)(uintptr_t)(num);
+        op7.sd[0] = (int32_t)(uintptr_t)(clip_flag);
+        op8.sd[0] = (int32_t)(uintptr_t)(st_clip_flag);
+        op9.sd[0] = (int32_t)(uintptr_t)(clut_flag);
+        vu_load_vf(10, EE_PTR((op3.w[0] + (uint32_t)(0))));
+        vu_load_vf(13, EE_PTR((op0.w[0] + (uint32_t)(0))));
+        vu_load_vf(12, EE_PTR((op1.w[0] + (uint32_t)(0))));
+        vu_load_vf(11, EE_PTR((op2.w[0] + (uint32_t)(0))));
+        vu_upper(U_ITOF0, 1, 10, 10, 0, BC_NONE);
+        vu_upper(U_SUB, 15, 9, 9, 9, BC_NONE);
+        R2.sd[0] = (int64_t)(int32_t)(32768);
+        op9.sd[0] = (int64_t)(int32_t)(262143);
+        vu_ctc2(18, ee_zero.w[0]);
+        vu_ctc2(2, R2.w[0]);
+        g_vu0.vi[4] = (uint16_t)(g_vu0.vi[0] + (0));
+        R2.d[0] = op6.d[0];
+        vu_div(0, 3, 10, 3);
+    l_002CED6C:;
+        vu_load_vf(4, EE_PTR((op4.w[0] + (uint32_t)(0))));
+        vu_load_vf(5, EE_PTR((op4.w[0] + (uint32_t)(16))));
+        vu_load_vf(6, EE_PTR((op4.w[0] + (uint32_t)(32))));
+        vu_mtir(3, 4, 3);
+        vu_upper(U_ADDA, 2, 0, 6, 11, BC_NONE);
+        vu_upper(U_MADD, 2, 7, 6, 11, BC_X);
+        vu_upper(U_SUB, 12, 7, 6, 13, BC_NONE);
+        vu_clipw(7, 13);
+        vu_upper(U_ADDA, 2, 0, 0, 10, BC_NONE);
+        vu_upper(U_MADD, 2, 6, 4, 10, BC_X);
+        vu_upper(U_MAX, 2, 6, 6, 0, BC_NONE);
+        vu_upper(U_FTOI0, 15, 5, 5, 0, BC_NONE);
+        vu_upper(U_MINI, 2, 6, 6, 12, BC_Y);
+        vu_upper(U_ADD, 1, 9, 9, 6, BC_Z);
+        vu_upper(U_FTOI4, 15, 6, 6, 0, BC_NONE);
+        vu_mtir(5, 6, 3);
+        op8.sd[0] = (int32_t)(vu_cfc2(18));
+        op7.d[0] = op8.d[0] & op9.d[0];
+        ee_cond = (op7.sd[0] == 0);
+        if (ee_cond) goto l_002CEDC0;
+        g_vu0.vi[3] = (uint16_t)(g_vu0.vi[3] | g_vu0.vi[2]);
+    l_002CEDC0:;
+        g_vu0.vi[5] = (uint16_t)(g_vu0.vi[5] | g_vu0.vi[3]);
+        g_vu0.vi[4] = (uint16_t)(g_vu0.vi[4] & g_vu0.vi[5]);
+        vu_mfir(1, 6, 5);
+        vu_store_vf(EE_PTR((op5.w[0] + (uint32_t)(0))), 4);
+        vu_store_vf(EE_PTR((op5.w[0] + (uint32_t)(16))), 5);
+        vu_store_vf(EE_PTR((op5.w[0] + (uint32_t)(32))), 6);
+        R2.sd[0] = (int32_t)(R2.w[0] + (uint32_t)(-1));
+        op5.sd[0] = (int32_t)(op5.w[0] + (uint32_t)(48));
+        ee_cond = (R2.sd[0] != 0);
+        op4.sd[0] = (int32_t)(op4.w[0] + (uint32_t)(48));
+        if (ee_cond) goto l_002CED6C;
+        op7.sd[0] = (int32_t)(vu_cfc2(4));
+        ee_cond = (R2.sd[0] != 0);
+        if (ee_cond) goto l_002CF178;
+        vu_upper(U_MUL, 1, 4, 9, 0, BC_Q);
+        vu_store_vf(EE_PTR((op5.w[0] + (uint32_t)(0))), 4);
+    }
+#endif
+
+    if ((prim & 0x20000000000000)) 
+    {
+        if (((ViewType < 3) && (num > 3)) && ((prim & 0x3800000000000) == 0x2000000000000) && (((num * 3) - 6) < 167)) 
+        {
+            pp = (unsigned long*)WORKBASE;
+
+            *pp++ = WORKBASE + 12;
+            *pp++ = 0;
+            
+            *pp++ = SCE_GIF_SET_TAG(1, 0, SCE_GIF_PACKED, 0, 0, 1);
+            *pp++ = SCE_GIF_PACKED_AD;
+            
+            *pp++ = Ps2_gs_save.TEST = SCE_GS_SET_TEST_1(1, SCE_GS_ALPHA_GREATER, 0, SCE_GS_AFAIL_KEEP, 0, 0, 1, SCE_GS_DEPTH_GEQUAL);
+            *pp++ = SCE_GS_TEST_1;
+
+            prim &= ~SCE_GIF_SET_TAG(0, 0, 0, SCE_GS_SET_PRIM(7, 0, 0, 0, 0, 0, 0, 0, 0), 0, 0);
+            
+            *pp++ = SCE_GIF_SET_TAG(3, 1, SCE_GIF_REGLIST, SCE_GS_SET_PRIM(SCE_GS_PRIM_TRI, 0, 0, 0, 0, 0, 0, 0, 0), 0, 3) | prim;  
+            *pp++ = GIF_REGLIST(SCE_GS_ST, SCE_GS_RGBAQ, SCE_GS_XYZF2);
+            
+            p128 = (u_long128*)(WORKBASE + 64);
+            
+            for (j = num - 1; j >= 0; j--) 
+            {
+                p128[(3 * j) +  9] = p128[(3 * j) + 0];
+                p128[(3 * j) + 10] = p128[(3 * j) + 1];
+                p128[(3 * j) + 11] = p128[(3 * j) + 2];
+            }
+            
+            for (j = 0; j < (num - 2); j++) 
+            {
+                p128[0] = p128[(3 * (j + 3)) + 0];
+                p128[1] = p128[(3 * (j + 3)) + 1];
+                p128[2] = p128[(3 * (j + 3)) + 2];
+                
+                p128[3] = p128[(3 * (j + 4)) + 0];
+                p128[4] = p128[(3 * (j + 4)) + 1];
+                p128[5] = p128[(3 * (j + 4)) + 2];
+                
+                p128[6] = p128[(3 * (j + 5)) + 0];
+                p128[7] = p128[(3 * (j + 5)) + 1];
+                p128[8] = p128[(3 * (j + 5)) + 2];
+                
+                sceVu0ITOF4Vector(fz[0], (void*)&p128[2]); 
+                sceVu0ITOF4Vector(fz[1], (void*)&p128[5]); 
+                sceVu0ITOF4Vector(fz[2], (void*)&p128[8]); 
+                
+                switch (ViewType) 
+                {     
+                case 0:
+                {
+                    float max;               
+                    
+                    max = MIN(fz[0][2], fz[1][2]);
+                    
+                    if (fz[2][2] < max) 
+                    {
+                        max = fz[2][2];
+                    }
+                    
+                    Ps2AddOT((void*)0x70000000, 3, max, prim);
+                    break;
+                }
+                case 1:
+                {
+                    float max; 
+                    
+                    max = zsum = fz[0][0] + fz[0][1] + fz[0][2]; 
+                    
+                    Ps2AddOT((void*)0x70000000, 3, 0.33333334f * max, prim);
+                    break;
+                }
+                case 2:
+                {
+                    float max;                     
+                    
+                    max = fz[0][2];
+                    
+                    if (max > fz[1][2])
+                    {
+                        max = fz[0][2];
+                    }
+                    else
+                    {
+                        max = fz[1][2];
+                    } 
+                    
+                    if (fz[2][2] > max) 
+                    {
+                        max = fz[2][2];
+                    }
+                    
+                    Ps2AddOT((void*)0x70000000, 3, max, prim);
+                    break;
+                }
+                }
+            }
+            
+            return;
+        }
+        
+        Ps2AddOT((void*)0x70000000, num, ((float*)p)[(12 * num) + 3], prim);
+    }
+    else 
+    {
+        SyncPath();
+        
+        loadImage((void*)0xF0000000); 
+    }
+    
+l_002CF178:
+    return;
+}
+
+// 100% matching!
+void PS2_Render_Tex_Sub() 
+{
+    PS2_Render_tex_sub_flag = 1;
+    
+    D2_SyncTag();
+    
+    ((u_long*)WORKBASE)[0] = DMAend | 0xE;
+    ((u_long*)WORKBASE)[1] = 0;
+    
+    ((u_long*)WORKBASE)[2] = SCE_GIF_SET_TAG(13, SCE_GS_TRUE, SCE_GS_FALSE, 0, SCE_GIF_PACKED, 1);
+    ((u_long*)WORKBASE)[3] = SCE_GIF_PACKED_AD;
+    
+    ((u_long*)WORKBASE)[4] = SCE_GS_SET_FRAME_2(476, 4, SCE_GS_PSMCT32, 0);
+    ((u_long*)WORKBASE)[5] = SCE_GS_FRAME_2;
+    
+    ((u_long*)WORKBASE)[6] = 0;
+    ((u_long*)WORKBASE)[7] = SCE_GS_TEXFLUSH;
+    
+    ((u_long*)WORKBASE)[8] = SCE_GS_SET_TEX1_2(0, 0, 1, 1, 0, 0, 0);
+    ((u_long*)WORKBASE)[9] = SCE_GS_TEX1_2;
+    
+    ((u_long*)WORKBASE)[10] = SCE_GS_SET_PABE(0);
+    ((u_long*)WORKBASE)[11] = SCE_GS_PABE;
+    
+    ((u_long*)WORKBASE)[12] = SCE_GS_SET_TEST_2(0, 0, 0, 0, 0, 0, 1, 1);
+    ((u_long*)WORKBASE)[13] = SCE_GS_TEST_2;
+    
+    ((u_long*)WORKBASE)[14] = SCE_GS_SET_TEX0_2(0, 10, 0, 10, 9, 1, 0, 0, 0, 0, 0, 0);
+    ((u_long*)WORKBASE)[15] = SCE_GS_TEX0_2;
+    
+    ((u_long*)WORKBASE)[16] = SCE_GS_SET_PRIM(6, 0, 1, 0, 0, 0, 1, 1, 0);
+    ((u_long*)WORKBASE)[17] = SCE_GS_PRIM;
+    
+    ((u_long*)WORKBASE)[18] = SCE_GS_SET_RGBAQ(128, 128, 128, 128, 0);
+    ((u_long*)WORKBASE)[19] = SCE_GS_RGBAQ;
+
+    ((u_long*)WORKBASE)[20] = SCE_GS_SET_UV(GS_COORD(0.5f), GS_COORD(0.5f));
+    ((u_long*)WORKBASE)[21] = SCE_GS_UV;
+    
+    ((u_long*)WORKBASE)[22] = SCE_GS_SET_XYZF2(GS_X_COORD_MOD(0), GS_Y_COORD_MOD(-16), 256, 0);
+    ((u_long*)WORKBASE)[23] = SCE_GS_XYZF2;
+    
+    ((u_long*)WORKBASE)[24] = SCE_GS_SET_UV(GS_COORD(SCR_WIDTH2 + 0.5f), GS_COORD(SCR_HEIGHT2 + 0.5f));
+    ((u_long*)WORKBASE)[25] = SCE_GS_UV;
+    
+    ((u_long*)WORKBASE)[26] = SCE_GS_SET_XYZF2(GS_X_COORD_MOD(SCR_WIDTH2 / 2), GS_Y_COORD_MOD(SCR_HEIGHT2 / 2), 256, 0);
+    ((u_long*)WORKBASE)[27] = SCE_GS_XYZF2;
+    
+    ((u_long*)WORKBASE)[28] = SCE_GS_SET_TEST_2(0, SCE_GS_ALPHA_NEVER, 0, SCE_GS_AFAIL_KEEP, 0, 0, 1, SCE_GS_DEPTH_GEQUAL);
+    ((u_long*)WORKBASE)[29] = SCE_GS_TEST_2;
+    
+    loadImage((void*)0xF0000000);
+    
+    Ps2ScreenClear();
+}

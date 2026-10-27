@@ -1,0 +1,10 @@
+[submodule "include/recvx-decomp-cri"]
+	path = include/recvx-decomp-cri
+	url = https://github.com/SkeletonPicture/recvx-decomp-cri
+[submodule "include/recvx-decomp-katana"]
+	path = include/recvx-decomp-katana
+	url = https://github.com/SkeletonPicture/recvx-decomp-katana
+[submodule "include/recvx-decomp-mwcc"]
+	path = include/recvx-decomp-mwcc
+	url = https://github.com/SkeletonPicture/recvx-decomp-mwcc
+	update = none

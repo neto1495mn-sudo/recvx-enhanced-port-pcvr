@@ -1,0 +1,143 @@
+#include "gl_loader.h"
+
+PFN_glGenTextures gl_GenTextures;
+PFN_glDeleteTextures gl_DeleteTextures;
+PFN_glBindTexture gl_BindTexture;
+PFN_glTexImage2D gl_TexImage2D;
+PFN_glTexSubImage2D gl_TexSubImage2D;
+PFN_glCompressedTexImage2D gl_CompressedTexImage2D;
+PFN_glGenerateMipmap gl_GenerateMipmap;
+PFN_glTexParameterf gl_TexParameterf;
+PFN_glTexParameteri gl_TexParameteri;
+PFN_glActiveTexture gl_ActiveTexture;
+PFN_glGenFramebuffers gl_GenFramebuffers;
+PFN_glDeleteFramebuffers gl_DeleteFramebuffers;
+PFN_glBindFramebuffer gl_BindFramebuffer;
+PFN_glFramebufferTexture2D gl_FramebufferTexture2D;
+PFN_glCheckFramebufferStatus gl_CheckFramebufferStatus;
+PFN_glBlitFramebuffer gl_BlitFramebuffer;
+PFN_glViewport gl_Viewport;
+PFN_glScissor gl_Scissor;
+PFN_glEnable gl_Enable;
+PFN_glDisable gl_Disable;
+PFN_glClear gl_Clear;
+PFN_glClearColor gl_ClearColor;
+PFN_glClearDepth gl_ClearDepth;
+#ifdef __ANDROID__
+static void (GLAPIENTRY* es_ClearDepthf)(float);
+static void GLAPIENTRY es_ClearDepth(GLdouble d) { es_ClearDepthf((float)d); }
+#endif
+PFN_glDepthFunc gl_DepthFunc;
+PFN_glDepthMask gl_DepthMask;
+PFN_glColorMask gl_ColorMask;
+PFN_glBlendFuncSeparate gl_BlendFuncSeparate;
+PFN_glBlendEquationSeparate gl_BlendEquationSeparate;
+PFN_glBlendColor gl_BlendColor;
+PFN_glCreateShader gl_CreateShader;
+PFN_glShaderSource gl_ShaderSource;
+PFN_glCompileShader gl_CompileShader;
+PFN_glGetShaderiv gl_GetShaderiv;
+PFN_glGetShaderInfoLog gl_GetShaderInfoLog;
+PFN_glCreateProgram gl_CreateProgram;
+PFN_glAttachShader gl_AttachShader;
+PFN_glLinkProgram gl_LinkProgram;
+PFN_glGetProgramiv gl_GetProgramiv;
+PFN_glGetProgramInfoLog gl_GetProgramInfoLog;
+PFN_glUseProgram gl_UseProgram;
+PFN_glDeleteShader gl_DeleteShader;
+PFN_glGetUniformLocation gl_GetUniformLocation;
+PFN_glUniform1i gl_Uniform1i;
+PFN_glUniform1f gl_Uniform1f;
+PFN_glUniform2f gl_Uniform2f;
+PFN_glUniform4f gl_Uniform4f;
+PFN_glUniform4i gl_Uniform4i;
+PFN_glGenVertexArrays gl_GenVertexArrays;
+PFN_glBindVertexArray gl_BindVertexArray;
+PFN_glGenBuffers gl_GenBuffers;
+PFN_glBindBuffer gl_BindBuffer;
+PFN_glBufferData gl_BufferData;
+PFN_glBufferSubData gl_BufferSubData;
+PFN_glEnableVertexAttribArray gl_EnableVertexAttribArray;
+PFN_glVertexAttribPointer gl_VertexAttribPointer;
+PFN_glVertexAttribIPointer gl_VertexAttribIPointer;
+PFN_glDrawArrays gl_DrawArrays;
+PFN_glReadPixels gl_ReadPixels;
+PFN_glPixelStorei gl_PixelStorei;
+PFN_glGetError gl_GetError;
+PFN_glGetString gl_GetString;
+PFN_glFinish gl_Finish;
+PFN_glFlush gl_Flush;
+
+int gl_load(void* (*getproc)(const char*))
+{
+    int ok = 1;
+    if (!(gl_GenTextures = (PFN_glGenTextures)getproc("glGenTextures"))) ok = 0;
+    if (!(gl_DeleteTextures = (PFN_glDeleteTextures)getproc("glDeleteTextures"))) ok = 0;
+    if (!(gl_BindTexture = (PFN_glBindTexture)getproc("glBindTexture"))) ok = 0;
+    if (!(gl_TexImage2D = (PFN_glTexImage2D)getproc("glTexImage2D"))) ok = 0;
+    if (!(gl_TexSubImage2D = (PFN_glTexSubImage2D)getproc("glTexSubImage2D"))) ok = 0;
+    if (!(gl_TexParameteri = (PFN_glTexParameteri)getproc("glTexParameteri"))) ok = 0;
+    if (!(gl_ActiveTexture = (PFN_glActiveTexture)getproc("glActiveTexture"))) ok = 0;
+    if (!(gl_GenFramebuffers = (PFN_glGenFramebuffers)getproc("glGenFramebuffers"))) ok = 0;
+    if (!(gl_DeleteFramebuffers = (PFN_glDeleteFramebuffers)getproc("glDeleteFramebuffers"))) ok = 0;
+    if (!(gl_BindFramebuffer = (PFN_glBindFramebuffer)getproc("glBindFramebuffer"))) ok = 0;
+    if (!(gl_FramebufferTexture2D = (PFN_glFramebufferTexture2D)getproc("glFramebufferTexture2D"))) ok = 0;
+    if (!(gl_CheckFramebufferStatus = (PFN_glCheckFramebufferStatus)getproc("glCheckFramebufferStatus"))) ok = 0;
+    if (!(gl_BlitFramebuffer = (PFN_glBlitFramebuffer)getproc("glBlitFramebuffer"))) ok = 0;
+    if (!(gl_Viewport = (PFN_glViewport)getproc("glViewport"))) ok = 0;
+    if (!(gl_Scissor = (PFN_glScissor)getproc("glScissor"))) ok = 0;
+    if (!(gl_Enable = (PFN_glEnable)getproc("glEnable"))) ok = 0;
+    if (!(gl_Disable = (PFN_glDisable)getproc("glDisable"))) ok = 0;
+    if (!(gl_Clear = (PFN_glClear)getproc("glClear"))) ok = 0;
+    if (!(gl_ClearColor = (PFN_glClearColor)getproc("glClearColor"))) ok = 0;
+#ifdef __ANDROID__
+    if (!(es_ClearDepthf = (void (GLAPIENTRY*)(float))getproc("glClearDepthf"))) ok = 0;   /* ES: the float one */
+    gl_ClearDepth = es_ClearDepth;
+#else
+    if (!(gl_ClearDepth = (PFN_glClearDepth)getproc("glClearDepth"))) ok = 0;
+#endif
+    if (!(gl_DepthFunc = (PFN_glDepthFunc)getproc("glDepthFunc"))) ok = 0;
+    if (!(gl_DepthMask = (PFN_glDepthMask)getproc("glDepthMask"))) ok = 0;
+    if (!(gl_ColorMask = (PFN_glColorMask)getproc("glColorMask"))) ok = 0;
+    if (!(gl_BlendFuncSeparate = (PFN_glBlendFuncSeparate)getproc("glBlendFuncSeparate"))) ok = 0;
+    if (!(gl_BlendEquationSeparate = (PFN_glBlendEquationSeparate)getproc("glBlendEquationSeparate"))) ok = 0;
+    if (!(gl_BlendColor = (PFN_glBlendColor)getproc("glBlendColor"))) ok = 0;
+    if (!(gl_CreateShader = (PFN_glCreateShader)getproc("glCreateShader"))) ok = 0;
+    if (!(gl_ShaderSource = (PFN_glShaderSource)getproc("glShaderSource"))) ok = 0;
+    if (!(gl_CompileShader = (PFN_glCompileShader)getproc("glCompileShader"))) ok = 0;
+    if (!(gl_GetShaderiv = (PFN_glGetShaderiv)getproc("glGetShaderiv"))) ok = 0;
+    if (!(gl_GetShaderInfoLog = (PFN_glGetShaderInfoLog)getproc("glGetShaderInfoLog"))) ok = 0;
+    if (!(gl_CreateProgram = (PFN_glCreateProgram)getproc("glCreateProgram"))) ok = 0;
+    if (!(gl_AttachShader = (PFN_glAttachShader)getproc("glAttachShader"))) ok = 0;
+    if (!(gl_LinkProgram = (PFN_glLinkProgram)getproc("glLinkProgram"))) ok = 0;
+    if (!(gl_GetProgramiv = (PFN_glGetProgramiv)getproc("glGetProgramiv"))) ok = 0;
+    if (!(gl_GetProgramInfoLog = (PFN_glGetProgramInfoLog)getproc("glGetProgramInfoLog"))) ok = 0;
+    if (!(gl_UseProgram = (PFN_glUseProgram)getproc("glUseProgram"))) ok = 0;
+    if (!(gl_DeleteShader = (PFN_glDeleteShader)getproc("glDeleteShader"))) ok = 0;
+    if (!(gl_GetUniformLocation = (PFN_glGetUniformLocation)getproc("glGetUniformLocation"))) ok = 0;
+    if (!(gl_Uniform1i = (PFN_glUniform1i)getproc("glUniform1i"))) ok = 0;
+    if (!(gl_Uniform1f = (PFN_glUniform1f)getproc("glUniform1f"))) ok = 0;
+    if (!(gl_Uniform2f = (PFN_glUniform2f)getproc("glUniform2f"))) ok = 0;
+    if (!(gl_Uniform4f = (PFN_glUniform4f)getproc("glUniform4f"))) ok = 0;
+    if (!(gl_Uniform4i = (PFN_glUniform4i)getproc("glUniform4i"))) ok = 0;
+    if (!(gl_GenVertexArrays = (PFN_glGenVertexArrays)getproc("glGenVertexArrays"))) ok = 0;
+    if (!(gl_BindVertexArray = (PFN_glBindVertexArray)getproc("glBindVertexArray"))) ok = 0;
+    if (!(gl_GenBuffers = (PFN_glGenBuffers)getproc("glGenBuffers"))) ok = 0;
+    if (!(gl_BindBuffer = (PFN_glBindBuffer)getproc("glBindBuffer"))) ok = 0;
+    if (!(gl_BufferData = (PFN_glBufferData)getproc("glBufferData"))) ok = 0;
+    if (!(gl_BufferSubData = (PFN_glBufferSubData)getproc("glBufferSubData"))) ok = 0;
+    if (!(gl_EnableVertexAttribArray = (PFN_glEnableVertexAttribArray)getproc("glEnableVertexAttribArray"))) ok = 0;
+    if (!(gl_VertexAttribPointer = (PFN_glVertexAttribPointer)getproc("glVertexAttribPointer"))) ok = 0;
+    if (!(gl_VertexAttribIPointer = (PFN_glVertexAttribIPointer)getproc("glVertexAttribIPointer"))) ok = 0;
+    if (!(gl_DrawArrays = (PFN_glDrawArrays)getproc("glDrawArrays"))) ok = 0;
+    if (!(gl_ReadPixels = (PFN_glReadPixels)getproc("glReadPixels"))) ok = 0;
+    if (!(gl_PixelStorei = (PFN_glPixelStorei)getproc("glPixelStorei"))) ok = 0;
+    if (!(gl_GetError = (PFN_glGetError)getproc("glGetError"))) ok = 0;
+    if (!(gl_GetString = (PFN_glGetString)getproc("glGetString"))) ok = 0;
+    if (!(gl_Finish = (PFN_glFinish)getproc("glFinish"))) ok = 0;
+    if (!(gl_Flush = (PFN_glFlush)getproc("glFlush"))) ok = 0;
+    gl_CompressedTexImage2D = (PFN_glCompressedTexImage2D)getproc("glCompressedTexImage2D");
+    gl_GenerateMipmap = (PFN_glGenerateMipmap)getproc("glGenerateMipmap");
+    gl_TexParameterf = (PFN_glTexParameterf)getproc("glTexParameterf");
+    return ok;
+}

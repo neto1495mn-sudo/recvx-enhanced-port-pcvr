@@ -1,0 +1,7409 @@
+#include "../../../ps2/veronica/prog/player.h"
+#include "../../../ps2/veronica/prog/MdlPut.h"
+#include "../../../ps2/veronica/prog/Motion.h"
+#include "../../../ps2/veronica/prog/cut.h"
+#include "../../../ps2/veronica/prog/effect.h"
+#include "../../../ps2/veronica/prog/eneset.h"
+#include "../../../ps2/veronica/prog/flag.h"
+#include "../../../ps2/veronica/prog/hitchk.h"
+#include "../../../ps2/veronica/prog/light.h"
+#include "../../../ps2/veronica/prog/main.h"
+#include "../../../ps2/veronica/prog/njplus.h"
+#include "../../../ps2/veronica/prog/objitm.h"
+#include "../../../ps2/veronica/prog/playpch.h"
+#include "../../../ps2/veronica/prog/pl_evt.h"
+#include "../../../ps2/veronica/prog/ps2_NaMath.h"
+#include "../../../ps2/veronica/prog/ps2_NaMatrix.h"
+#include "../../../ps2/veronica/prog/pwksub.h"
+#include "../../../ps2/veronica/prog/room.h"
+#include "../../../ps2/veronica/prog/sdfunc.h"
+#include "../../../ps2/veronica/prog/weapon.h"
+
+ETTY_WORK lkmtab[2] = 
+{
+    { 129, 1211, 0, 0, 4, 0, 0, 0.0f, 0.0f, 0.0f, 0, 0, 0, 0, { 0, 0, 0, 0 } },
+    { 129, 1212, 0, 0, 4, 0, 0, 0.0f, 0.0f, 0.0f, 0, 0, 0, 0, { 0, 0, 0, 0 } }
+};
+CPCL PlyCapColTab[18] = 
+{
+    {  1,  2, 10 },  
+    {  2,  3,  9 },  
+    {  3,  3, 12 },  
+    {  0, 15,  0 },  
+    {  4,  5,  4 },  
+    {  5,  5,  9 },  
+    {  0,  9,  0 },  
+    {  7,  8,  4 },  
+    {  8,  9,  3 },  
+    { 11, 12,  4 },  
+    { 12, 13,  3 },  
+    { 14, 15,  8 },  
+    { 15, 16,  6 },  
+    { 16, 17,  4 },  
+    { 18, 19,  8 },  
+    { 19, 20,  6 },  
+    { 20, 21,  4 },  
+    {  0,  0,  0 } 
+};
+EF_WORK WpnEffTab[23][4] = 
+{
+    { 
+        { 0x00000000,   0,   0,   0,   0,       0.0f,       0.0f,       0.0f,       1.0f,       1.0f,       1.0f,      0,      0 },
+        { 0x00000000,   0,   0,   0,   0,       0.0f,       0.0f,       0.0f,       1.0f,       1.0f,       1.0f,      0,      0 },
+        { 0x00000000,   0,   0,   0,   0,       0.0f,       0.0f,       0.0f,       1.0f,       1.0f,       1.0f,      0,      0 },
+        { 0x00000000,   0,   0,   0,   0,       0.0f,       0.0f,       0.0f,       1.0f,       1.0f,       1.0f,      0,      0 }
+    },
+    { 
+        { 0x00000001,   9,   2,   0,   0,       0.0f,       0.0f,       0.0f,       0.5f,       0.5f,       0.5f,      0,      0 },
+        { 0x00000000,   0,   0,   0,   0,       0.0f,       0.0f,       0.0f,       1.0f,       1.0f,       1.0f,      0,      0 },
+        { 0x00000000,   0,   0,   0,   0,       0.0f,       0.0f,       0.0f,       1.0f,       1.0f,       1.0f,      0,      0 },
+        { 0x00000000,   0,   0,   0,   0,       0.0f,       0.0f,       0.0f,       1.0f,       1.0f,       1.0f,      0,      0 }
+    },
+    { 
+        { 0x00000000,   0,   0,   0,   0,       0.0f,       0.0f,       0.0f,       1.0f,       1.0f,       1.0f,      0,      0 },
+        { 0x00000000,   0,   0,   0,   0,       0.0f,       0.0f,       0.0f,       1.0f,       1.0f,       1.0f,      0,      0 },
+        { 0x00000000,   0,   0,   0,   0,       0.0f,       0.0f,       0.0f,       1.0f,       1.0f,       1.0f,      0,      0 },
+        { 0x00000000,   0,   0,   0,   0,       0.0f,       0.0f,       0.0f,       1.0f,       1.0f,       1.0f,      0,      0 }
+    },
+    { 
+        { 0x00001001,   3,   0,   2,   0,       0.0f,       0.0f,       0.0f,       1.8f,       1.8f,       1.8f,      0,      0 },
+        { 0x04100001,   2,   0,   3,   0,       0.0f,       0.0f,       0.0f,       2.0f,       2.0f,       2.0f,      0,      0 },
+        { 0x04100001,   2,   2,   0,   8,       0.0f,       0.0f,       0.0f,       0.8f,       0.8f,      -0.5f,      0,      0 },
+        { 0x00000001,   0,   0,   0,   0,       0.0f,       0.0f,       0.0f,       1.0f,       1.0f,       1.0f,      0,      0 }
+    },
+    { 
+        { 0x00001001,   3,   0,   2,   0,       0.0f,       0.0f,       0.0f,       2.0f,       2.0f,       2.0f,      0,      0 },
+        { 0x04100001,   2,   0,   3,   0,       0.0f,       0.0f,       0.0f,       2.0f,       2.0f,       2.0f,      0,      0 },
+        { 0x04100001,   2,   2,   0,   8,       0.0f,       0.0f,       0.0f,       0.8f,       0.8f,      -0.5f,      0,      0 },
+        { 0x00000001,   0,   0,   0,   0,       0.0f,       0.0f,       0.0f,       1.0f,       1.0f,       1.0f,      0,      0 }
+    },
+    { 
+        { 0x00001001,   3,   0,   2,   0,       0.0f,       0.0f,       0.0f,       2.0f,       2.0f,       2.0f,      0,      0 },
+        { 0x04100001,   2,   0,   3,   0,       0.0f,       0.0f,       0.0f,       2.0f,       2.0f,       2.0f,      0,      0 },
+        { 0x04100001,   2,   2,   0,   8,       0.0f,       0.0f,       0.0f,       0.8f,       0.8f,      -0.5f,      0,      0 },
+        { 0x00000001,   0,   0,   0,   0,       0.0f,       0.0f,       0.0f,       1.0f,       1.0f,       1.0f,      0,      0 }
+    },
+    { 
+        { 0x00001001,   3,   0,   2,   0,       0.0f,       0.0f,       0.0f,       3.0f,       3.0f,       3.0f,      0,      0 },
+        { 0x04100001,   2,   0,   4,   0,       0.0f,       0.0f,       0.0f,       2.0f,       2.0f,       2.0f,      0,      0 },
+        { 0x00000000,   0,   0,   0,   0,       0.0f,       0.0f,       0.0f,       1.0f,       1.0f,       1.0f,      0,      0 },
+        { 0x00000000,   0,   0,   0,   0,       0.0f,       0.0f,       0.0f,       1.0f,       1.0f,       1.0f,      0,      0 }
+    },
+    { 
+        { 0x00001001,   3,   0,   2,   0,       0.0f,       0.0f,       0.0f,       1.8f,       1.8f,       1.8f,      0,      0 },
+        { 0x04100001,   2,   0,   3,   0,       0.0f,       0.0f,       0.0f,       2.0f,       2.0f,       2.0f,      0,      0 },
+        { 0x04100001,   2,   2,   0,   8,       0.0f,       0.0f,       0.0f,       0.8f,       0.8f,      -0.5f,      0,      0 },
+        { 0x00000001,   0,   0,   0,   0,       0.0f,       0.0f,       0.0f,       1.0f,       1.0f,       1.0f,      0,      0 }
+    },
+    { 
+        { 0x00000081,   3,   2,   3,   0,       0.0f,       0.0f,       0.0f,       2.0f,       2.0f,       2.0f,      0,      0 },
+        { 0x04100001,   2,   6,   2,   1,       0.0f,       0.0f,       0.0f,       1.8f,       1.8f,       1.8f,      0,      0 },
+        { 0x04100001,   2,   3,   0,   2,       0.0f,       0.0f,       0.0f,       1.0f,       1.0f,       0.0f,      0,      0 },
+        { 0x00000001,   0,   1,   0,   0,       0.0f,       0.0f,       0.0f,       1.0f,       1.0f,       1.0f,      0,      0 }
+    },
+    { 
+        { 0x00001001,   3,   0,   2,   0,       0.0f,       0.0f,       0.0f,       1.8f,       1.8f,       1.8f,      0,      0 },
+        { 0x04100001,   2,   0,   3,   0,       0.0f,       0.0f,       0.0f,       2.0f,       2.0f,       2.0f,      0,      0 },
+        { 0x04100001,   2,   2,   0,   8,       0.0f,       0.0f,       0.0f,       0.8f,       0.8f,      -0.5f,      0,      0 },
+        { 0x00000001,   0,   0,   0,   0,       0.0f,       0.0f,       0.0f,       1.0f,       1.0f,       1.0f,      0,      0 }
+    },
+    { 
+        { 0x00000000,   0,   0,   0,   0,       0.0f,       0.0f,       0.0f,       1.0f,       1.0f,       1.0f,      0,      0 },
+        { 0x00000000,   0,   0,   0,   0,       0.0f,       0.0f,       0.0f,       1.0f,       1.0f,       1.0f,      0,      0 },
+        { 0x00040001,  13,   0,   0,   0,       0.0f,       0.0f,       0.0f,       1.0f,       1.0f,       1.0f,      0,      0 },
+        { 0x00000000,   0,   0,   0,   0,       0.0f,       0.0f,       0.0f,       1.0f,       1.0f,       1.0f,      0,      0 }
+    },
+    { 
+        { 0x00001001,   3,   3,   4,   0,       0.0f,       0.0f,       0.0f,       1.0f,       1.0f,       1.0f,      0,      0 },
+        { 0x04100001,   2,   4,  10,   3,       0.0f,       0.0f,       0.0f,       3.0f,       3.0f,       3.0f,      0,      0 },
+        { 0x04100081,   2,   3,   3,  11,       0.0f,       0.0f,       0.0f,       1.0f,       1.0f,       0.0f,      0,      0 },
+        { 0x00000001,   0,   0,   0,   1,       0.0f,       0.0f,       0.0f,       1.0f,       1.0f,       1.0f,      0,      0 }
+    },
+    { 
+        { 0x00000081,   3,   1,   3,   0,       0.0f,       0.0f,       0.0f,       3.0f,       3.0f,       3.0f,      0,      0 },
+        { 0x04100001,   2,   6,   2,   1,       0.0f,       0.0f,       0.0f,       2.5f,       2.5f,       2.5f,      0,      0 },
+        { 0x04100001,   2,   3,   0,   2,       0.0f,       0.0f,       0.0f,       1.0f,       1.0f,       0.0f,      0,      0 },
+        { 0x00000001,   0,   2,   0,   0,       0.0f,       0.0f,       0.0f,       1.0f,       1.0f,       1.5f,      0,      0 }
+    },
+    { 
+        { 0x00001001,   3,   0,   2,   0,       0.0f,       0.0f,       0.0f,       3.0f,       3.0f,       3.0f,      0,      0 },
+        { 0x04100001,   2,   6,   2,   1,       0.0f,       0.0f,       0.0f,       2.5f,       2.5f,       2.5f,      0,      0 },
+        { 0x00000000,   0,   0,   0,   0,       0.0f,       0.0f,       0.0f,       1.0f,       1.0f,       1.0f,      0,      0 },
+        { 0x00000001,   0,   2,   0,   0,       0.0f,       0.0f,       0.0f,       1.0f,       1.0f,       1.5f,      0,      0 }
+    },
+    { 
+        { 0x00001001,   3,   5,   2,   0,       0.0f,       0.0f,       0.0f,       3.4f,       4.5f,       4.5f,      0,      0 },
+        { 0x00000000,   0,   0,   0,   0,       0.0f,       0.0f,       0.0f,       1.0f,       1.0f,       1.0f,      0,      0 },
+        { 0x04100001, 130,   0,   0,   0,       0.0f,       0.0f,       0.0f,       1.0f,       1.0f,       1.0f,      0,      0 },
+        { 0x00000000,   0,   0,   0,   0,       0.0f,       0.0f,       0.0f,       1.0f,       1.0f,       1.0f,      0,      0 }
+    },
+    { 
+        { 0x00001001,   3,   5,   2,   0,       0.0f,       0.0f,       0.0f,       3.4f,       4.5f,       4.5f,      0,      0 },
+        { 0x00000000,   0,   0,   0,   0,       0.0f,       0.0f,       0.0f,       1.0f,       1.0f,       1.0f,      0,      0 },
+        { 0x04100001, 130,   1,   0,   0,       0.0f,       0.0f,       0.0f,       1.0f,       1.0f,       1.0f,      0,      0 },
+        { 0x00000000,   0,   0,   0,   0,       0.0f,       0.0f,       0.0f,       1.0f,       1.0f,       1.0f,      0,      0 }
+    },
+    { 
+        { 0x00001001,   3,   5,   2,   0,       0.0f,       0.0f,       0.0f,       3.4f,       4.5f,       4.5f,      0,      0 },
+        { 0x00000000,   0,   0,   0,   0,       0.0f,       0.0f,       0.0f,       1.0f,       1.0f,       1.0f,      0,      0 },
+        { 0x04100001, 130,   2,   0,   0,       0.0f,       0.0f,       0.0f,       1.0f,       1.0f,       1.0f,      0,      0 },
+        { 0x00000000,   0,   0,   0,   0,       0.0f,       0.0f,       0.0f,       1.0f,       1.0f,       1.0f,      0,      0 }
+    },
+    { 
+        { 0x00001001,   3,   5,   2,   0,       0.0f,       0.0f,       0.0f,       3.4f,       4.5f,       4.5f,      0,      0 },
+        { 0x00000000,   0,   0,   0,   0,       0.0f,       0.0f,       0.0f,       1.0f,       1.0f,       1.0f,      0,      0 },
+        { 0x04100001, 130,   3,   0,   0,       0.0f,       0.0f,       0.0f,       1.0f,       1.0f,       1.0f,      0,      0 },
+        { 0x00000000,   0,   0,   0,   0,       0.0f,       0.0f,       0.0f,       1.0f,       1.0f,       1.0f,      0,      0 }
+    },
+    { 
+        { 0x00000000,   0,   0,   0,   0,       0.0f,       0.0f,       0.0f,       1.0f,       1.0f,       1.0f,      0,      0 },
+        { 0x00000000,   0,   0,   0,   0,       0.0f,       0.0f,       0.0f,       1.0f,       1.0f,       1.0f,      0,      0 },
+        { 0x04100001, 130,   4,   0,   0,       0.0f,       0.0f,       0.0f,       2.0f,       2.0f,       2.0f,      0,      0 },
+        { 0x00000000,   0,   0,   0,   0,       0.0f,       0.0f,       0.0f,       1.0f,       1.0f,       1.0f,      0,      0 }
+    },
+    { 
+        { 0x00000000,   0,   0,   0,   0,       0.0f,       0.0f,       0.0f,       1.0f,       1.0f,       1.0f,      0,      0 },
+        { 0x00000000,   0,   0,   0,   0,       0.0f,       0.0f,       0.0f,       1.0f,       1.0f,       1.0f,      0,      0 },
+        { 0x00040001,  13,   0,   0,   1,       0.0f,       0.0f,       0.0f,       1.0f,       1.0f,       1.0f,      0,      0 },
+        { 0x00000000,   0,   0,   0,   0,       0.0f,       0.0f,       0.0f,       1.0f,       1.0f,       1.0f,      0,      0 }
+    },
+    { 
+        { 0x00001001,   3,   5,   2,   0,       0.0f,       0.0f,       0.0f,       4.5f,       6.0f,       6.0f,      0,      0 },
+        { 0x00000000, 132,   3,   0,   0,       0.0f,       0.0f,       0.0f,       3.0f,       3.0f,       3.0f,      0,      0 },
+        { 0x04100001, 130,   6,   0,   0,       0.0f,       0.0f,       0.0f,       1.0f,       1.0f,       1.0f,      0,      0 },
+        { 0x00000000,   0,   0,   0,   0,       0.0f,       0.0f,       0.0f,       1.0f,       1.0f,       1.0f,      0,      0 }
+    },
+    { 
+        { 0x00000081, 229,   0,   3,   0,       0.0f,       0.0f,       0.0f,       4.0f,       4.0f,       4.0f,      0, -32768 },
+        { 0x04100001,   2,   0,   0,   0,       0.0f,       0.0f,       0.0f,       2.5f,       2.5f,       2.5f,      0,      0 },
+        { 0x00000000,   0,   0,   0,   0,       0.0f,       0.0f,       0.0f,       1.0f,       1.0f,       1.0f,      0,      0 },
+        { 0x00000001,   0,   3,   0,   0,       0.0f,       0.0f,       0.0f,       1.5f,       1.5f,       2.0f,      0,      0 }
+    },
+    { 
+        { 0x00001001,   3,   0,   2,   0,       0.0f,       0.0f,       0.0f,       3.0f,       3.0f,       3.0f,      0,      0 },
+        { 0x04100001,   2,   6,   2,   1,       0.0f,       0.0f,       0.0f,       2.5f,       2.5f,       2.5f,      0,      0 },
+        { 0x00000000,   0,   0,   0,   0,       0.0f,       0.0f,       0.0f,       1.0f,       1.0f,       1.0f,      0,      0 },
+        { 0x00000001,   0,   2,   0,   0,       0.0f,       0.0f,       0.0f,       1.0f,       1.0f,       1.5f,      0,      0 }
+    }
+};
+char PlyTrsZ[6][3] = 
+{
+    { 0,   1, 2  },
+    { 6,   7, 8  },
+    { 10, 10, 10 },
+    { 3,   4, 5  },
+    { 9,   9, 9  },
+    { 0,   0, 0  }
+};
+
+const float PlyInfo[4][2] = 
+{
+    { 3.5f, 16.5f },
+    { 3.5f, 17.5f },
+    { 3.5f, 17.5f },
+    { 3.5f, 17.5f }
+};
+const char PlyEyeTab[8] = 
+{
+    0, 0, 1, 1, 2, 2, 1, 0
+};
+const int KnfAtrTab[4] = 
+{
+    6, 4, 4, 4
+}; 
+const char PlyLegRoute[2][7] = 
+{
+    { 0, 1, 14, 15, 16, 17, -1 },
+    { 0, 1, 18, 19, 20, 21, -1 }
+};
+const char PlyFlip[23] = 
+{
+    0, 1, 2, 3, 4, 5, 10, 11, 12, 13, 6, 7, 8, 9, 18, 19, 20, 21, 14, 15, 16, 17, -1
+};
+const unsigned short PlMtnAct[2][3][7] = 
+{
+    {
+        { 42, 39, 0, 4, 16, 52, 9 },  
+        { 43, 40, 2, 7, 18, 52, 9 },  
+        { 44, 41, 3, 8, 19, 52, 9 }  
+    },
+    {
+        { 42, 39, 1, 6, 17, 54, 9 },  
+        { 43, 40, 2, 7, 18, 54, 9 },  
+        { 44, 41, 3, 8, 19, 54, 9 }  
+    }
+};
+const unsigned short PlMtnWpn[5] = 
+{
+    100,
+    104,
+    109,
+    114,
+    101
+}; 
+const char PlFootSnd[4][2][7] = 
+{
+    {
+        { 10,  8, 10, 10,  0, 21, 20 }, 
+        { 28, 18, 28, 30, 16,  8,  8 }
+    },
+    {
+        { 10,  8, 10, 10,  0, 21, 20 }, 
+        { 28, 18, 28, 30, 16,  8,  8 }
+    },
+    {
+        { 10,  8, 10, 10,  0, 21, 20 }, 
+        { 28, 18, 28, 30, 16,  8,  8 }
+    },
+    {
+        { 10,  8, 10, 10,  0, 21, 20 }, 
+        { 28, 18, 28, 30, 16,  8,  8 }
+    }
+};
+const char PlKDU[4][2][3] = 
+{
+    {
+        { 19,  6, 15 },
+        { 19,  6, 15 }
+    },
+    {
+        { 21, 10, 15 },
+        { 24, 18, 15 }
+    },
+    {
+        { 21, 10, 15 },
+        { 21, 14, 15 }
+    },
+    {
+        { 21, 10, 15 },
+        { 24, 18, 15 }
+    }
+};
+const WPN_TAB WpnTab[23] = 
+{
+    { 
+        0, 1, 1, 0,
+        1, 0, 0, 0,
+        0.0f, 0.0f, 0.0f, 0.0f,
+        { 0.0f, 0.0f, 0.0f },
+        { 0.0f, 0.0f, 0.0f },
+        { 0.0f, 0.0f, 0.0f },
+        100, 128, 128, 128,
+        5, 20,
+        0.6f, 0.0f,
+        -1, 0,
+        0, 0,
+        0, 0,
+        0, 0 
+    },
+    { 
+        0, 1, 1, 0,
+        1, 0, 0, 0,
+        0.0f, 0.0f, 0.0f, 0.0f,
+        { 1.01f, 0.0f, -0.67f },
+        {  0.0f, 0.0f, 0.0f   },
+        {  0.0f, 0.0f, 0.0f   },
+        100, 128, 128, 128,
+        5, 20,
+        0.6f, 0.0f,
+        19, 0,
+        0, 0,
+        0, 0,
+        0, 0 
+    },
+    { 
+        1140850944, 1, 1, 4,
+        13, 0, 0, 0,
+        1.0f, 0.0f, 0.0f, 0.0f,
+        { 2.7f, 0.0f, -1.8f },
+        { 0.0f, 0.0f, 0.0f  },
+        { 0.0f, 0.0f, 0.0f  },
+        100, 128, 128, 128,
+        5, 20,
+        0.6f, 1.0f,
+        12, 4,
+        0, 0,
+        -1, 0,
+        0, 0 
+    },
+    { 
+        268451974, 1, 1, 2,
+        1, 4, 15, 0,
+        2.0f, 200.0f, 0.4f, 4.0f,
+        { 2.45f, 0.0f, -0.65f },
+        { 2.45f, 0.0f, -0.65f },
+        {  0.7f, 0.0f, -1.0f  },
+        100, 128, 128, 128,
+        5, 20,
+        0.6f, 1.0f,
+        0, 4,
+        261, 0,
+        0, 0,
+        0, 0 
+    },
+    { 
+        268451974, 1, 1, 2,
+        1, 4, 15, 0,
+        2.0f, 200.0f, 0.4f, 4.0f,
+        { 2.95f, 0.0f, -0.81f },
+        { 2.95f, 0.0f, -0.81f },
+        { 1.29f, 0.0f, -0.81f },
+        100, 128, 128, 128,
+        5, 20,
+        0.6f, 1.25f,
+        1, 4,
+        261, 0,
+        0, 0,
+        0, 0 
+    },
+    { 
+        268452550, 1, 2, 2,
+        1, 4, 15, 0,
+        2.0f, 200.0f, 0.4f, 4.0f,
+        { 3.17f, 0.0f, -0.81f },
+        { 3.17f, 0.0f, -0.81f },
+        { 1.29f, 0.0f, -0.81f },
+        100, 128, 128, 128,
+        5, 20,
+        0.6f, 1.25f,
+        3, 4,
+        261, 0,
+        0, 1,
+        0, 0 
+    },
+    { 
+        2415935508, 1, 1, 2,
+        1, 5, 24, 34,
+        2.0f, 200.0f, 0.2f, 1.0f,
+        { 3.02f,  0.0f, -0.86f },
+        { 3.02f,  0.0f, -0.86f },
+        {  1.0f, -0.2f, -0.5f  },
+        100, 128, 128, 128,
+        5, 20,
+        0.6f, 1.5f,
+        4, 6,
+        261, 0,
+        2, 0,
+        0, 0 
+    },
+    { 
+        268453892, 1, 1, 2,
+        1, 4, 15, 0,
+        2.0f, 200.0f, 0.4f, 4.0f,
+        { 2.67f, 0.0f, -0.64f },
+        { 2.67f, 0.0f, -0.64f },
+        { 1.42f, 0.0f, -0.72f },
+        100, 128, 128, 128,
+        5, 20,
+        0.6f, 1.0f,
+        2, 4,
+        261, 0,
+        0, 0,
+        0, 0 
+    },
+    { 
+        268453956, 1, 2, 1,
+        1, 0, 0, 0,
+        2.0f, 200.0f, 0.4f, 4.0f,
+        { 2.69f,  0.0f, -0.84f },
+        {  3.5f,  0.0f, -0.84f },
+        { 1.13f, 0.14f, -0.95f },
+        100, 128, 128, 128,
+        5, 20,
+        0.75f, 1.5f,
+        16, 5,
+        261, 0,
+        1, 3,
+        0, 0 
+    },
+    { 
+        268453892, 1, 1, 2,
+        1, 4, 15, 0,
+        2.0f, 200.0f, 0.4f, 4.0f,
+        { 3.01f,  0.0f, -0.65f },
+        { 3.01f,  0.0f, -0.65f },
+        { 1.18f, 0.12f, -0.65f },
+        100, 128, 128, 128,
+        5, 20,
+        0.6f, 1.0f,
+        0, 4,
+        261, 0,
+        0, 0,
+        0, 0 
+    },
+    { 
+        536879368, 1, 1, 1,
+        1, 4, 0, 0,
+        0.1f, 6.0f, 0.0f, 0.0f,
+        { 1.0f, 0.0f, -1.0f },
+        { 0.0f, 0.0f,  0.0f },
+        { 0.0f, 0.0f,  0.0f },
+        100, 128, 128, 128,
+        5, 20,
+        0.6f, 1.0f,
+        11, 0,
+        271, 0,
+        0, 0,
+        0, 0 
+    },
+    { 
+        2608861188, 1, 1, 2,
+        21, 20, 13, 0,
+        2.0f, 200.0f, 0.3f, 40.0f,
+        { 6.9f,   0.0f, -0.88f },
+        { 6.85f,  0.0f, -0.88f },
+        { 2.45f, 0.08f, -1.0f  },
+        100, 160, 160, 128,
+        5, 30,
+        0.6f, 0.0f,
+        6, 0,
+        261, 265,
+        2, 0,
+        0, 0 
+    },
+    { 
+        268435652, 1, 3, 1,
+        1, 6, 29, 0,
+        2.0f, 200.0f, 0.4f, 4.0f,
+        { 6.49f, 0.0f,  -0.88f },
+        { 7.38f, 0.0f,  -0.88f },
+        { 2.67f, 0.12f, -1.04f },
+        100, 128, 128, 128,
+        5, 20,
+        0.75f, 1.5f,
+        7, 5,
+        261, 0,
+        1, 2,
+        0, 0 
+    },
+    { 
+        268435628, 1, 1, 1,
+        1, 0, 4, 0,
+        0.1f, 1000.0f, 0.0f, 0.0f,
+        { 6.15f, 0.0f, -6.16f },
+        { 6.15f, 0.0f, -6.16f },
+        { 1.76f, 0.0f, -1.77f },
+        100, 128, 128, 128,
+        5, 20,
+        0.6f, 1.8f,
+        13, 5,
+        261, 0,
+        1, 0,
+        0, 0 
+    },
+    { 
+        536871940, 1, 1, 1,
+        1, 6, 31, 0,
+        2.0f, 1.0f, 0.0f, 0.0f,
+        { 3.53f, 0.0f, -3.69f },
+        {  4.0f, 0.0f,  -4.1f },
+        {  0.0f, 0.0f,   0.0f },
+        100, 128, 128, 128,
+        5, 20,
+        0.6f, 3.0f,
+        8, 0,
+        261, 0,
+        2, 0,
+        0, 0 
+    },
+    { 
+        536871940, 1, 1, 1,
+        1, 6, 31, 0,
+        2.0f, 1.0f, 0.0f, 0.0f,
+        { 3.53f, 0.0f, -3.69f },
+        { 4.0f,  0.0f,  -4.1f },
+        { 0.0f,  0.0f,   0.0f },
+        100, 128, 128, 128,
+        5, 20,
+        0.6f, 3.0f,
+        10, 0,
+        261, 0,
+        2, 0,
+        0, 0 
+    },
+    { 
+        536871940, 1, 1, 1,
+        1, 6, 31, 0,
+        2.0f, 1.0f, 0.0f, 0.0f,
+        { 3.53f, 0.0f, -3.69f },
+        { 4.0f,  0.0f,  -4.1f },
+        { 0.0f,  0.0f,   0.0f },
+        100, 128, 128, 128,
+        5, 20,
+        0.6f, 3.0f,
+        9, 0,
+        261, 0,
+        2, 0,
+        0, 0 
+    },
+    { 
+        536871940, 1, 1, 1,
+        1, 6, 31, 0,
+        2.0f, 1.0f, 0.0f, 0.0f,
+        { 3.53f, 0.0f, -3.69f },
+        { 4.0f,  0.0f,  -4.1f },
+        { 0.0f,  0.0f,   0.0f },
+        100, 128, 128, 128,
+        5, 20,
+        0.6f, 3.0f,
+        18, 0,
+        261, 0,
+        2, 0,
+        0, 0 
+    },
+    { 
+        536870948, 1, 1, 1,
+        1, 0, 0, 0,
+        4.0f, 1.0f, 0.0f, 0.0f,
+        { 4.26f, 0.0f, -1.21f },
+        { 4.26f, 0.0f, -1.21f },
+        { 0.0f,  0.0f,   0.0f },
+        100, 128, 128, 128,
+        5, 20,
+        0.6f, 3.0f,
+        15, 0,
+        261, 0,
+        2, 0,
+        0, 0 
+    },
+    { 
+        536879368, 1, 1, 1,
+        1, 4, 0, 0,
+        0.1f, 6.0f, 0.0f, 0.0f,
+        { 1.0f, 0.0f, -1.0f },
+        { 0.0f, 0.0f,  0.0f },
+        { 0.0f, 0.0f,  0.0f },
+        100, 128, 128, 128,
+        5, 20,
+        0.6f, 3.0f,
+        17, 0,
+        271, 0,
+        0, 0,
+        0, 0 
+    },
+    { 
+        595591173, 1, 1, 1,
+        1, 0, 0, 0,
+        4.0f, 1.0f, 0.0f, 0.0f,
+        { 4.9f,  0.0f, -1.06f },
+        { -4.0f, 0.0f,  -1.3f },
+        { 0.0f,  0.0f,   0.0f },
+        100, 128, 128, 128,
+        5, 20,
+        0.6f, 4.0f,
+        14, 0,
+        261, 0,
+        2, 0,
+        0, 0 
+    },
+    { 
+        268435520, 1, 3, 1,
+        1, 6, 29, 0,
+        3.0f, 200.0f, 0.5f, 5.0f,
+        { 0.0f, 2.2f, -11.0f },
+        { 0.0f, 2.2f, -13.0f },
+        { 1.0f, 1.5f,   1.0f },
+        100, 128, 128, 128,
+        5, 20,
+        0.75f, 1.5f,
+        7, 5,
+        0, 0,
+        -1, 0,
+        0, 0 
+    },
+    { 
+        268435460, 1, 1, 1,
+        1, 0, 0, 0,
+        0.1f, 1000.0f, 0.0f, 0.0f,
+        { 8.28f, 1.62f, -2.58f },
+        { 8.28f, 1.62f, -2.58f },
+        { 2.28f, 0.51f, -1.26f },
+        100, 128, 128, 128,
+        5, 20,
+        0.6f, 1.8f,
+        13, 5,
+        261, 0,
+        -1, 0,
+        0, 0 
+    }
+};
+/* unused below */
+/*char PlyClipTab[5];
+char PlySdwTab[8];*/
+
+// 100% matching! 
+void bhInitPlayer()
+{
+    npSetMemory((unsigned char*)plp, sizeof(BH_PWORK), 0);
+    
+    sys->plmdlp = bhGetFreeMemory(131072, 32);
+    sys->lmmdlp = bhGetFreeMemory(32768, 32);
+    sys->wrmdlp = bhGetFreeMemory(32768, 32);
+    sys->wlmdlp = bhGetFreeMemory(32768, 32);
+    
+    sys->plmthp = bhGetFreeMemory(12288, 32);
+    
+    sys->plbmtp = bhGetFreeMemory(393216, 32);
+    sys->plwmtp = bhGetFreeMemory(65536, 32);
+    sys->plzmtp = bhGetFreeMemory(8192, 32);
+    
+    sys->plexwp = bhGetFreeMemory(124, 32);
+    sys->plhdwp = bhGetFreeMemory(124, 32);
+    
+    sys->pletcp = bhGetFreeMemory(32768, 32);
+    
+    plp->exp0 = sys->plexwp;
+    plp->exp1 = sys->plhdwp;
+    plp->exp3 = sys->pletcp;
+    
+    sys->mempb = sys->memp;
+    
+    if ((sys->ss_flg & 0x200)) 
+    {
+        plp->stflg = sys->ply_stflg[sys->ply_id] | 0x40000000;
+        
+        plp->hp = sys->ply_hp[sys->ply_id];
+        
+        plp->wpnr_no =  sys->ply_wno[sys->ply_id];
+        
+        sys->cb_flg |= 0x800000;
+    }
+    else
+    {
+        plp->stflg = 0x40000000;
+        
+        if (sys->gm_mode == 2) 
+        {
+            plp->hp = 320;
+        } 
+        else 
+        {
+            plp->hp = 160;
+        }
+        
+        plp->wpnl_no = plp->wpnr_no = 0;
+    }
+}
+
+// 99.96% matching
+void bhSetPlayer()
+{
+    plp->flg = 0x119;
+    
+    if (plp->wpnr_no > 1) 
+    {
+        plp->flg |= 0x20000;
+    }
+    
+    plp->mdflg = 0x20;
+    
+    plp->id = 0;
+    plp->type = 0;
+     
+    plp->param = 0;
+    
+    plp->ar = PlyInfo[sys->ply_id][0];
+    plp->ah = PlyInfo[sys->ply_id][1];
+    
+    plp->car = PlyInfo[sys->ply_id][0] - 1.0f;
+    plp->cah = PlyInfo[sys->ply_id][1] - 1.0f;
+    
+    plp->ofx = plp->ofy = plp->ofz = 0;
+    plp->lox = plp->loy = plp->loz = 0;
+    plp->aox = plp->aoy = plp->aoz = 0;
+    
+    *(int*)&plp->mode0 = 1;
+    
+    plp->ct0 = plp->ct1 = plp->ct2 = plp->ct3 = 0;
+    
+    plp->lkwkp = NULL;
+    
+    plp->exp0 = sys->plexwp;
+    plp->exp1 = sys->plhdwp;
+    plp->exp3 = sys->pletcp;
+    
+    plp->mtx = (float(*)[16])plp->mtxbuf;
+    
+    plp->frm_no = 0;
+    plp->mtn_no = 0;
+    plp->mdl_no = 0;
+    
+    plp->at_flg = 0;
+    
+    plp->sx = plp->sxb = 1.0f;
+    plp->sy = plp->syb = 1.0f;
+    plp->sz = plp->szb = 1.0f;
+    
+    plp->kdnp = NULL;
+    
+    if (plp->wpnr_no < 10) 
+    {
+        ((EXP_WORK*)plp->exp0)->wpntp = 0;
+    }
+    else 
+    {
+        ((EXP_WORK*)plp->exp0)->wpntp = 1;
+    }
+    
+    plp->clp_jno[0] = 0;
+    plp->clp_jno[1] = 5;
+    plp->clp_jno[2] = 9;
+    plp->clp_jno[3] = 13;
+    plp->clp_jno[4] = -1;
+    
+    plp->cpcl = PlyCapColTab;
+    
+    switch (sys->ply_id)
+    {
+    case 0:
+        bhSetObject(lkmtab, 2, (unsigned char*)plp);
+        
+        sys->obwp[2].lkono = 5;
+        
+        sys->obwp[2].lox   = 0;
+        sys->obwp[2].loy   = 1.5869f;
+        sys->obwp[2].loz   = 0.7747f;
+        
+        sys->obwp[2].skp[0] = plp->skp[sys->obwp[2].mdlver];
+        sys->obwp[2].mdl[0] = plp->mdl[sys->obwp[2].mdlver];
+        
+        sys->obwp[2].mlwP = &sys->obwp[2].mdl[0];
+        break;
+    case 3:
+        bhSetObject(&lkmtab[1], 2, (unsigned char*)plp);
+        
+        sys->obwp[2].lkono = 5;
+        
+        sys->obwp[2].lox   = 0;
+        sys->obwp[2].loy   = 0.85f;
+        sys->obwp[2].loz   = -1.03f;
+        
+        sys->obwp[2].mdl[0] = plp->mdl[sys->obwp[2].mdlver];
+        
+        sys->obwp[2].mlwP = &sys->obwp[2].mdl[0];
+        break;
+    }
+
+    ((int*)plp->exp1)[0] = 1;
+    
+    ((short*)plp->exp1)[34] = -1;
+    
+    bhSetShadow(NULL, (unsigned char*)plp, 1, 4.5f, 4.0f, 3.5f);
+    
+    plp->flg |= 0x800;
+    
+    bhSetFloorNum(plp);
+    
+    plp->py = rom->grand[plp->flr_no + 2];
+    
+    if (plp->hp >= 120)
+    {
+        if ((plp->stflg & 0x280000)) 
+        {
+            ((EXP_WORK*)plp->exp0)->dmlvl = 1;
+        }
+        else if (((EXP_WORK*)plp->exp0)->dmlvl != 0)
+        {
+            ((EXP_WORK*)plp->exp0)->dmlvl = 0;
+        }
+    }
+    else if (plp->hp >= 30) 
+    {
+        if (((EXP_WORK*)plp->exp0)->dmlvl != 1)
+        {
+            ((EXP_WORK*)plp->exp0)->dmlvl = 1;
+        }
+    }
+    else 
+    {
+        if (((EXP_WORK*)plp->exp0)->dmlvl != 2)
+        {
+            ((EXP_WORK*)plp->exp0)->dmlvl = 2;
+        }
+    }
+    
+    plp->hokan_count = 0;
+    plp->hokan_rate = 0;
+    
+    plp->frm_mode = 0;
+    
+    plp->mtn_no = PlMtnAct[((EXP_WORK*)plp->exp0)->wpntp][((EXP_WORK*)plp->exp0)->dmlvl][0];
+    plp->mtn_add = 65536;
+    plp->mtn_md = 0;
+    plp->mtn_tp = (unsigned char*)PlyFlip;
+    
+    (void*)plp->mtn_tp; // FAKE
+    bhSetMotion(plp, (int)plp->mtn_add, plp->mtn_md, plp->mtn_tp);
+    
+    plp->kdnp = NULL;
+    
+    bhCalcModel(plp);
+    
+    bhCheckCut(1);
+    bhCheckMothEgg();
+    bhCheckSubPack();
+    
+    PlyPchInit(plp);
+    
+    bhPushGameData();
+    
+    plp->mlwP->owP[7].flg  |= 0x8;
+    plp->mlwP->owP[11].flg |= 0x8;
+}
+
+// 100% matching!
+void bhInitRoomChangePlayer()
+{
+    plp = &ply;
+    
+    plp->flg &= 0x20119;
+    plp->flg |= 0x118;
+    
+    plp->stflg &= 0x78280000;
+    
+    plp->mdflg = 0x20;
+    plp->at_flg = 0;
+    
+    plp->ar = PlyInfo[sys->ply_id][0];
+    plp->ah = PlyInfo[sys->ply_id][1];
+    
+    plp->car = PlyInfo[sys->ply_id][0] - 1.0f;
+    plp->cah = PlyInfo[sys->ply_id][1] - 1.0f;
+    
+    *(int*)&plp->mode0 = 1;
+
+    ((int*)plp->exp1)[0] = 1;
+    ((int*)plp->exp1)[0] &= ~0x2;
+    
+    ((int*)plp->exp1)[15] = 0;
+    ((int*)plp->exp1)[16] = 0;
+    
+    ((short*)plp->exp1)[34] = -1;
+    
+    ((int*)plp->exp1)[1] = 0;
+    ((int*)plp->exp1)[2] = 0;
+    
+    ((short*)plp->exp1)[24] = 0;
+    ((short*)plp->exp1)[25] = 0;
+    ((short*)plp->exp1)[27] = 0;
+    ((short*)plp->exp1)[28] = 0;
+    
+    ((char*)plp->exp1)[120] = 0;
+    
+    ((int*)plp->exp1)[29] = 0;
+    ((int*)plp->exp1)[28] = 0;
+    ((int*)plp->exp1)[27] = 0;
+    ((int*)plp->exp1)[26] = 0;
+    ((int*)plp->exp1)[25] = 0;
+    ((int*)plp->exp1)[24] = 0;
+    ((int*)plp->exp1)[23] = 0;
+    ((int*)plp->exp1)[22] = 0;
+    ((int*)plp->exp1)[21] = 0;
+    
+    plp->mlwP->texP = plp->txp[0];
+    
+    bhSetShadow(NULL, (unsigned char*)plp, 1, 4.5f, 4.0f, 3.5f);
+    
+    plp->flg |= 0x800;
+
+    bhCheckFloorP(plp);
+    
+    ((EXP_WORK*)plp->exp0)->bpx = plp->px;
+    ((EXP_WORK*)plp->exp0)->bpy = 12.5f + plp->py;
+    ((EXP_WORK*)plp->exp0)->bpz = plp->pz;
+    
+    plp->hokan_count = 0;
+    plp->hokan_rate = 0;
+    
+    plp->frm_mode = 0;
+    plp->frm_no = 0;
+    
+    plp->mtn_no = PlMtnAct[((EXP_WORK*)plp->exp0)->wpntp][((EXP_WORK*)plp->exp0)->dmlvl][0];
+    
+    plp->mtn_add = 65536;
+    plp->mtn_md = 0;
+    plp->mtn_tp = (unsigned char*)PlyFlip;
+    
+    (void*)plp->mtn_tp; // FAKE
+    bhSetMotion(plp, (int)plp->mtn_add, plp->mtn_md, plp->mtn_tp); 
+    
+    plp->kdnp = NULL;
+    
+    bhCalcModel(plp);
+    
+    bhCheckMothEgg();
+    bhCheckSubPack();
+    
+    if (sys->ply_id == 0) 
+    {
+        sys->obwp[2].lkwkp = (unsigned char*)plp;
+    }
+    
+    PlyPchInit(plp);
+    
+    plp->mlwP->owP[7].flg  |= 0x8;
+    plp->mlwP->owP[11].flg |= 0x8;
+}
+
+// 100% matching!
+void bhResetPlayer()
+{
+    BH_PWORK* epp;
+	int i;
+
+    plp->ar = PlyInfo[sys->ply_id][0]; 
+    plp->ah = PlyInfo[sys->ply_id][1];
+    
+    plp->car = PlyInfo[sys->ply_id][0] - 1.0f;
+    plp->cah = PlyInfo[sys->ply_id][1] - 1.0f;
+    
+    plp->mlwP = plp->mdl;
+    
+    switch (sys->ply_id)
+    {
+    case 0:
+        bhSetObject(lkmtab, 2, (unsigned char*)plp);
+        
+        sys->obwp[2].lkono = 5;
+        
+        sys->obwp[2].lox   = 0;
+        sys->obwp[2].loy   = 1.5869f;
+        sys->obwp[2].loz   = 0.7747f;
+        
+        sys->obwp[2].skp[0] = plp->skp[sys->obwp[2].mdlver];
+        sys->obwp[2].mdl[0] = plp->mdl[sys->obwp[2].mdlver];
+        
+        sys->obwp[2].mlwP = &sys->obwp[2].mdl[0];
+        break;
+    case 3:
+        bhSetObject(&lkmtab[1], 2, (unsigned char*)plp);
+    
+        sys->obwp[2].lkono = 5;
+        
+        sys->obwp[2].lox   = 0;
+        sys->obwp[2].loy   = 0.85f;
+        sys->obwp[2].loz   = -1.03f;
+        
+        sys->obwp[2].mdl[0] = plp->mdl[sys->obwp[2].mdlver];
+        
+        sys->obwp[2].mlwP = &sys->obwp[2].mdl[0];
+        break;
+    }
+    
+    plp->stflg = sys->ply_stflg[sys->ply_id];
+    plp->stflg |= 0x40000000;
+    
+    plp->hp = sys->ply_hp[sys->ply_id];
+    
+    if (plp->hp >= 120) 
+    {
+        if ((plp->stflg & 0x280000)) 
+        {
+            ((EXP_WORK*)plp->exp0)->dmlvl = 1;
+        }
+        else if (((EXP_WORK*)plp->exp0)->dmlvl != 0)
+        {
+            ((EXP_WORK*)plp->exp0)->dmlvl = 0;
+        } 
+    }
+    else if (plp->hp >= 30) 
+    {
+        if (((EXP_WORK*)plp->exp0)->dmlvl != 1)
+        {
+            ((EXP_WORK*)plp->exp0)->dmlvl = 1;
+        }
+    }
+    else 
+    {
+        if (((EXP_WORK*)plp->exp0)->dmlvl != 2)
+        {
+            ((EXP_WORK*)plp->exp0)->dmlvl = 2;
+        }
+    }
+    
+    epp = ene;
+    
+    for (i = 0; i < 128; i++, epp++)
+    {
+        if (((epp->flg & 0x1)) && (epp->id == 27)) 
+        {
+            epp->flg = 0;
+        }
+    }
+    
+    bhCheckMothEgg();
+    bhCheckSubPack();
+    
+    plp->mlwP->owP[7].flg  |= 0x8;
+    plp->mlwP->owP[11].flg |= 0x8;
+}
+
+// 100% matching! 
+void bhCheckMothEgg()
+{
+    EGG_WORK egg = 
+    {
+        1, 27, 0, 0, 0, 0, 0, 0.0f, 0.0f, 0.0f, 0, 0, 0, 0, {0, 0, 0, 0}    
+    };
+
+    if ((plp->stflg & 0x8000000)) 
+    {
+        egg.type = 0;
+        
+        bhSetEnemy(&egg, 0);
+    }
+    
+    if ((plp->stflg & 0x10000000)) 
+    {
+        egg.type = 1;
+        
+        bhSetEnemy(&egg, 0);
+    }
+    
+    if ((plp->stflg & 0x20000000)) 
+    {
+        egg.type = 2;
+        
+        bhSetEnemy(&egg, 0);
+    }
+}
+
+// 100% matching!
+void bhCheckSubPack()
+{
+    int ply_id;
+    
+    ply_id = sys->ply_id;
+    switch (ply_id) 
+    {                         
+    case 0:
+        if (bhCkFlg(sys->ev_flg, 6) != 0) 
+        {
+            sys->gm_flg |= 0x8000000;
+        } 
+        else 
+        {
+            sys->gm_flg &= ~0x8000000;
+        }
+        break;
+    case 1:
+        if (bhCkFlg(sys->ev_flg, 7) != 0) 
+        {
+            sys->gm_flg |= 0x8000000;
+        } 
+        else 
+        {
+            sys->gm_flg &= ~0x8000000;
+        }
+        break;
+    case 2:
+        if (bhCkFlg(sys->ev_flg, 8) != 0) 
+        {
+            sys->gm_flg |= 0x8000000;
+        } 
+        else 
+        {
+            sys->gm_flg &= ~0x8000000;
+        }
+        break;
+    }
+}
+
+// TODO: find the struct that plp->exp0 gets parsed to 
+// 100% matching!
+void bhStandPlayerMotion()
+{
+    if (plp->hp >= 120)
+    {
+        if ((plp->stflg & 0x280000)) 
+        {
+            ((int*)plp->exp0)[5] = 1; 
+        } 
+        else if (((int*)plp->exp0)[5] != 0) 
+        {
+            ((int*)plp->exp0)[5] = 0; 
+        }
+    }
+    else if (plp->hp >= 30)
+    {
+        if (((int*)plp->exp0)[5] != 1) 
+        {
+            ((int*)plp->exp0)[5] = 1; 
+        }
+    } 
+    else if (((int*)plp->exp0)[5] != 2) 
+    {
+        ((int*)plp->exp0)[5] = 2;
+    }
+    
+    plp->flg &= 0xC96EFFFB;
+    
+    plp->flg |= 0x8;
+    
+    plp->stflg &= ~0x18000;
+    
+    *(int*)&plp->mode0 = 1;
+    
+    *(float*)&plp->exp0[72] = plp->px;
+    *(float*)&plp->exp0[80] = plp->pz;
+    
+    plp->mtn_no = PlMtnAct[((int*)plp->exp0)[0]][((int*)plp->exp0)[5]][0];
+    
+    plp->hokan_rate = 0; 
+    plp->hokan_count = 0;
+    
+    plp->frm_no = 0;
+    
+    plp->mnwP = plp->mnwPb;
+    
+    bhSetMotion(plp, 0, 0, NULL);
+    
+    bhCalcModel(plp);
+}
+
+// 100% matching!
+void bhKaidanPlayerMotion(int flg, int idx)
+{
+	ATR_WORK* exp;
+
+    exp = &rom->etcp[idx];
+    
+    bhSetUseKaidanFlag(plp, exp, idx);
+    
+    plp->stflg |= 0x80010010;
+    
+    plp->flg |= 0x10400;
+    plp->flg &= ~0x110;
+    
+    plp->flg2 |= 0x1;
+    
+    sys->pl_htp = exp;
+    
+    if (flg == 0) 
+    {
+        plp->mode0 = 1;
+        plp->mode1 = 0;
+        
+        if ((exp->attr & 0x1))
+        {
+            plp->mode2 = 20;
+        }
+        else 
+        {
+            plp->mode2 = 14;
+        }
+        
+        plp->mode3 = 0;
+        return;
+    }
+    
+    plp->mode0 = 1;
+    plp->mode1 = 0;
+    
+    if ((exp->attr & 0x1))
+    {
+        plp->mode2 = 21;
+    }
+    else 
+    {
+        plp->mode2 = 15;
+    }
+    
+    plp->mode3 = 0;
+    
+    plp->flr_no = bhCheckFloorNum(plp->py - (2.0f * exp->prm2));
+}
+
+// 
+// 100% matching!
+void bhFixPositionXYZ(BH_PWORK* ewP, char* datP)
+{
+    NJS_POINT3 pos;
+    bhCalcFixOffset(ewP, datP, NULL, &pos);
+    ewP->px -= pos.x;
+    ewP->py -= pos.y;
+    ewP->pz -= pos.z;
+}
+
+// 100% matching!
+int bhCheckPlayerKegaMotion(int wpntp, int dmlvl, int num)
+{
+    if (plp->hp >= 120) 
+    {
+        if ((plp->stflg & 0x280000)) 
+        {
+            ((EXP_WORK*)plp->exp0)->dmlvl = 1;
+        }
+        else if (((EXP_WORK*)plp->exp0)->dmlvl != 0) 
+        {
+            ((EXP_WORK*)plp->exp0)->dmlvl = 0;
+        }
+    }
+    else if (plp->hp >= 30) 
+    {
+        if (((EXP_WORK*)plp->exp0)->dmlvl != 1)
+        {
+            ((EXP_WORK*)plp->exp0)->dmlvl = 1;
+        }
+    } 
+    else if (((EXP_WORK*)plp->exp0)->dmlvl != 2)
+    {
+        ((EXP_WORK*)plp->exp0)->dmlvl = 2;
+    }
+    
+    if (((EXP_WORK*)plp->exp0)->dmlvl != dmlvl)
+    {
+        plp->mtn_no = PlMtnAct[wpntp][((EXP_WORK*)plp->exp0)->dmlvl][num];
+        plp->frm_no = bhGetFrameNum(plp->mnwP[PlMtnAct[wpntp][dmlvl][num]].frm_num, plp->mnwP[PlMtnAct[wpntp][((EXP_WORK*)plp->exp0)->dmlvl][num]].frm_num, plp->frm_no);
+        
+        plp->hokan_count = 3;
+
+        return 1;
+    }
+    
+    return 0;
+}
+
+// 100% matching!
+void bhCheckEvtTimer()
+{
+    POINT pnt; 
+
+    if ((sys->evt_tim == 0) && (((sys->sp_flg & 0x200)) && ((sys->gm_flg & 0x20000000)) && (!(sys->ts_flg & 0x80)) && ((sys->ts_flg & 0x4000)) && ((sys->ts_flg & 0x1000)) && ((sys->ts_flg & 0x200)) && ((sys->ts_flg & 0x400)) && ((sys->ts_flg & 0x800)) && ((sys->ts_flg & 0x10000)) && (!(sys->cb_flg & 0x1))))
+    {
+        if (bhCkFlg(sys->ev_flg, 69) != 0) 
+        {
+            if ((sys->st_flg & 0x200)) 
+            {
+                sys->st_flg |= 0x400000;
+                
+                sys->cb_flg |= 0x2000;
+                sys->cb_flg &= ~0x1000;
+            }
+            
+            bhSetEffect(26, &pnt, NULL, 0);
+            
+            plp->hp = -1;
+            
+            bhCrFlg(sys->ev_flg, 69);
+        }
+        
+        if (bhCkFlg(sys->ev_flg, 67) != 0) 
+        {
+            sys->sp_flg = 0;
+            sys->sp_flg |= 0x20;
+            
+            sys->st_flg &= ~0x200;
+            
+            sys->gm_flg |= 0x400;
+            
+            sys->ts_flg &= ~0x4000;
+            sys->ts_flg |= 0x100;
+            
+            plp->flg |= 0x10002;
+            
+            *(int*)&sys->gov_md0 = 0;
+            
+            bhCrFlg(sys->ev_flg, 67);
+        }
+        
+        if (bhCkFlg(sys->ev_flg, 70) != 0) 
+        {
+            CallSystemVoice(11);
+            
+            sys->sp_flg = 0;
+            sys->sp_flg |= 0x20;
+            
+            sys->st_flg &= ~0x200;
+            
+            sys->gm_flg |= 0x400;
+            
+            sys->ts_flg &= ~0x4000;
+            sys->ts_flg |= 0x100;
+            
+            plp->flg |= 0x10002;
+            
+            *(int*)&sys->gov_md0 = 0;
+            
+            bhCrFlg(sys->ev_flg, 70);
+        }
+    }
+}
+
+void (*bhCtrPly_mode0[9])() = 
+{
+    bhSetPlayer,
+    bhCPM0_action,
+    bhCPM0_damage,
+    bhCPM0_die,
+    bhCPM0_nage,
+    bhCPM0_enedam,
+    bhCPM0_enedie,
+    bhCPM0_event,
+    bhCPM0_nothing
+}; 
+
+#pragma divbyzerocheck on 
+
+// 100% matching!
+void bhControlPlayer()
+{
+    unsigned int stf_bk;
+	MN_WORK* mnwP;
+    EXP_WORK* expw;
+    float px, py, pz;
+    int bhit;
+    int fsnd;
+    O_WORK* owP;
+    NJS_POINT3 eff0, eff1;   
+    NJS_POINT3 bps; 
+    ATR_WORK* hp;
+    GA_WORK gap;   
+
+    expw = (EXP_WORK*)plp->exp0;
+        
+    if (((sys->sp_flg & 0x1)) && (!(plp->stflg & 0x1000000))) 
+    {
+        plp->pxb = plp->px;
+        plp->pyb = plp->py;
+        plp->pzb = plp->pz;
+        
+        expw->bpxb = expw->bpx;
+        expw->bpyb = expw->bpy;
+        expw->bpzb = expw->bpz;
+        
+        plp->axb = plp->ax;
+        plp->ayb = plp->ay;
+        plp->azb = plp->az;
+        
+        px = plp->mlwP->owP->mtx[12] - ((EXP_WORK*)plp->exp0)->nlxb;
+        py = plp->py - ((EXP_WORK*)plp->exp0)->nlyb;
+        pz = plp->mlwP->owP->mtx[14] - ((EXP_WORK*)plp->exp0)->nlzb;
+        
+        if (njSqrt((px * px) + (py * py) + (pz * pz)) > 0.3f) 
+        {
+            ((EXP_WORK*)plp->exp0)->nlxb = plp->mlwP->owP->mtx[12];
+            ((EXP_WORK*)plp->exp0)->nlyb = plp->py;
+            ((EXP_WORK*)plp->exp0)->nlzb = plp->mlwP->owP->mtx[14];
+        }
+        
+        plp->stflg &= ~0x300;
+        
+        if (((plp->stflg & 0x281000)) && (!(plp->stflg & 0x40000))) 
+        {
+            ((EXP_WORK*)plp->exp0)->dm_ct++;
+            
+            if (((EXP_WORK*)plp->exp0)->dm_ct > 30) 
+            {
+                ((EXP_WORK*)plp->exp0)->dm_ct = 0;
+                
+                if (plp->hp > 0) 
+                {
+                    plp->hp--;
+                }
+            }
+        }
+        
+        if (plp->hp < 0) 
+        {
+            if ((plp->mode0 != 3) && (!(plp->stflg & 0x40000))) 
+            {
+                *(int*)&plp->mode0 = 3;
+                
+                plp->mnwP = plp->mnwPb;
+            }
+        }
+        
+#ifdef TARGET_PC
+        if (tps_on)
+        {
+            tps_player_mode();   /* free aim: the weapon modes keep the straight aim height (tps_glue.c) */
+        }
+#endif
+        bhCtrPly_mode0[plp->mode0]();
+#ifdef TARGET_PC
+        if (tps_on)
+        {
+            tps_player();
+        }
+
+        modern_player();   /* modern controls: turn towards the direction held (modern_glue.c) */
+#endif
+        
+        if ((plp->flg & 0x100000)) 
+        {
+            plp->ay += (short)(plp->ayp - plp->ay) / ((EXP_WORK*)plp->exp0)->yrct;
+            
+            ((EXP_WORK*)plp->exp0)->yrct--;
+            
+            if (((EXP_WORK*)plp->exp0)->yrct <= 0)
+            {
+                plp->ay = plp->ayp;
+                
+                if ((plp->flg & 0x4000000)) 
+                {
+                    owP = plp->mlwP->owP;
+                    
+                    CallPlayerFootStepSe(bhCheckFloorSound(plp, plp->flr_no, owP[17].mtx[12], owP[17].mtx[14]), 1, 1);
+                    
+                    plp->stflg |= 0x200;
+                    
+                    if ((plp->stflg & 0x100000)) 
+                    {
+                        bhSetEffect(108, (POINT*)&plp->px, NULL, 13);
+                        bhSetWaterSplash(plp, 19, 1, 1.6f, 1.6f, 1.6f);
+                    }
+                    
+                    if ((plp->flg2 & 0x8)) 
+                    {
+                        px = py = pz = 0.8f;
+                        
+                        bhSetWaterSplash3((NJS_POINT3*)&plp->mlwP->owP[21].mtx[12], plp->ay, plp->footeff, px, py, pz);
+                    }
+                }
+                
+                plp->flg &= ~0x4100000;
+                plp->stflg &= ~0x800;
+                
+                ((EXP_WORK*)plp->exp0)->spx = plp->px;
+                ((EXP_WORK*)plp->exp0)->spz = plp->pz;
+            }
+        }
+        
+        if (plp->wpnr_no == 1) 
+        {
+            if (!(plp->flg & 0x1000000)) 
+            {
+                plp->flg |= 0x1000000;
+                
+                bhSetEffectTb(WpnEffTab[plp->wpnr_no], (NJS_POINT3*)&WpnTab[plp->wpnr_no].wp_fps1, (unsigned char*)plp, 9);
+                
+                lgttab[1].lkflg = 1;
+
+                lgttab[1].lkno  = 0;
+                lgttab[1].lkono = 9;
+                
+                bhSetLightTab(&lgttab[1], 1);
+                
+                rom->lgtp[1].flg |= 0x2;
+            }
+            else if (!(rom->lgtp[1].flg & 0x2))
+            {
+                rom->lgtp[1].flg |= 0x2;
+                
+                rom->lgtp[1].lkflg = 1;
+                
+                rom->lgtp[1].lkno = 0;
+                rom->lgtp[1].lkono = 9;
+            }
+            
+            plp->mlwP->owP[7].flg |= 0x2;
+            plp->mlwP->owP[8].flg |= 0x2;
+            plp->mlwP->owP[9].flg |= 0x2;        
+        }
+        else if ((plp->flg & 0x1000000))
+        {
+            plp->flg &= ~0x1000000;
+            
+            rom->lgtp[1].flg &= ~0x2;
+        }
+        
+        PlyPchMain(plp);
+        
+        mnwP = plp->mnwP;
+
+        (void*)plp->mtn_tp; // FAKE
+        bhSetMotion(plp, (int)plp->mtn_add, plp->mtn_md, plp->mtn_tp);
+        
+        if ((plp->frm_no / 65536) >= (plp->mnwP[plp->mtn_no].frm_num - 1))
+        {
+            plp->flg |= 0x400000;
+        }
+        else 
+        {
+            plp->flg &= ~0x400000;
+        }
+        
+        plp->mnwP = mnwP;
+        
+        if (plp->wpnr_no == 1) 
+        {
+            owP = plp->mlwP->owP;
+                
+            if (sys->ply_id == 0) 
+            {
+                eff1.x = 1.8f;
+                eff1.z = -3.0f;
+            }
+            else 
+            {
+                eff1.x = 2.4f;
+                eff1.z = -3.5f;
+            }
+            
+            eff1.y = -3.0f;
+            
+            njCalcPoint(&owP[4].mtx, &eff1, &eff0);
+            
+            bhArmIkMdk(plp, 6, &eff0, 35498);
+            
+            plp->mlwP->objP[9].ang[1] = -910;
+        }
+        
+        if ((plp->flg & 0x40000)) 
+        {
+            if (!(plp->flg & 0x8000000)) 
+            {
+                if ((plp->flg & 0x80000)) 
+                {
+                    bhFixPosition(plp, PlyLegRoute[1]);
+                }
+                else 
+                {
+                    bhFixPosition(plp, *PlyLegRoute);
+                }
+            } 
+            else if ((plp->flg & 0x80000)) 
+            {
+                bhFixPositionXYZ(plp, PlyLegRoute[1]);
+            }
+            else 
+            {
+                bhFixPositionXYZ(plp, *PlyLegRoute);
+            }
+        }
+        
+        if (((plp->flg & 0x20000000)) && (plp->spd > 0)) 
+        {
+            plp->flg |= 0x200000;
+            
+            bhAddSpeed(plp, 32768);
+            
+            plp->spd *= 0.5f;
+            
+            if (plp->spd < 0.1f) 
+            {
+                plp->flg &= ~0x20000000;
+                
+                plp->spd = 0;
+            }
+        }
+        
+        if (expw->arn != expw->arp)
+        {
+            expw->arn += 0.5f * (expw->arp - expw->arn);
+        }
+        
+        njSinCos(plp->ay, &expw->fpx, &expw->fpz);
+        
+        expw->fpx = plp->px - (expw->fpx * expw->arn);
+        expw->fpy = plp->py;
+        expw->fpz = plp->pz - (expw->fpz * expw->arn);
+        
+        expw->bpx = expw->fpx;
+        expw->bpy = 12.5f + plp->py;
+        expw->bpz = expw->fpz;
+        
+#ifdef TARGET_PC
+        unsigned int noclip = pc_noclip() & plp->flg;   /* F2 cheat: no enemy/wall push (cheat_glue.c) */
+        plp->flg &= ~noclip;
+#endif
+        if ((plp->flg & 0x8)) 
+        {
+            bhCheckEnemies(plp);
+        }
+        
+        fsnd = plp->flg;
+        
+        if ((plp->flg & 0x10))
+        {
+            stf_bk = plp->stflg;
+            
+            plp->flg &= ~0x100;
+            
+            plp->stflg &= ~0x20000;
+            plp->stflg &= ~0x1;
+            
+            bps.x = expw->bpx;
+            
+            if (plp->mode0 == 3) 
+            {
+                bps.y = plp->py;
+            }
+            else 
+            {
+                bps.y = expw->bpy;
+            }
+            
+            bps.z = expw->bpz;
+            
+            if (bhCheckWallEx(plp, &bps, (NJS_POINT3*)&expw->bpxb, plp->ar, 1.0f) != 0)
+            {
+                bhit = 1;
+                
+                ((EXP_WORK*)plp->exp0)->spx = bps.x;
+                ((EXP_WORK*)plp->exp0)->spy = plp->py;
+                ((EXP_WORK*)plp->exp0)->spz = bps.z;
+            }
+            else
+            {
+                bhit = 0;
+            }
+            
+            plp->px += bps.x - expw->bpx;
+            plp->pz += bps.z - expw->bpz;
+            
+            expw->bpx = bps.x;
+            expw->bpy = bps.y;
+            expw->bpz = bps.z;
+            
+            plp->flg = fsnd;
+            
+            plp->stflg = stf_bk;
+            plp->stflg &= ~0x1;
+            
+            bhCheckWallEx(plp, (NJS_POINT3*)&plp->px, (NJS_POINT3*)&plp->pxb, plp->ar, plp->ah);
+            
+            if (bhit == 0)
+            {
+                ((EXP_WORK*)plp->exp0)->spx = expw->bpx;
+                ((EXP_WORK*)plp->exp0)->spy = plp->py;
+                ((EXP_WORK*)plp->exp0)->spz = expw->bpz;
+            }
+        }
+#ifdef TARGET_PC
+        if ((noclip & 0x10))   /* as the wall check with nothing hit */
+        {
+            expw->spx = expw->bpx;
+            expw->spy = plp->py;
+            expw->spz = expw->bpz;
+        }
+        plp->flg |= noclip;
+#endif
+        
+        if ((plp->flg & 0x200000)) 
+        {
+            expw->plx = expw->spx;
+            expw->ply = expw->spy;
+            expw->plz = expw->spz;
+        }
+        
+        bhCheckFloorP(plp);
+        
+        if ((sys->st_flg & 0x100)) 
+        {
+            plp->mdflg &= ~0x40;
+            
+            hp = bhCheckFloorEffect(plp->flr_no, plp->gpx, plp->gpz);
+            
+            if ((hp != NULL) && (hp->prm0 == 2)) 
+            {
+                plp->mdflg |= 0x40;
+            }
+        }
+        
+        if ((plp->mode0 == 1) && (!(plp->stflg & 0x10080)) && (!(plp->flg & 0x4000004)) && (!(sys->cb_flg & 0x4017)) && ((sys->pad_ps & 0x200))) 
+        {
+            bhCheckExmAtari(plp);
+        }
+        
+        if (plp->exp1 != NULL)
+        {
+            bhControlPlayerHead();
+        }
+        
+#ifdef TARGET_PC
+        if (tps_on)
+        {
+            tps_calc_model();   /* bhCalcModel with the free-aim pitch on the upper body */
+        }
+        else
+#endif
+        bhCalcModel(plp);
+        
+        if (((plp->mode0 == 1) && (plp->mode1 == 1) && (plp->mode2 == 0x45) && (plp->mode3 == 1)) && ((WpnTab[plp->wpnr_no].flg & 0x40000000))) 
+        {
+            if (((plp->frm_no / 65536) > KnfAtrTab[sys->ply_id]) && ((plp->frm_no / 65536) < WpnTab[plp->wpnr_no].ef_yct)) 
+            {
+                gap.at_flg = plp->at_flg;
+                
+                gap.wpn_no = plp->wpnr_no;
+                
+                gap.r = WpnTab[plp->wpnr_no].r;
+                gap.l = 0;
+                
+                gap.rn = 0;
+                gap.rmax = 0;
+                
+                gap.ax = plp->wax;
+                gap.ay = plp->ay;
+                
+                plp->way = plp->ay;
+                plp->waz = 0;
+                
+                njSetMatrix(NULL, &plp->mlwP->owP[9].mtx);
+                njCalcPoint(NULL, (NJS_POINT3*)&WpnTab[plp->wpnr_no].wp_fps1, (NJS_POINT3*)&gap.px);
+                
+                gap.gx = plp->mlwP->owP[8].mtx[12];
+                gap.gy = plp->mlwP->owP[8].mtx[13];
+                gap.gz = plp->mlwP->owP[8].mtx[14];
+                
+                gap.vx = gap.px - gap.gx;
+                gap.vy = gap.py - gap.gy;
+                gap.vz = gap.pz - gap.gz;
+                
+                bhCheckKnifeAtari(&gap);
+                
+                if ((plp->frm_no / 65536) == (KnfAtrTab[sys->ply_id] + 1)) 
+                {
+                    CallPlayerWeaponSeEx((NJS_POINT3*)&gap.px, 276, 0);
+                }
+            }
+        }
+        
+        if ((plp->flg & 0x4)) 
+        {
+            sys->st_flg |= 0x4;
+        }
+        
+        plp->flg2 &= ~0x200;
+        
+        if ((!(plp->stflg & 0x10)) && (plp->kdnp != NULL)) 
+        {
+            bhClrUseKaidanFlag(plp);
+            
+            plp->kdnp = NULL;
+        }
+        
+        if (((plp->stflg & 0x30)) || (plp->mode0 == 7)) 
+        {
+            plp->gpx = plp->mlwP->owP->mtx[12];
+            plp->gpz = plp->mlwP->owP->mtx[14];
+        }
+        else 
+        {
+            plp->gpx = plp->px;
+            plp->gpz = plp->pz;
+        }
+        
+        plp->gpy = plp->mlwP->owP[1].mtx[13];
+        plp->gpy = bhGetGroundPosition((NJS_VECTOR*)&plp->gpx);
+        
+        plp->watr.c1.x = plp->mlwP->owP[4].mtx[12];
+        plp->watr.c1.y = plp->mlwP->owP[4].mtx[13];
+        plp->watr.c1.z = plp->mlwP->owP[4].mtx[14];
+        
+        plp->watr.c2.x = plp->mlwP->owP->mtx[12];
+        plp->watr.c2.y = plp->mlwP->owP->mtx[13];
+        plp->watr.c2.z = plp->mlwP->owP->mtx[14];
+        
+        plp->watr.r = 2.5f;
+    }
+    else if ((((plp->stflg & 0x1000000)) && (plp->wpnr_no == 1)) && (!(sys->st_flg & 0x20000000)))
+    {
+        rom->lgtp[1].flg &= ~0x2;
+    }
+}
+
+#pragma divbyzerocheck off
+
+// 100% matching!
+void bhCPM0_action()
+{
+    plp->mtn_md = 0;
+    
+    if (((sys->gm_flg & 0x1000000)) && (!(sys->gm_flg & 0x40)))
+    {
+        cam.pe_ax = 0;
+        cam.pe_pers = 11832;
+        
+        sys->gm_flg |= 0x2000;
+    }
+    
+    if (((sys->pad_on & 0x10)) && (((plp->flg & 0x20000)) && (!(plp->flg & 0x4000000))) && (((!(plp->stflg & 0x400)) && (!(plp->stflg & 0x10000))))) 
+    {
+        plp->flg |= 0x10000;
+        plp->stflg |= 0x400;
+        
+        plp->at_flg = 1;
+        
+        plp->mode1 = 1;
+        plp->mode2 = 0x40;
+        plp->mode3 = 0;
+        
+        EXP1_I(0) &= ~0x4;
+        EXP1_I(0) |= 0x1E0;
+    }
+    
+    if (!(plp->flg & 0x10000)) 
+    {
+        bhControlPlayerPad();
+    }
+    
+    if (plp->mode1 == 0) 
+    {
+        bhCPM1_act_bas();
+    }
+    else 
+    {
+        bhCPM1_act_atk();
+    }
+}
+
+// 100% matching!
+void bhControlPlayerPad()
+{
+    if ((!(sys->pad_on & 0x1)) && ((plp->stflg & 0x80))) 
+    {
+        plp->flg |= 0x200000;
+        
+        if (plp->mode3 == 5) 
+        {
+            plp->mode3 = 6;
+        }
+    } 
+    else 
+    {
+        plp->mode1 = 0;
+        
+        plp->flg &= ~0x200000;
+        
+        plp->stflg &= ~0x400;
+        sys->st_flg &= ~0x4;
+        
+        switch (sys->pad_on & 0xF) 
+        {
+        case 8:
+            if (plp->mode2 != 1) 
+            {
+                plp->mode3 = 0;
+            }
+            
+            plp->mode2 = 1;
+            break;
+        case 4:
+            if (plp->mode2 != 2) 
+            {
+                plp->mode3 = 0;
+            }
+            
+            plp->mode2 = 2;
+            break;
+        case 1:
+            plp->flg |= 0x200000;
+            
+            if (!(plp->stflg & 0x80)) 
+            {
+                plp->mode2 = 3;
+                
+                if (!(sys->pad_old & 0x1)) 
+                {
+                    plp->mode3 = 0;
+                }
+            }
+            
+            return;
+        case 9:
+            plp->flg |= 0x200000;
+            
+            if (!(plp->stflg & 0x80)) 
+            {
+                plp->mode2 = 4;
+                
+                if (!(sys->pad_old & 0x1)) 
+                {
+                    plp->mode3 = 0;
+                }
+            }
+            
+            break;
+        case 5:
+            plp->flg |= 0x200000;
+            
+            if (!(plp->stflg & 0x80))
+            {
+                plp->mode2 = 5;
+                
+                if (!(sys->pad_old & 0x1)) 
+                {
+                    plp->mode3 = 0;
+                }
+            }
+            
+            break;
+        case 2:
+            plp->flg |= 0x200000;
+            
+            if (plp->mode2 != 12) 
+            {
+                plp->mode2 = 9;
+                
+                if (!(sys->pad_old & 0x2)) 
+                {
+                    plp->mode3 = 0;
+                }
+            }
+            
+            break;
+        case 10:
+            plp->flg |= 0x200000;
+            
+            if (plp->mode2 != 12) 
+            {
+                plp->mode2 = 10;
+                
+                if (!(sys->pad_old & 0x2)) 
+                {
+                    plp->mode3 = 0;
+                }
+            }
+            
+            break;
+        case 6:
+            plp->flg |= 0x200000;
+            
+            if (plp->mode2 != 12) 
+            {
+                plp->mode2 = 11;
+                
+                if (!(sys->pad_old & 0x2)) 
+                {
+                    plp->mode3 = 0;
+                }
+            }
+            
+            break;
+        default:
+            plp->flg |= 0x10;
+            
+            if (plp->mode2 != 0) 
+            {
+                plp->mode3 = 0;
+            }
+            
+            plp->mode2 = 0;
+            break;
+        }
+    }
+}
+
+// 100% matching!
+void bhCPM1_act_bas()
+{
+    BH_PWORK* p; // not from DWARF
+    
+    if ((!(sys->gm_flg & 0x40)) || ((plp->stflg & 0x30))) 
+    {
+        switch (((EXP_WORK*)plp->exp0)->dmlvl)
+        {
+        case 1:
+            ((EXP_WORK*)plp->exp0)->rtspd = 1.0f;
+            break;
+        case 2:
+            ((EXP_WORK*)plp->exp0)->rtspd = 0.8f;
+            break;
+        default:
+            ((EXP_WORK*)plp->exp0)->rtspd = 1.0f;
+            break;
+        }
+    }
+    else 
+    {
+        if ((sys->pad_on & 0xC))
+        {
+            ((EXP_WORK*)plp->exp0)->rtspd = 0.0078125f * fabsf(sys->pad_dx);
+        }
+        else 
+        {
+            ((EXP_WORK*)plp->exp0)->rtspd = 0.0078125f * fabsf(sys->pad_ax);
+        }
+        
+        if (((EXP_WORK*)plp->exp0)->dmlvl == 2)
+        {
+            ((EXP_WORK*)plp->exp0)->rtspd *= 0.8f;
+        }
+    }
+    
+    p = plp;
+    
+    switch (plp->mode2) 
+    {
+    case 0:           
+        bhCPM2_act_std();
+        break;
+    case 1:           
+        p->ay -= (int)(182.04445f * (7.2f * ((EXP_WORK*)plp->exp0)->rtspd));
+            
+        plp->mtn_add = -65536;
+        
+        bhCPM2_act_srt();
+        break;
+    case 2:           
+        p->ay += (int)(182.04445f * (7.2f * ((EXP_WORK*)plp->exp0)->rtspd));
+        
+        plp->mtn_add = 65536;
+        
+        bhCPM2_act_srt();
+        break;
+    case 3:           
+        bhCPM2_act_wlk();
+        break;
+    case 4:           
+        p->ay -= (int)(182.04445f * (4.0f * ((EXP_WORK*)plp->exp0)->rtspd));
+        
+        bhCPM2_act_wlk();
+        break;
+    case 5:           
+        p->ay += (int)(182.04445f * (4.0f * ((EXP_WORK*)plp->exp0)->rtspd));
+        
+        bhCPM2_act_wlk();
+        break;
+    case 6:           
+        bhCPM2_act_run();
+        break;
+    case 9:           
+        bhCPM2_act_bak();
+        break;
+    case 10:          
+        p->ay -= (int)(182.04445f * (4.0f * ((EXP_WORK*)plp->exp0)->rtspd));
+        
+        bhCPM2_act_bak();
+        break;
+    case 11:          
+        p->ay += (int)(182.04445f * (4.0f * ((EXP_WORK*)plp->exp0)->rtspd));
+        
+        bhCPM2_act_bak();
+        break;
+    case 12:          
+        bhCPM2_act_bk2();
+        break;
+    case 13:          
+        bhCPM2_act_sta();
+        break;
+    case 14:          
+        bhCPM2_act_kdu();
+        break;
+    case 15:          
+        bhCPM2_act_kdd();
+        break;
+    case 16:          
+        bhCPM2_act_dnu();
+        break;
+    case 17:          
+        bhCPM2_act_dnd();
+        break;
+    case 18:          
+        bhCPM2_act_psh();
+        break;
+    case 19:          
+        bhCPM2_act_cro();
+        break;
+    case 20:          
+        bhCPM2_act_hsu();
+        break;
+    case 21:          
+        bhCPM2_act_hsd();
+        break;
+    case 22:          
+        bhCPM2_act_rpsh();
+        break;
+    }
+    
+    if (plp->mode2 != 3) 
+    {
+        plp->psh_ct = 0;
+    }
+}
+
+// 100% matching!
+void bhCPM2_act_std() 
+{
+    int dmlvl;
+
+    if ((sys->gm_flg & 0x1000000)) 
+    {
+        dmlvl = 0;
+    }
+    else 
+    {
+        dmlvl = ((EXP_WORK*)plp->exp0)->dmlvl;
+    }
+    
+    switch (plp->mode3)
+    {
+    case 0:
+        if ((plp->stflg & 0x8000))
+        {
+            plp->flg &= ~0x2801000;
+        }
+        else 
+        {
+            plp->flg &= ~0x2811000;
+        }
+        
+        plp->flg2 &= ~0x1;
+        
+        EXP1_I(0) |= 0x4;
+            
+        plp->mtn_no = PlMtnAct[((EXP_WORK*)plp->exp0)->wpntp][dmlvl][0];
+        
+        plp->hokan_rate = 42598;
+        plp->hokan_count = 5;
+        
+        plp->mtn_add = 65536;
+        
+        plp->frm_no = 0;
+        
+        plp->ct3 = 0;
+        
+        ((EXP_WORK*)plp->exp0)->arp = 0;
+        
+        ((EXP_WORK*)plp->exp0)->spxn = 0.3f * (((EXP_WORK*)plp->exp0)->spx - plp->px);
+        ((EXP_WORK*)plp->exp0)->spzn = 0.3f * (((EXP_WORK*)plp->exp0)->spz - plp->pz);
+        
+        plp->mode3++;
+    case 1:
+        if (plp->hokan_count == 0) 
+        {
+            plp->flg &= ~0xC0000;
+        }
+        else if (plp->hokan_count > 2) 
+        {
+            plp->px += ((EXP_WORK*)plp->exp0)->spxn;
+            plp->pz += ((EXP_WORK*)plp->exp0)->spzn;
+        }
+        
+        plp->ct3++;
+        
+        if ((plp->ct3 > 300) && (((EXP_WORK*)plp->exp0)->dmlvl == 0) && ((sys->ply_id != 1) || (plp->wpnr_no != 1))) 
+        {
+            plp->flg |= 0x10000;
+            
+            plp->mode2 = 0xD;
+            plp->mode3 = 0;
+        }
+    }
+    
+    bhCheckPlayerKegaMotion(((EXP_WORK*)plp->exp0)->wpntp, ((EXP_WORK*)plp->exp0)->dmlvl, 0);
+}
+
+// 99.91% matching
+void bhCPM2_act_srt()
+{
+    int dmlvl;
+
+    if ((sys->gm_flg & 0x1000000))
+    {
+        dmlvl = 0;
+    }
+    else 
+    {
+        dmlvl = ((EXP_WORK*)plp->exp0)->dmlvl;
+    }
+    
+    switch (plp->mode3)
+    {
+    case 0:
+        plp->flg  &= ~0x28C0000;
+        plp->flg2 &= ~0x1;
+        
+        EXP1_I(0) |= 0x4;
+        
+        plp->mtn_no = PlMtnAct[((EXP_WORK*)plp->exp0)->wpntp][dmlvl][1];
+        
+        plp->hokan_rate = 42598;
+        plp->hokan_count = 8;
+        
+        plp->frm_no = 0;
+        
+        ((EXP_WORK*)plp->exp0)->arp = 0;
+        
+        plp->mode3++;
+    case 1:
+        if ((((int)plp->frm_no / 65536) == PlFootSnd[sys->ply_id][0][4]) || (((int)plp->frm_no / 65536) == PlFootSnd[sys->ply_id][1][4])) 
+        {
+            plp->flr_snd = bhCheckFloorSound(plp, (int)plp->flr_no, plp->gpx, plp->gpz);
+            
+            CallPlayerFootStepSe(plp->flr_snd, 0, 1);
+            
+            plp->stflg |= 0x200;
+
+            if ((plp->stflg & 0x100000)) 
+            {
+                bhSetEffect(108, (POINT*)&plp->px, NULL, 10);
+
+                if (((int)plp->frm_no / 65536) == PlFootSnd[sys->ply_id][0][4]) 
+                {
+                    bhSetWaterSplash(plp, 15, 0, 0.8f, 0.8f, 0.8f);
+                }
+                else 
+                {
+                    bhSetWaterSplash(plp, 19, 0, 0.8f, 0.8f, 0.8f);
+                }
+            }
+            
+            if ((plp->flg2 & 0x8)) 
+            {
+                if (((int)plp->frm_no / 65536) == PlFootSnd[sys->ply_id][0][4]) 
+                {
+                    bhSetWaterSplash3((NJS_POINT3*)&plp->mlwP->owP[17].mtx[12], plp->ay, plp->footeff, 0.8f, 0.8f, 0.8f);
+                } 
+                else 
+                {
+                    bhSetWaterSplash3((NJS_POINT3*)&plp->mlwP->owP[21].mtx[12], plp->ay, plp->footeff, 0.8f, 0.8f, 0.8f);
+                }
+            }
+        }
+    }
+    
+    bhCheckPlayerKegaMotion(((EXP_WORK*)plp->exp0)->wpntp, ((EXP_WORK*)plp->exp0)->dmlvl, 1);
+}
+
+// 100% matching!
+void bhCPM2_act_sta()
+{
+    switch (plp->mode3)
+    {
+    case 0:
+        plp->flg  |= 0xD0000;
+        plp->flg2 &= ~0x1;
+        
+        EXP1_I(0) |= 0x4;
+        
+        plp->mtn_no = PlMtnAct[((EXP_WORK*)plp->exp0)->wpntp][((EXP_WORK*)plp->exp0)->dmlvl][6];
+        
+        plp->hokan_rate = 49152;
+        plp->hokan_count = 8;
+        
+        plp->mtn_add = 65536;
+
+        plp->frm_no = 0;
+        
+        ((EXP_WORK*)plp->exp0)->arp = 0;
+        
+        plp->mode3++;
+    case 1:
+        if (((unsigned int)plp->frm_no / 65536) >= (plp->mnwP[plp->mtn_no].frm_num - 1)) 
+        {
+            plp->mtn_no = PlMtnAct[((EXP_WORK*)plp->exp0)->wpntp][((EXP_WORK*)plp->exp0)->dmlvl][6] + 1;
+            
+            plp->hokan_rate = 49152;
+            plp->hokan_count = 4;
+            
+            plp->mtn_add = 65536;
+            
+            plp->frm_no = 0;
+            
+            plp->mode3 = 2;
+        }
+        
+        break;
+    case 2:
+        break;
+    }
+    
+    if (((sys->pad_on & 0x1F)) || (bhCheckPlayerKegaMotion(((EXP_WORK*)plp->exp0)->wpntp, ((EXP_WORK*)plp->exp0)->dmlvl, 6) != 0))
+    {
+        plp->flg &= ~0x10000;
+        
+        sys->pad_on &= ~0xF;
+    }
+}
+
+// 100% matching!
+void bhCPM2_act_wlk()
+{
+	float* trsz;
+    int fsnd;
+    int dmlvl;
+
+    if ((sys->gm_flg & 0x1000000)) 
+    {
+        dmlvl = 0;
+    }
+    else 
+    {
+        dmlvl = ((EXP_WORK*)plp->exp0)->dmlvl;
+    }
+    
+    switch (plp->mode3) 
+    {
+    case 0:
+        plp->flg &= ~0xC0000;
+        plp->flg2 &= ~0x1;
+        
+        if (!(plp->flg & 0x800000))
+        {
+            plp->frm_no = 327680;
+        }
+        else 
+        {
+            plp->frm_no = bhGetFrameNum(plp->mnwP[plp->mtn_no].frm_num, plp->mnwP[PlMtnAct[((EXP_WORK*)plp->exp0)->wpntp][dmlvl][2]].frm_num, plp->frm_no);
+        }
+        
+        plp->flg &= ~0x800000;
+        
+        EXP1_I(0) |= 0x4;
+        
+        plp->mtn_no = PlMtnAct[((EXP_WORK*)plp->exp0)->wpntp][dmlvl][2];
+        
+        plp->hokan_rate = 42598;
+        plp->hokan_count = 8;
+        
+        plp->mtn_add = 65536;
+        
+        ((EXP_WORK*)plp->exp0)->arp = 2.0f;
+        
+        if ((plp->stflg & 0x100000)) 
+        {
+            bhSetEffect(108, (POINT*)&plp->px, NULL, 10);
+        }
+        
+        plp->mode3++;
+    case 1:
+        plp->mtn_no = PlMtnAct[((EXP_WORK*)plp->exp0)->wpntp][dmlvl][2];
+        
+        plp->flg |= 0x2000000;
+        
+        trsz = bhGetTransZ(PlyTrsZ[0][dmlvl]);
+        
+        plp->spd = trsz[(plp->frm_no / 65536) + 1];
+        
+        if ((plp->stflg & 0x100000)) 
+        {
+            plp->spd *= 0.8f;
+        }
+        
+        if ((sys->gm_flg & 0x1000000)) 
+        {
+            switch (((EXP_WORK*)plp->exp0)->dmlvl) 
+            {
+            case 1:
+                plp->spd *= 0.8f;
+                break;
+            case 2:
+                plp->spd *= 0.6f;
+            }
+        }
+        
+        if (((int)plp->frm_no / 65536) == PlFootSnd[sys->ply_id][0][0])
+        {
+            CallPlayerFootStepSe(bhCheckFloorSound(plp, (int)plp->flr_no, plp->mlwP->owP[17].mtx[12], plp->mlwP->owP[17].mtx[14]), 0, 1);
+            
+            plp->stflg |= 0x200;
+            
+            if ((plp->stflg & 0x100000)) 
+            {
+                bhSetEffect(108, (POINT*)&plp->px, NULL, 10);
+                bhSetWaterSplash(plp, 15, 0, 0.8f, 0.8f, 0.8f);
+            }
+            
+            if ((plp->flg2 & 0x8)) 
+            {
+                bhSetWaterSplash3((NJS_POINT3*)&plp->mlwP->owP[17].mtx[12], plp->ay, plp->footeff, 0.8f, 0.8f, 0.8f);
+            }
+        }
+        
+        if (((int)plp->frm_no / 65536) == PlFootSnd[sys->ply_id][1][0])
+        {
+            CallPlayerFootStepSe(bhCheckFloorSound(plp, (int)plp->flr_no, plp->mlwP->owP[21].mtx[12], plp->mlwP->owP[21].mtx[14]), 0, 1);
+            
+            plp->stflg |= 0x200;
+            
+            if ((plp->stflg & 0x100000)) 
+            {
+                bhSetEffect(108, (POINT*)&plp->px, NULL, 10);
+                bhSetWaterSplash(plp, 19, 0, 0.8f, 0.8f, 0.8f);
+            }
+            
+            if ((plp->flg2 & 0x8)) 
+            {
+                bhSetWaterSplash3((NJS_POINT3*)&plp->mlwP->owP[21].mtx[12], plp->ay, plp->footeff, 0.8f, 0.8f, 0.8f);
+            }
+        }
+    }
+    
+    bhAddSpeed(plp, 0);
+    
+    if ((sys->pad_on & 0x400)) 
+    {
+        plp->flg |= 0x10000;
+        
+        plp->mode2 = 6;
+        plp->mode3 = 0;
+        return;
+    }
+    
+    if ((plp->psh_ct > 5) && (!(plp->stflg & 0x80))) 
+    {
+        sys->st_flg |= 0x4;
+        plp->stflg |= 0x10080;
+        
+        plp->mode2 = 18;
+        plp->mode3 = 0;
+    }
+    
+    bhCheckPlayerKegaMotion(((EXP_WORK*)plp->exp0)->wpntp, ((EXP_WORK*)plp->exp0)->dmlvl, 2);
+}
+
+// 100% matching!
+void bhCPM2_act_run()
+{
+	float* trsz;
+    int fsnd;
+    int dmlvl;
+    float fSin, fCos;    
+
+    if ((sys->gm_flg & 0x1000000)) 
+    {
+        dmlvl = 0;
+    }
+    else 
+    {
+        dmlvl = ((EXP_WORK*)plp->exp0)->dmlvl;
+    }
+    
+    switch (plp->mode3)
+    {
+    case 0:
+        plp->flg &= ~0xC0000;
+        plp->flg2 &= ~0x1;
+        
+        EXP1_I(0) |= 0x4;
+        
+        plp->frm_no = bhGetFrameNum(plp->mnwP[plp->mtn_no].frm_num, plp->mnwP[PlMtnAct[((EXP_WORK*)plp->exp0)->wpntp][dmlvl][3]].frm_num, plp->frm_no);
+        plp->mtn_no = PlMtnAct[((EXP_WORK*)plp->exp0)->wpntp][dmlvl][3];
+        
+        plp->hokan_rate = 42598;
+        plp->hokan_count = 4;
+        
+        plp->mtn_add = 65536;
+        
+        ((EXP_WORK*)plp->exp0)->arp = 3.0f;
+        
+        plp->mode3++;
+    case 1:
+        plp->flg |= 0x2000000;
+        
+        if (!(plp->flg & 0x4000000)) 
+        {
+            trsz = bhGetTransZ(PlyTrsZ[3][dmlvl]);
+            
+            plp->spd = trsz[(plp->frm_no / 65536) + 1];
+            
+            if ((plp->stflg & 0x100000)) 
+            {
+                plp->spd *= 0.8f;
+            }
+            
+            if ((sys->gm_flg & 0x1000000)) 
+            {
+                switch (((EXP_WORK*)plp->exp0)->dmlvl)
+                {
+                case 1:
+                    plp->spd *= 0.8f;
+                    break;
+                case 2:
+                    plp->spd *= 0.6f;
+                    break; 
+                }
+            }
+            
+            if (!(sys->pad_on & 0x1)) 
+            {
+                plp->flg &= ~0x10000;
+                
+                plp->mode2 = 0;
+                plp->mode3 = 0;
+                return;
+            }
+        
+            if (!(sys->pad_on & 0x400)) 
+            {
+                plp->flg &= ~0x10000;
+                plp->flg |= 0x800000;
+                
+                plp->mode2 = 3;
+                plp->mode3 = 0;
+                return;
+            }
+            
+            if ((sys->pad_on & 0x8)) 
+            {
+                plp->ay -= (int)(182.04445f * (4.5f * ((EXP_WORK*)plp->exp0)->rtspd));
+            }
+            
+            if ((sys->pad_on & 0x4)) 
+            {
+                plp->ay += (int)(182.04445f * (4.5f * ((EXP_WORK*)plp->exp0)->rtspd));
+            }
+            
+            bhAddSpeed(plp, 0);
+        }
+        else
+        {
+            plp->spd = 0;
+            
+            njSinCos(plp->ayp + 16384, &fSin, &fCos);
+            
+            plp->px -= 0.2f * fSin;
+            plp->pz -= 0.2f * fCos;
+            
+            ((EXP_WORK*)plp->exp0)->spx = plp->px;
+            ((EXP_WORK*)plp->exp0)->spz = plp->pz;
+        }
+
+        if (((int)plp->frm_no / 65536) == PlFootSnd[sys->ply_id][0][1]) 
+        {
+            CallPlayerFootStepSe(bhCheckFloorSound(plp, (int)plp->flr_no, plp->mlwP->owP[17].mtx[12], plp->mlwP->owP[17].mtx[14]), 1, 1);
+            
+            plp->stflg |= 0x200;
+            
+            if ((plp->stflg & 0x100000)) 
+            {
+                bhSetEffect(108, (POINT*)&plp->px, NULL, 13);
+                bhSetWaterSplash(plp, 15, 1, 1.6f, 1.6f, 1.6f);
+            }
+            
+            if ((plp->flg2 & 0x8)) 
+            {
+                bhSetWaterSplash3((NJS_POINT3*)&plp->mlwP->owP[17].mtx[12], plp->ay, plp->footeff, 0.8f, 0.8f, 0.8f);
+            }
+        }
+        
+        if (((int)plp->frm_no / 65536) == PlFootSnd[sys->ply_id][1][1]) 
+        {
+            CallPlayerFootStepSe(bhCheckFloorSound(plp, (int)plp->flr_no, plp->mlwP->owP[21].mtx[12], plp->mlwP->owP[21].mtx[14]), 1, 1);
+            
+            plp->stflg |= 0x200;
+            
+            if ((plp->stflg & 0x100000)) 
+            {
+                bhSetEffect(108, (POINT*)&plp->px, NULL, 13);
+                bhSetWaterSplash(plp, 19, 1, 1.6f, 1.6f, 1.6f);
+            }
+            
+            if ((plp->flg2 & 0x8)) 
+            {
+                bhSetWaterSplash3((NJS_POINT3*)&plp->mlwP->owP[21].mtx[12], plp->ay, plp->footeff, 0.8f, 0.8f, 0.8f);
+            }
+        }
+    default:
+        bhCheckPlayerKegaMotion(((EXP_WORK*)plp->exp0)->wpntp, ((EXP_WORK*)plp->exp0)->dmlvl, 3);
+        break;
+    }
+}
+
+// 98.93% matching
+void bhCPM2_act_bak()
+{
+    float* trsz;
+	int fsnd;
+
+    switch (plp->mode3)
+    {
+    case 0:
+        plp->flg  &= ~0x40C0000;
+        plp->flg2 &= ~0x1;
+        
+        EXP1_I(0) |= 0x4;
+        
+        if ((plp->flg & 0x2000000))  
+        {
+            plp->frm_no = bhGetFrameNum(plp->mnwP[plp->mtn_no].frm_num, plp->mnwP[PlMtnAct[((EXP_WORK*)plp->exp0)->wpntp][((EXP_WORK*)plp->exp0)->dmlvl][4]].frm_num, plp->frm_no);
+        }
+        else 
+        {
+            plp->frm_no = 1638400;
+        }
+        
+        plp->flg &= ~0x800000;
+        
+        plp->mtn_no = PlMtnAct[((EXP_WORK*)plp->exp0)->wpntp][((EXP_WORK*)plp->exp0)->dmlvl][4];
+        
+        plp->hokan_rate  = 49152;
+        plp->hokan_count = 8;
+        
+        plp->mtn_add = 65536;
+        
+        plp->ct0 = 0;
+        
+        ((EXP_WORK*)plp->exp0)->arp = -1.0f;
+        
+        if ((plp->stflg & 0x100000)) 
+        {
+            bhSetEffect(108, (POINT*)&plp->px, NULL, 10);
+        }
+        
+        plp->mode3++;
+    case 1:
+        plp->mtn_no = PlMtnAct[((EXP_WORK*)plp->exp0)->wpntp][((EXP_WORK*)plp->exp0)->dmlvl][4];
+        
+        if ((sys->pad_ps & 0x400)) 
+        {
+            plp->flg |= 0x4110000;
+            
+            plp->ayp = (plp->ay + 32767) + 1;
+            
+            plp->mode2 = 6;
+            plp->mode3 = 1;
+            
+            EXP1_I(0) |= 0x4;
+            
+            plp->frm_no = bhGetFrameNum(plp->mnwP[plp->mtn_no].frm_num, plp->mnwP[PlMtnAct[((EXP_WORK*)plp->exp0)->wpntp][((EXP_WORK*)plp->exp0)->dmlvl][3]].frm_num, plp->frm_no);
+            plp->mtn_no = PlMtnAct[((EXP_WORK*)plp->exp0)->wpntp][((EXP_WORK*)plp->exp0)->dmlvl][3];
+                
+            plp->hokan_rate  = 42598;
+            plp->hokan_count = 16;
+            
+            plp->mtn_add = 65536;
+            
+            ((EXP_WORK*)plp->exp0)->arp = 3.0f;
+            
+            ((EXP_WORK*)plp->exp0)->yrct = 8;
+
+            fsnd = bhCheckFloorSound(plp, plp->flr_no, plp->mlwP->owP[17].mtx[12], plp->mlwP->owP[17].mtx[14]);
+            
+            CallPlayerFootStepSe(fsnd, 1, 1);
+                
+            plp->stflg |= 0x200;
+            
+            if ((plp->stflg & 0x100000)) 
+            {
+                bhSetEffect(108, (POINT*)&plp->px, NULL, 13);
+                bhSetWaterSplash(plp, 15, 1, 1.6f, 1.6f, 1.6f);
+            }
+            
+            if ((plp->flg2 & 0x8)) 
+            {
+                bhSetWaterSplash3((NJS_POINT3*)&plp->mlwP->owP[17].mtx[12], plp->ay, plp->footeff, 0.8f, 0.8f, 0.8f);
+            }
+
+            return;
+        }
+        else 
+        {
+            if ((((EXP_WORK*)plp->exp0)->dmlvl <= 0) && (bhSearchNearEnemyB((NJS_POINT3*)&EXP1_I(12), plp->ay, 13653, 30.0f) != 0))
+            {
+                plp->mode2 = 12;
+                plp->mode3 = 0;
+                return;
+            }
+            
+            trsz = bhGetTransZ(PlyTrsZ[1][((EXP_WORK*)plp->exp0)->dmlvl]);
+            
+            plp->spd = -trsz[(plp->frm_no / 65536) + 1];
+            
+            if ((plp->stflg & 0x100000))
+            {
+                plp->spd *= 0.8f;
+            }
+            
+            if ((plp->frm_no / 65536) == PlFootSnd[sys->ply_id][0][2]) 
+            {
+                fsnd = bhCheckFloorSound(plp, plp->flr_no, plp->mlwP->owP[17].mtx[12], plp->mlwP->owP[17].mtx[14]);
+                
+                CallPlayerFootStepSe(fsnd, 0, 1);
+                
+                plp->stflg |= 0x200;
+                
+                if ((plp->stflg & 0x100000)) 
+                {
+                    bhSetEffect(108, (POINT*)&plp->px, NULL, 10);
+                    bhSetWaterSplash(plp, 15, 0, 0.8f, 0.8f, 0.8f);
+                }
+                
+                if ((plp->flg2 & 0x8)) 
+                {
+                    bhSetWaterSplash3((NJS_POINT3*)&plp->mlwP->owP[17].mtx[12], plp->ay, plp->footeff, 0.8f, 0.8f, 0.8f);
+                }
+            }
+            
+            if ((plp->frm_no / 65536) == PlFootSnd[sys->ply_id][1][2]) 
+            {
+                fsnd = bhCheckFloorSound(plp, plp->flr_no, plp->mlwP->owP[21].mtx[12], plp->mlwP->owP[21].mtx[14]);
+                
+                CallPlayerFootStepSe(fsnd, 0, 1);
+                
+                plp->stflg |= 0x200;
+                
+                if ((plp->stflg & 0x100000)) 
+                {
+                    bhSetEffect(108, (POINT*)&plp->px, NULL, 10);
+                    bhSetWaterSplash(plp, 19, 0, 0.8f, 0.8f, 0.8f);
+                }
+                
+                if ((plp->flg2 & 0x8)) 
+                {
+                    bhSetWaterSplash3((NJS_POINT3*)&plp->mlwP->owP[21].mtx[12], plp->ay, plp->footeff, 0.8f, 0.8f, 0.8f);
+                }
+            }
+        }
+    }
+
+    bhAddSpeed(plp, 32768);
+    
+    bhCheckPlayerKegaMotion(((EXP_WORK*)plp->exp0)->wpntp, ((EXP_WORK*)plp->exp0)->dmlvl, 4);
+}
+
+// 98.96% matching
+void bhCPM2_act_bk2()
+{
+    float* trsz;
+	int fsnd;
+    
+    switch (plp->mode3)
+    {
+    case 0:
+        plp->flg  &= ~0xC0000;
+        plp->flg2 &= ~0x1;
+        
+        EXP1_I(0) |= 0x4;
+        
+        plp->frm_no = bhGetFrameNum(plp->mnwP[plp->mtn_no].frm_num, plp->mnwP[PlMtnAct[((EXP_WORK*)plp->exp0)->wpntp][((EXP_WORK*)plp->exp0)->dmlvl][3]].frm_num, plp->frm_no);
+        plp->mtn_no = PlMtnAct[((EXP_WORK*)plp->exp0)->wpntp][((EXP_WORK*)plp->exp0)->dmlvl][5];
+            
+        plp->hokan_rate  = 49152;
+        plp->hokan_count = 8;
+        
+        plp->mtn_add = 65536;
+        
+        plp->ct0 = 0;
+        
+        ((EXP_WORK*)plp->exp0)->arp = -1.0f;
+        
+        plp->mode3++;
+    case 1:
+        if ((sys->pad_ps & 0x400)) 
+        {
+            plp->flg |= 0x4110000;
+            
+            plp->ayp = (plp->ay + 32767) + 1;
+            
+            plp->mode2 = 6;
+            plp->mode3 = 1;
+            
+            EXP1_I(0) |= 0x4;
+            
+            plp->frm_no = bhGetFrameNum(plp->mnwP[plp->mtn_no].frm_num, plp->mnwP[PlMtnAct[((EXP_WORK*)plp->exp0)->wpntp][((EXP_WORK*)plp->exp0)->dmlvl][3]].frm_num, plp->frm_no);
+            plp->mtn_no = PlMtnAct[((EXP_WORK*)plp->exp0)->wpntp][((EXP_WORK*)plp->exp0)->dmlvl][3];
+            
+            plp->hokan_rate  = 42598;
+            plp->hokan_count = 16;
+            
+            plp->mtn_add = 65536;
+            
+            ((EXP_WORK*)plp->exp0)->arp = 3.0f;
+            
+            ((EXP_WORK*)plp->exp0)->yrct = 8;
+            
+            fsnd = bhCheckFloorSound(plp, plp->flr_no, plp->mlwP->owP[17].mtx[12], plp->mlwP->owP[17].mtx[14]);
+            
+            CallPlayerFootStepSe(fsnd, 1, 1);
+            
+            plp->stflg |= 0x200;
+            
+            if ((plp->stflg & 0x100000)) 
+            {
+                bhSetEffect(108, (POINT*)&plp->px, NULL, 13);
+                bhSetWaterSplash(plp, 15, 1, 1.6f, 1.6f, 1.6f);
+            }
+            
+            if ((plp->flg2 & 0x8)) 
+            {
+                bhSetWaterSplash3((NJS_POINT3*)&plp->mlwP->owP[17].mtx[12], plp->ay, plp->footeff, 0.8f, 0.8f, 0.8f);
+                break;
+            }
+
+            return;
+        } 
+        else 
+        {
+            if (!(sys->pad_on & 0x2))
+            {
+                plp->mode2 = 0;
+                plp->mode3 = 0;
+                break;
+            }
+            
+            if (bhSearchNearEnemyB((NJS_POINT3*)&EXP1_I(12), plp->ay, 13653, 30.0f) == 0) 
+            {
+                plp->flg |= 0x800000;
+                
+                plp->mode2 = 9;
+                plp->mode3 = 0;
+                break;
+            }
+            
+            trsz = bhGetTransZ(PlyTrsZ[2][((EXP_WORK*)plp->exp0)->dmlvl]);
+            
+            plp->spd = -trsz[(plp->frm_no / 65536) + 1];
+            
+            if ((plp->stflg & 0x100000)) 
+            {
+                plp->spd *= 0.8f;
+            }
+            
+            if ((sys->pad_on & 0x8)) 
+            {
+                plp->ay -= (int)(182.04445f * (4.0f * ((EXP_WORK*)plp->exp0)->rtspd));
+            }
+            
+            if ((sys->pad_on & 0x4)) 
+            {
+                plp->ay += (int)(182.04445f * (4.0f * ((EXP_WORK*)plp->exp0)->rtspd));
+            }
+            
+            if ((plp->frm_no / 65536) == PlFootSnd[sys->ply_id][0][3]) 
+            {
+                fsnd = bhCheckFloorSound(plp, plp->flr_no, plp->mlwP->owP[17].mtx[12], plp->mlwP->owP[17].mtx[14]);
+                
+                CallPlayerFootStepSe(fsnd, 0, 1);
+                
+                plp->stflg |= 0x200;
+                
+                if ((plp->stflg & 0x100000)) 
+                {
+                    bhSetEffect(108, (POINT*)&plp->px, NULL, 10);
+                    bhSetWaterSplash(plp, 15, 0, 0.8f, 0.8f, 0.8f);
+                }
+                
+                if ((plp->flg2 & 0x8)) 
+                {
+                    bhSetWaterSplash3((NJS_POINT3*)&plp->mlwP->owP[17].mtx[12], plp->ay, plp->footeff, 0.8f, 0.8f, 0.8f);
+                }
+            }
+            
+            if ((plp->frm_no / 65536) == PlFootSnd[sys->ply_id][1][3]) 
+            {
+                fsnd = bhCheckFloorSound(plp, plp->flr_no, plp->mlwP->owP[21].mtx[12], plp->mlwP->owP[21].mtx[14]);
+                
+                CallPlayerFootStepSe(fsnd, 0, 1);
+                
+                plp->stflg |= 0x200;
+                
+                if ((plp->stflg & 0x100000)) 
+                {
+                    bhSetEffect(108, (POINT*)&plp->px, NULL, 10);
+                    bhSetWaterSplash(plp, 19, 0, 0.8f, 0.8f, 0.8f);
+                }
+                
+                if ((plp->flg2 & 0x8)) 
+                {
+                    bhSetWaterSplash3((NJS_POINT3*)&plp->mlwP->owP[21].mtx[12], plp->ay, plp->footeff, 0.8f, 0.8f, 0.8f);
+                }
+            }
+        }
+    default:
+        bhAddSpeed(plp, 32768);
+        
+        bhCheckPlayerKegaMotion(((EXP_WORK*)plp->exp0)->wpntp, ((EXP_WORK*)plp->exp0)->dmlvl, 5);
+        break;
+    }
+}
+
+// 100% matching!
+void bhCPM2_act_kdu()
+{
+	ATR_WORK* htp;
+    NJS_POINT3 pos, pos2;    
+    int ang[3];  
+    int flr_no;
+    int fsnd;
+    int dlvl;
+    short ayn;
+
+    htp = sys->pl_htp;
+    
+    sys->st_flg |= 0x4;
+    
+    switch (plp->mode3)
+    {
+    case 0:
+        plp->flg &= ~0x28C0008;
+    
+        EXP1_I(0) &= ~0x4;
+        EXP1_I(0) |= 0x1E0;
+        
+        plp->flg2 |= 0x1;
+        
+        plp->mtn_no = PlMtnAct[((EXP_WORK*)plp->exp0)->wpntp][((EXP_WORK*)plp->exp0)->dmlvl][1];
+        
+        plp->hokan_rate  = 42598;
+        plp->hokan_count = 4;
+        
+        plp->mtn_add = 65536;
+        
+        ((EXP_WORK*)plp->exp0)->arp = 0;
+        
+        plp->frm_no = 0;
+        
+        plp->ayp = -((int)(182.04445f * (htp->prm1 * 90)) & 0xFFFF);
+        
+        ayn = plp->ay;
+        
+        if ((short)((short)plp->ayp - ayn) >= 0) 
+        {
+            plp->mode3 = 2;
+        }
+        else
+        {
+            plp->mode3 = 1;
+        }
+        
+        break;
+    case 1:
+        ayn = plp->ay;
+        
+        if (ABS(((short)plp->ayp - ayn)) < 1310)
+        {
+            plp->mode3 = 3;
+        }
+        else
+        {
+            plp->ay -= (int)(182.04445f * (7.2f * ((EXP_WORK*)plp->exp0)->rtspd));
+        
+            plp->mtn_add = -65536;
+        }
+        
+        break;
+    case 2:
+        ayn = plp->ay;
+        
+        if (ABS(((short)plp->ayp - ayn)) < 1310)
+        {
+            plp->mode3 = 3;
+        }
+        else
+        {
+            plp->ay += (int)(182.04445f * (7.2f * ((EXP_WORK*)plp->exp0)->rtspd));
+        
+            plp->mtn_add = 65536;
+        }
+        
+        break;
+    case 3:
+        plp->flg &= ~0x4C0000;
+        
+        if ((htp->prm2 % 4) == 0) 
+        {
+            plp->mtn_no = 35;
+        }
+        else 
+        {
+            plp->mtn_no = 31;
+        }
+        
+        if (((EXP_WORK*)plp->exp0)->dmlvl >= 2) 
+        {
+            plp->mtn_no += 2;
+        }
+        
+        plp->ct2 = htp->prm2;
+        plp->ct3 = htp->prm2 / 4;
+        
+        flr_no = bhCheckFloorNum(plp->py + (2.0f * htp->prm2));
+        
+        ((EXP_WORK*)plp->exp0)->kdn_fr = flr_no;
+        
+        plp->yn = rom->grand[flr_no + 2];
+        
+        plp->hokan_rate  = 42598;
+        plp->hokan_count = 4;
+        
+        plp->mtn_add = 65536;
+        
+        plp->frm_no = 0;
+        
+        plp->ay = -((int)(182.04445f * (htp->prm1 * 90)) & 0xFFFF);
+        
+        plp->spd = 1.0f;
+        
+        bhAddSpeed(plp, 0);
+        
+        bhGetObjMotion(plp, 0, (float*)&pos, ang);
+        
+        ((EXP_WORK*)plp->exp0)->kdn_py = pos.y;
+        
+        plp->mode3 = 4;
+    case 4:
+        plp->mode3 = 5;
+    case 5:
+        bhGetObjMotion(plp, 0, (float*)&pos, ang);
+        
+        plp->flg |= 0x200000;
+        
+        if ((plp->flg & 0x400000)) 
+        {
+            if (plp->ct3 > 0) 
+            {
+                plp->ct3--;
+            }
+            
+            njUnitMatrix(NULL);
+            
+            njRotateY(NULL, plp->ay);
+            
+            njCalcPoint(NULL, &pos, &pos2);
+            
+            plp->px += pos2.x;
+            plp->py += pos2.y - ((EXP_WORK*)plp->exp0)->kdn_py;
+            plp->pz += pos2.z;
+            
+            plp->frm_no = 0;
+        }
+        
+        if (((EXP_WORK*)plp->exp0)->dmlvl >= 2)
+        {
+            dlvl = 1;
+        }
+        else
+        {
+            dlvl = 0;
+        }
+        
+        if (((((plp->ct2 % 4) == 0) && (plp->ct3 == 1)) && ((plp->frm_no / 65536) >= PlKDU[sys->ply_id][dlvl][0])) || ((((plp->ct2 % 4) != 0) && (plp->ct3 == 0)) && ((plp->frm_no / 65536) >= PlKDU[sys->ply_id][dlvl][1]))) 
+        {
+            plp->flg |= 0x8040000;
+            plp->flg &= ~0x80000;
+            
+            plp->mtn_no = PlMtnAct[((EXP_WORK*)plp->exp0)->wpntp][((EXP_WORK*)plp->exp0)->dmlvl][2];
+            
+            plp->hokan_rate  = 42598;
+            plp->hokan_count = 4;
+            
+            plp->mtn_add = 65536;
+            plp->mtn_md |= 0x100; 
+            
+            plp->frm_no = PlKDU[sys->ply_id][dlvl][2] * 65536;
+                
+            if (((EXP_WORK*)plp->exp0)->dmlvl < 2)
+            {
+                plp->ct1 = 10;
+            }
+            else 
+            {
+                plp->ct1 = 4;
+            }
+            
+            plp->stflg &= ~0x10;
+            
+            fsnd = bhCheckFloorSound(plp, ((EXP_WORK*)plp->exp0)->kdn_fr, plp->mlwP->owP[21].mtx[12], plp->mlwP->owP[21].mtx[14]);
+            
+            CallPlayerFootStepSe(fsnd, 0, 1);
+            
+            plp->stflg |= 0x210;
+            
+            plp->mode3 = 6;
+            break;
+        }
+        
+        if ((plp->frm_no / 65536) == PlFootSnd[sys->ply_id][0][5]) 
+        {
+            flr_no = bhCheckFloorNum(plp->mlwP->owP[17].mtx[13]);
+            fsnd   = bhCheckFloorSound(plp, flr_no, plp->mlwP->owP[17].mtx[12], plp->mlwP->owP[17].mtx[14]);
+            
+            CallPlayerFootStepSe(fsnd, 0, 1);
+            
+            plp->stflg |= 0x200;
+        }
+        
+        if ((plp->frm_no / 65536) == PlFootSnd[sys->ply_id][1][5])  
+        {
+            flr_no = bhCheckFloorNum(plp->mlwP->owP[21].mtx[13]);
+            fsnd   = bhCheckFloorSound(plp, flr_no, plp->mlwP->owP[21].mtx[12], plp->mlwP->owP[21].mtx[14]);
+            
+            CallPlayerFootStepSe(fsnd, 0, 1);
+            
+            plp->stflg |= 0x200;
+        }
+
+        break;
+    case 6:
+        plp->ct1--;
+        
+        if (plp->ct1 <= 0) 
+        {
+            bhClrUseKaidanFlag(plp);
+            
+            plp->px = ((EXP_WORK*)plp->exp0)->spx = plp->mlwP->owP->mtx[12];
+            plp->py = plp->yn;
+            plp->pz = ((EXP_WORK*)plp->exp0)->spz = plp->mlwP->owP->mtx[14];
+            
+            ((EXP_WORK*)plp->exp0)->bpx = ((EXP_WORK*)plp->exp0)->bpxb = plp->px;
+            ((EXP_WORK*)plp->exp0)->bpy = ((EXP_WORK*)plp->exp0)->bpyb = 12.5f + plp->py;
+            ((EXP_WORK*)plp->exp0)->bpz = ((EXP_WORK*)plp->exp0)->bpzb = plp->pz;
+            
+            plp->pxb = plp->px;
+            plp->pyb = plp->py;
+            plp->pzb = plp->pz;
+            
+            plp->stflg &= ~0x80010010;
+            
+            plp->flg &= ~0x80D0400;
+            plp->flg |= 0x118;
+            
+            bhSetFloorNum(plp);
+            
+            plp->py = rom->grand[plp->flr_no + 2];
+            
+            *(int*)&plp->mode0 = 1;
+            
+            plp->mtn_no = PlMtnAct[((EXP_WORK*)plp->exp0)->wpntp][((EXP_WORK*)plp->exp0)->dmlvl][0];
+            
+            plp->hokan_rate  = 49152;
+            plp->hokan_count = 8;
+            
+            plp->mtn_add = 65536;
+            
+            plp->frm_no = 0;
+            
+            plp->mtn_md |= 0x100;
+        }
+        
+        break;
+    }
+}
+
+// 100% matching!
+void bhCPM2_act_kdd()
+{
+    ATR_WORK* htp;
+    NJS_POINT3 pos, pos2;    
+    int ang[3];    
+    float py;
+    int flr_no, fsnd;
+    short ayn;
+
+    htp = sys->pl_htp;
+
+    sys->st_flg |= 0x4;
+    
+    switch (plp->mode3)
+    {
+    case 0:
+        plp->flg &= ~0x28C0008;
+    
+        EXP1_I(0) &= ~0x4;
+        EXP1_I(0) |= 0x1E0;
+        
+        plp->flg2 |= 0x1;
+        
+        plp->mtn_no = PlMtnAct[((EXP_WORK*)plp->exp0)->wpntp][((EXP_WORK*)plp->exp0)->dmlvl][1];
+        
+        plp->hokan_rate  = 42598;
+        plp->hokan_count = 4;
+        
+        plp->mtn_add = 65536;
+        
+        ((EXP_WORK*)plp->exp0)->arp = 0;
+        
+        plp->frm_no = 0;
+        
+        plp->ayp = -((int)(182.04445f * (htp->prm1 * 90)) & 0xFFFF);
+        
+        ayn = plp->ay;
+        
+        if ((short)((short)plp->ayp - ayn) >= 0) 
+        {
+            plp->mode3 = 2;
+        }
+        else
+        {
+            plp->mode3 = 1;
+        }
+        
+        break;
+    case 1:      
+        ayn = plp->ay;
+        
+        if (ABS(((short)plp->ayp - ayn)) < 1310)
+        {
+            plp->mode3 = 3;
+        }
+        else
+        {
+            plp->ay -= (int)(182.04445f * (7.2f * ((EXP_WORK*)plp->exp0)->rtspd));
+        
+            plp->mtn_add = -65536;
+        }
+        
+        break;
+    case 2:         
+        ayn = plp->ay;
+        
+        if (ABS(((short)plp->ayp - ayn)) < 1310)
+        {
+            plp->mode3 = 3;
+        }
+        else
+        {
+            plp->ay += (int)(182.04445f * (7.2f * ((EXP_WORK*)plp->exp0)->rtspd));
+        
+            plp->mtn_add = 65536;
+        }
+        
+        break;
+    case 3:
+        plp->flg &= ~0x4C0000;
+        
+        if ((htp->prm2 % 4) == 0) 
+        {
+            plp->mtn_no = 36;
+        }
+        else 
+        {
+            plp->mtn_no = 32;
+        }
+        
+        if (((EXP_WORK*)plp->exp0)->dmlvl >= 2) 
+        {
+            plp->mtn_no += 2;
+        }
+        
+        plp->hokan_rate  = 42598;
+        plp->hokan_count = 4;
+        
+        plp->mtn_add = 65536;
+        
+        plp->frm_no = 0;
+        
+        plp->ay = -((int)(182.04445f * (htp->prm1 * 90)) & 0xFFFF);
+        
+        plp->spd = 2.0f;
+        
+        bhAddSpeed(plp, 0);
+        
+        bhGetObjMotion(plp, 0, (float*)&pos, ang);
+        
+        ((EXP_WORK*)plp->exp0)->kdn_py = pos.y;
+        
+        plp->mode3 = 4;
+    case 4:
+        plp->flr_no = bhCheckFloorNum(htp->py - (2.0f * htp->prm2));
+        
+        plp->mode3 = 5;
+    case 5:
+        bhGetObjMotion(plp, 0, (float*)&pos, ang);
+        
+        py = plp->py + pos.y;
+        
+        plp->flg |= 0x200000;
+
+        if ((plp->flg & 0x400000)) 
+        {   
+            njUnitMatrix(NULL);
+            
+            njRotateY(NULL, plp->ay);
+            
+            njCalcPoint(NULL, &pos, &pos2);
+            
+            plp->px += pos2.x;
+            plp->py += pos2.y - ((EXP_WORK*)plp->exp0)->kdn_py;
+            plp->pz += pos2.z;
+            
+            plp->frm_no = 0;
+        }
+        
+        if (py <= (htp->py - (2.0f * htp->prm2)))
+        {
+            plp->stflg &= ~0x80010010;
+            
+            fsnd = bhCheckFloorSound(plp, plp->flr_no, plp->mlwP->owP[17].mtx[12], plp->mlwP->owP[17].mtx[14]);
+            
+            CallPlayerFootStepSe(fsnd, 0, 1);
+                
+            plp->stflg |= 0x200;
+            
+            bhClrUseKaidanFlag(plp);
+            
+            plp->px = ((EXP_WORK*)plp->exp0)->spx = plp->mlwP->owP->mtx[12];
+            plp->py = htp->py - (2.0f * htp->prm2);
+            plp->pz = ((EXP_WORK*)plp->exp0)->spz = plp->mlwP->owP->mtx[14];
+            
+            plp->spd = 2.0f;
+            
+            bhAddSpeed(plp, 0);
+            
+            ((EXP_WORK*)plp->exp0)->bpx = ((EXP_WORK*)plp->exp0)->bpxb = plp->px;
+            ((EXP_WORK*)plp->exp0)->bpy = ((EXP_WORK*)plp->exp0)->bpyb = 12.5f + plp->py;
+            ((EXP_WORK*)plp->exp0)->bpz = ((EXP_WORK*)plp->exp0)->bpzb = plp->pz;
+            
+            plp->pxb = plp->px;
+            plp->pyb = plp->py;
+            plp->pzb = plp->pz;
+            
+            plp->flg &= ~0xD0400; 
+            plp->flg |= 0x118;
+            
+            bhSetFloorNum(plp);
+            
+            plp->py = rom->grand[plp->flr_no + 2];
+            
+            *(int*)&plp->mode0 = 1;
+            
+            plp->mtn_no = PlMtnAct[((EXP_WORK*)plp->exp0)->wpntp][((EXP_WORK*)plp->exp0)->dmlvl][0];
+            
+            plp->hokan_rate  = 49152;
+            plp->hokan_count = 8;
+            
+            plp->mtn_add = 65536;
+            
+            plp->frm_no = 0;
+            
+            plp->mtn_md |= 0x100;
+            break; 
+        }
+        
+        if ((plp->frm_no / 65536) == PlFootSnd[sys->ply_id][0][6]) 
+        {
+            flr_no = bhCheckFloorNum(plp->mlwP->owP[17].mtx[13]);
+            fsnd   = bhCheckFloorSound(plp, flr_no, plp->mlwP->owP[17].mtx[12], plp->mlwP->owP[17].mtx[14]);
+            
+            CallPlayerFootStepSe(fsnd, 0, 1);
+            
+            plp->stflg |= 0x200;
+        }
+        
+        if ((plp->frm_no / 65536) == PlFootSnd[sys->ply_id][1][6]) 
+        {
+            flr_no = bhCheckFloorNum(plp->mlwP->owP[21].mtx[13]);
+            fsnd   = bhCheckFloorSound(plp, flr_no, plp->mlwP->owP[21].mtx[12], plp->mlwP->owP[21].mtx[14]);
+            
+            CallPlayerFootStepSe(fsnd, 0, 1);
+            
+            plp->stflg |= 0x200;
+        }
+
+        break;
+    }
+}
+
+// 99.54% matching
+void bhCPM2_act_dnu()
+{
+	short ayn;
+
+    sys->st_flg |= 0x4;
+    
+    switch (plp->mode3) 
+    {
+    case 0:
+        plp->flg &= ~0x28C0008;
+        
+        EXP1_I(0) &= ~0x4;
+        EXP1_I(0) |= 0x1E0;
+        
+        plp->flg2 |= 0x1;
+        
+        plp->mtn_no = PlMtnAct[((EXP_WORK*)plp->exp0)->wpntp][((EXP_WORK*)plp->exp0)->dmlvl][1];
+        
+        plp->hokan_rate  = 42598;
+        plp->hokan_count = 4;
+        
+        plp->mtn_add = 65536;
+        
+        ((EXP_WORK*)plp->exp0)->arp = 0;
+        
+        plp->frm_no = 0;
+        
+        plp->ayp = (plp->ay + 8192) & ~0x3FFF;
+        
+        ayn = plp->ay;
+    
+        if ((short)((short)plp->ayp - ayn) >= 0) 
+        {
+            plp->mode3 = 2;
+        }
+        else
+        {
+            plp->mode3 = 1;
+        }
+        
+        break;
+    case 1:
+        ayn = plp->ay;
+    
+        if (ABS((short)plp->ayp - ayn) < 1310)
+        {
+            plp->mode3 = 3;
+        }
+        else
+        {
+            plp->ay -= (int)(182.04445f * (7.2f * ((EXP_WORK*)plp->exp0)->rtspd));
+        
+            plp->mtn_add = -65536;
+        }
+        
+        break;
+    case 2:
+        ayn = plp->ay;
+    
+        if (ABS((short)plp->ayp - ayn) < 1310)
+        {
+            plp->mode3 = 3;
+        }
+        else
+        {
+            plp->ay += (int)(182.04445f * (7.2f * ((EXP_WORK*)plp->exp0)->rtspd));
+        
+            plp->mtn_add = 65536;
+        }
+        
+        break;
+    case 3:
+        plp->flg &= ~0x4C0000;
+        
+        plp->mtn_no = 21;
+        
+        plp->hokan_rate  = 42598;
+        plp->hokan_count = 4;
+        
+        plp->mtn_add = 65536;
+        
+        plp->frm_no = 0;
+        
+        plp->ay = (plp->ay + 8192) & ~0x3FFF;
+        
+        plp->spd = 2.0f;
+        
+        if ((plp->stflg & 0x100000)) 
+        {
+            bhSetEffect(108, (POINT*)&plp->px, NULL, 10);
+        }
+        
+        plp->ct3 = 0;
+        
+        plp->mode3 = 4;
+        break;
+    case 4:
+        plp->flr_no = bhCheckFloorNum(9.0f + plp->py);
+        
+        plp->mode3 = 5;
+    case 5:
+        if ((((sys->st_flg & 0x40)) && ((plp->stflg & 0x100000))) && (plp->ct3 == 0)) 
+        {
+            plp->ct3++;
+            
+            CallPlayerActionSe(523, 1);
+        }
+        
+        if (((plp->frm_no / 65536) == 15) || ((plp->frm_no / 65536) == 29)) 
+        {
+            plp->flr_snd = bhCheckFloorSound(plp, plp->flr_no, plp->gpx, plp->gpz);
+            
+            CallPlayerFootStepSe(plp->flr_snd, 1, 1);
+            
+            plp->stflg |= 0x200;
+        }
+        
+        plp->flg |= 0x200000;
+        
+        if ((plp->flg & 0x400000)) 
+        {
+            plp->px = plp->mlwP->owP->mtx[12];
+            plp->py += 9.0f;
+            plp->pz = plp->mlwP->owP->mtx[14];
+            
+            ((EXP_WORK*)plp->exp0)->bpx = ((EXP_WORK*)plp->exp0)->bpxb = plp->px;
+            ((EXP_WORK*)plp->exp0)->bpy = ((EXP_WORK*)plp->exp0)->bpyb = 12.5f + plp->py;
+            ((EXP_WORK*)plp->exp0)->bpz = ((EXP_WORK*)plp->exp0)->bpzb = plp->pz;
+            
+            plp->pxb = plp->px;
+            plp->pyb = plp->py;
+            plp->pzb = plp->pz;
+            
+            plp->stflg &= ~0x80010020;
+            
+            plp->flg &= ~0xD0400;
+            plp->flg |=  0x118;
+            
+            bhSetFloorNum(plp);
+            
+            plp->py = rom->grand[plp->flr_no + 2];
+            
+            *(int*)&plp->mode0 = 1;
+            
+            plp->mtn_no = PlMtnAct[((EXP_WORK*)plp->exp0)->wpntp][((EXP_WORK*)plp->exp0)->dmlvl][0];
+            
+            plp->hokan_rate  = 49152;
+            plp->hokan_count = 8;
+            
+            plp->mtn_add = 65536;
+            
+            plp->frm_no = 0;
+            
+            plp->mtn_md |= 0x100;
+        }
+    }
+}
+
+// 99.71% matching
+void bhCPM2_act_dnd()
+{
+	ATR_WORK* hp;
+    short ayn;
+    float py;
+    int ay;
+
+    sys->st_flg |= 0x4;
+    
+    switch (plp->mode3)
+    {
+    case 0:
+        plp->flg &= ~0x28C0008;
+    
+        EXP1_I(0) &= ~0x4;
+        EXP1_I(0) |= 0x1E0;
+        
+        plp->flg2 |= 0x1;
+        
+        plp->mtn_no = PlMtnAct[((EXP_WORK*)plp->exp0)->wpntp][((EXP_WORK*)plp->exp0)->dmlvl][1];
+        
+        plp->hokan_rate  = 42598;
+        plp->hokan_count = 4;
+        
+        plp->mtn_add = 65536;
+        
+        ((EXP_WORK*)plp->exp0)->arp = 0;
+        
+        plp->frm_no = 0;
+        
+        plp->ayp = (plp->ay + 8192) & ~0x3FFF;
+        
+        ayn = plp->ay;
+    
+        if ((short)((short)plp->ayp - ayn) >= 0) 
+        {
+            plp->mode3 = 2;
+        }
+        else
+        {
+            plp->mode3 = 1;
+        }
+        
+        break;
+    case 1:
+        ayn = plp->ay;
+
+        if (ABS((short)plp->ayp - ayn) < 1310)
+        {
+            plp->mode3 = 3;
+        }
+        else
+        {
+            plp->ay -= (int)(182.04445f * (7.2f * ((EXP_WORK*)plp->exp0)->rtspd));
+        
+            plp->mtn_add = -65536;
+        }
+        
+        break;
+    case 2:
+        ayn = plp->ay;
+
+        if (ABS((short)plp->ayp - ayn) < 1310)
+        {
+            plp->mode3 = 3;
+        }
+        else
+        {
+            plp->ay += (int)(182.04445f * (7.2f * ((EXP_WORK*)plp->exp0)->rtspd));
+        
+            plp->mtn_add = 65536;
+        }
+        
+        break;
+    case 3:
+        plp->flg &= ~0x4C0000;
+    
+        plp->mtn_no = 22;
+        
+        plp->hokan_rate  = 42598;
+        plp->hokan_count = 4;
+        
+        plp->mtn_add = 65536;
+        
+        plp->frm_no = 0;
+        
+        plp->ay = (plp->ay + 8192) & ~0x3FFF;
+        
+        plp->ct3 = 0;
+        
+        plp->mode3 = 4;
+        break;
+    case 4:
+        plp->flr_no = bhCheckFloorNum(plp->py - 9.0f);
+        
+        plp->mode3 = 5;
+        
+        StartVibrationEx(0, 7);
+    case 5:
+        if (((sys->st_flg & 0x40)) && (plp->ct3 == 0)) 
+        {
+            if ((hp = bhCheckWater((NJS_POINT3*)&plp->mlwP->owP[(sys->ply_id) ? 16 : 19].mtx[12])) != NULL) 
+            {
+                bhSetEffect(108, (POINT*)&plp->mlwP->owP->mtx[12], NULL, 15);
+                
+                ay = plp->ay;
+                py = plp->py;
+                
+                plp->ay = ay - 16384;
+                
+                sys->ef.id = 11;
+                
+                sys->ef.flg = 1;
+                
+                sys->ef.mdlver = 0;
+                
+                sys->ef.type = 1;
+                
+                sys->ef.flr_no = 0;
+                
+                sys->ef.sx = 3.0f;
+                sys->ef.sy = 3.0f;
+                sys->ef.sz = 3.0f;
+                
+                sys->ef.px = plp->mlwP->owP[15].mtx[12];
+                sys->ef.py = hp->py + hp->h;
+                sys->ef.pz = plp->mlwP->owP[15].mtx[14];
+                
+                sys->ef.ay = plp->ay + 16384;
+                
+                bhSetEffectTb(&sys->ef, NULL, NULL, 0);
+                
+                sys->ef.ay = plp->ay - 16384;
+                
+                bhSetEffectTb(&sys->ef, NULL, NULL, 1);
+                
+                sys->ef.ay = plp->ay + 32768;
+                
+                bhSetEffectTb(&sys->ef, NULL, NULL, 2);
+                
+                plp->ay -= 32768;
+                
+                sys->ef.px = plp->mlwP->owP[19].mtx[12];
+                sys->ef.py = hp->py + hp->h;
+                sys->ef.pz = plp->mlwP->owP[19].mtx[14];
+                
+                sys->ef.ay = plp->ay + 16384;
+                
+                bhSetEffectTb(&sys->ef, NULL, NULL, 0);
+                
+                sys->ef.ay = plp->ay - 16384;
+                
+                bhSetEffectTb(&sys->ef, NULL, NULL, 1);
+                
+                sys->ef.ay = plp->ay + 32768;
+                
+                bhSetEffectTb(&sys->ef, NULL, NULL, 2);
+                
+                CallPlayerActionSe(522, 1);
+                
+                plp->py = py;
+                plp->ay = ay;
+                
+                plp->ct3++;
+            }
+        }
+        
+        if (((plp->frm_no / 65536) == 13) || ((plp->frm_no / 65536) == 16)) 
+        {
+            plp->flr_snd = bhCheckFloorSound(plp, plp->flr_no, plp->gpx, plp->gpz);
+            
+            CallPlayerFootStepSe(plp->flr_snd, 1, 1);
+            
+            plp->stflg |= 0x200;
+        }
+        
+        plp->flg |= 0x200000;
+        
+        if ((plp->flg & 0x400000)) 
+        {
+            plp->px = plp->mlwP->owP->mtx[12];
+            plp->py -= 9.0f;
+            plp->pz = plp->mlwP->owP->mtx[14];
+            
+            ((EXP_WORK*)plp->exp0)->bpx = ((EXP_WORK*)plp->exp0)->bpxb = plp->px;
+            ((EXP_WORK*)plp->exp0)->bpy = ((EXP_WORK*)plp->exp0)->bpyb = 12.5f + plp->py;
+            ((EXP_WORK*)plp->exp0)->bpz = ((EXP_WORK*)plp->exp0)->bpzb = plp->pz;
+            
+            plp->pxb = plp->px;
+            plp->pyb = plp->py;
+            plp->pzb = plp->pz;
+
+            plp->frm_no = 65536;
+            
+            plp->stflg &= ~0x80010020;
+            
+            plp->flg &= ~0xD0400;
+            plp->flg |=  0x118;
+            
+            bhSetFloorNum(plp);
+            
+            plp->py = rom->grand[plp->flr_no + 2];
+            
+            *(int*)&plp->mode0 = 1;
+            
+            plp->mtn_no = PlMtnAct[((EXP_WORK*)plp->exp0)->wpntp][((EXP_WORK*)plp->exp0)->dmlvl][0];
+            
+            plp->hokan_rate  = 49152;
+            plp->hokan_count = 8;
+            
+            plp->mtn_add = 65536;
+            
+            plp->frm_no = 0;
+            
+            plp->mtn_md |= 0x100;
+        }
+    }
+}
+
+// 98.91% matching
+void bhCPM2_act_psh()
+{
+	float* trsz;
+    short ayn;
+
+    sys->st_flg |= 0x4;
+    
+    switch (plp->mode3)
+    {
+    case 0:
+        plp->stflg |= 0x10080;
+        plp->flg   &= ~0x28C0000;
+        
+        EXP1_I(0) &= ~0x4;
+        EXP1_I(0) |= 0x1E0;
+        
+        plp->flg2 |= 0x1;
+        
+        plp->mtn_no = PlMtnAct[((EXP_WORK*)plp->exp0)->wpntp][((EXP_WORK*)plp->exp0)->dmlvl][1];
+        
+        plp->hokan_rate  = 42598;
+        plp->hokan_count = 4;
+        
+        plp->mtn_add = 65536;
+        
+        ((EXP_WORK*)plp->exp0)->arp = 0;
+        
+        plp->frm_no = 0;
+        
+        plp->ayp = (plp->ay + 8192) & ~0x3FFF;
+        
+        ayn = plp->ay;
+    
+        if ((short)((short)plp->ayp - ayn) >= 0) 
+        {
+            plp->mode3 = 2;
+        }
+        else
+        {
+            plp->mode3 = 1;
+        }
+        
+        break;
+    case 1:
+        ayn = plp->ay;
+    
+        if (ABS((short)plp->ayp - ayn) < 1310)
+        {
+            plp->mode3 = 3;
+        }
+        else
+        {
+            plp->ay -= (int)(182.04445f * (7.2f * ((EXP_WORK*)plp->exp0)->rtspd));
+        
+            plp->mtn_add = -65536;
+        }
+        
+        break;
+    case 2:
+        ayn = plp->ay;
+    
+        if (ABS((short)plp->ayp - ayn) < 1310)
+        {
+            plp->mode3 = 3;
+        }
+        else
+        {
+            plp->ay += (int)(182.04445f * (7.2f * ((EXP_WORK*)plp->exp0)->rtspd));
+        
+            plp->mtn_add = 65536;
+        }
+        
+        break;
+    case 3:
+        plp->mtn_no = 49;
+        
+        plp->hokan_rate  = 42598;
+        plp->hokan_count = 4;
+        
+        plp->mtn_add = 65536;
+        
+        plp->frm_no = 0;
+        
+        plp->ay = (plp->ay + 8192) & ~0x3FFF;
+        
+        plp->mode3 = 4;
+        break;
+    case 4:
+        plp->flg |= 0x200000;
+        
+        if ((plp->flg & 0x400000)) 
+        {
+            plp->mtn_no = 50;
+            
+            plp->hokan_rate  = 42598;
+            plp->hokan_count = 4;
+            
+            plp->mtn_add = 65536;
+            
+            plp->frm_no = 0;
+            
+            plp->mode3 = 5;
+            
+            CallPlayerActionSe(sys->psh_snd, 1);
+            
+            StartVibrationEx(0, 8);
+        }
+        
+        break;
+    case 5:
+        plp->flg |= 0x10000000;
+        
+        if ((plp->flg & 0x400000)) 
+        {
+            CallPlayerActionSe(sys->psh_snd, 1);
+            
+            StartVibrationEx(0, 8);
+        }
+        
+        trsz = bhGetTransZ(PlyTrsZ[4][((EXP_WORK*)plp->exp0)->dmlvl]);
+        
+        plp->spd = trsz[(plp->frm_no / 65536) + 1];
+        
+        bhAddSpeed(plp, 0);
+        break;
+    case 6:
+        plp->flg &= ~0x10000000;
+        
+        plp->mtn_no = 49;
+        
+        plp->hokan_rate  = 42598;
+        plp->hokan_count = 4;
+        
+        plp->mtn_md  = 8;
+        plp->mtn_add = -32768;
+        
+        plp->frm_no = (plp->mnwP[plp->mtn_no].frm_num - 1) * 65536;
+        
+        plp->mode3 = 7;
+        break;
+    case 7:
+        plp->mtn_md = 8;
+        
+        if ((plp->frm_no / 65536) <= 0) 
+        {
+            *(int*)&plp->mode0 = 1;
+            
+            plp->mtn_add = 0;
+            
+            plp->stflg &= ~0x10080;
+            
+            plp->ar = PlyInfo[sys->ply_id][0];
+        }
+
+        break;
+    }
+}
+
+// 100% matching!
+void bhCPM2_act_cro()
+{
+    sys->st_flg |= 0x4;
+    
+    switch (plp->mode3)
+    {
+    case 0:
+        plp->flg   |= 0x10000;
+        plp->stflg |= 0x10000;
+        
+        EXP1_I(0) &= ~0x4;
+        EXP1_I(0) |= 0x1E0;
+        
+        plp->flg2 |= 0x1;
+        
+        plp->mtn_no = 45;
+        
+        plp->hokan_rate = 49152;
+        plp->hokan_count = 4;
+        
+        plp->mtn_add = 65536;
+        
+        plp->frm_no = 0;
+        
+        ((EXP_WORK*)plp->exp0)->arp = 0;
+        
+        plp->mode3++;
+    case 1:
+        if (((int)plp->frm_no / 65536) >= (plp->mnwP[plp->mtn_no].frm_num - 6)) 
+        {
+            plp->flg &= ~0x8;
+        }
+         
+        if ((plp->flg & 0x400000))
+        {
+            plp->flg   &= ~0x10000;
+            plp->stflg &= ~0x10000;
+            
+            plp->mtn_add = 0;
+            
+            sys->st_flg &= ~0x4;
+            sys->cb_flg |= 0x10;
+        }
+    }
+}
+
+// 100% matching!
+void bhCPM2_act_hsu()
+{
+	ATR_WORK* htp;
+    short ayn;
+
+    htp = sys->pl_htp;
+    
+    sys->st_flg |= 0x4;
+    
+    switch (plp->mode3)
+    {
+    case 0:
+        plp->flg &= ~0x28C0008;
+        
+        EXP1_I(0) &= ~0x4;
+        EXP1_I(0) |= 0x1E0;
+        
+        plp->flg2 |= 0x1;
+        
+        plp->mtn_no = PlMtnAct[((EXP_WORK*)plp->exp0)->wpntp][((EXP_WORK*)plp->exp0)->dmlvl][1];
+        
+        plp->hokan_rate  = 32768;
+        plp->hokan_count = 4;
+        
+        plp->mtn_add = 65536;
+        
+        ((EXP_WORK*)plp->exp0)->arp = 0;
+        
+        plp->frm_no = 0;
+        
+        plp->ayp = -((int)(182.04445f * (htp->prm1 * 90)) & 0xFFFF);
+        
+        ayn = plp->ay;
+        
+        if ((short)((short)plp->ayp - ayn) >= 0) 
+        {
+            plp->mode3 = 2;
+        }
+        else
+        {
+            plp->mode3 = 1;
+        }
+        
+        break;
+    case 1:      
+        ayn = plp->ay;
+        
+        if (ABS(((short)plp->ayp - ayn)) < 1310)
+        {
+            plp->mode3 = 3;
+        }
+        else
+        {
+            plp->ay -= (int)(182.04445f * (7.2f * ((EXP_WORK*)plp->exp0)->rtspd));
+        
+            plp->mtn_add = -65536;
+        }
+        
+        break;
+    case 2:         
+        ayn = plp->ay;
+        
+        if (ABS(((short)plp->ayp - ayn)) < 1310)
+        {
+            plp->mode3 = 3;
+        }
+        else
+        {
+            plp->ay += (int)(182.04445f * (7.2f * ((EXP_WORK*)plp->exp0)->rtspd));
+        
+            plp->mtn_add = 65536;
+        }
+        
+        break;
+    case 3:
+        plp->flg &= ~0x4C0000;
+        
+        plp->mtn_no = 62;
+        
+        plp->hokan_rate  = 32768;
+        plp->hokan_count = 4;
+        
+        plp->mtn_add = 65536;
+        
+        plp->frm_no = 0;
+        
+        plp->ay = -((int)(182.04445f * (htp->prm1 * 90)) & 0xFFFF);
+        
+        plp->ct0 = (htp->prm2 / 2) - 2;
+        
+        plp->mode3 = 4;
+        
+        plp->px = htp->px + (0.5f * htp->w);
+        plp->pz = htp->pz + (0.5f * htp->d);
+        
+        switch (htp->prm1)
+        {  
+        case 0:
+            plp->pz += 5.0f;
+            break;
+        case 1:
+            plp->px -= 5.0f;
+            break;
+        case 2:
+            plp->pz -= 5.0f;
+            break;
+        case 3:
+            plp->px += 5.0f; 
+            break;
+        }
+        
+        break;
+    case 4:
+        if ((plp->frm_no / 65536) == 0)
+        {
+            plp->px = plp->mlwP->owP->mtx[12];
+            plp->pz = plp->mlwP->owP->mtx[14];
+            plp->py = plp->mlwP->owP->mtx[13];
+            
+            plp->mode3 = 5;
+            
+            plp->mtn_no = 63;
+            plp->frm_no = 0;
+        }
+        
+        break;
+    case 5:
+        plp->flg |= 0x200000;
+        
+        if ((plp->flg & 0x400000)) 
+        {
+            plp->py = plp->mlwP->owP->mtx[13];
+            
+            plp->frm_no = 0;
+            
+            plp->ct0--;
+            
+            if (plp->ct0 <= 0) 
+            {
+                plp->px = plp->mlwP->owP->mtx[12];
+                plp->pz = plp->mlwP->owP->mtx[14];
+                
+                plp->mode3 = 6;
+                
+                plp->mtn_no = 64;
+                plp->frm_no = 0;
+            }
+        }
+        
+        break;
+    case 6:
+        if ((plp->frm_no / 65536) == 0) 
+        {
+            bhClrUseKaidanFlag(plp);
+            
+            plp->px = plp->mlwP->owP->mtx[12];
+            plp->py = htp->py + (4.0f * htp->prm2);
+            plp->pz = plp->mlwP->owP->mtx[14];
+            
+            ((EXP_WORK*)plp->exp0)->bpx = ((EXP_WORK*)plp->exp0)->bpxb = plp->px;
+            ((EXP_WORK*)plp->exp0)->bpy = ((EXP_WORK*)plp->exp0)->bpyb = 12.5f + plp->py;
+            ((EXP_WORK*)plp->exp0)->bpz = ((EXP_WORK*)plp->exp0)->bpzb = plp->pz;
+            
+            plp->pxb = plp->px;
+            plp->pyb = plp->py;
+            plp->pzb = plp->pz;
+            
+            plp->stflg &= ~0x80010010;
+            plp->flg   &= ~0xD0400;
+            
+            plp->flg |= 0x118;
+            
+            bhSetFloorNum(plp);
+            
+            plp->py = rom->grand[plp->flr_no + 2];
+            
+            *(int*)&plp->mode0 = 1;
+            
+            plp->mtn_no = PlMtnAct[((EXP_WORK*)plp->exp0)->wpntp][((EXP_WORK*)plp->exp0)->dmlvl][0];
+            
+            plp->hokan_rate  = 49152;
+            plp->hokan_count = 8;
+            
+            plp->mtn_add = 65536;
+            
+            plp->frm_no = 0;
+            
+            plp->mtn_md |= 0x100;
+        }
+
+        break;
+    }
+}
+
+// 100% matching!
+void bhCPM2_act_hsd()
+{
+	ATR_WORK* htp;
+    short ayn;
+
+    htp = sys->pl_htp;
+    
+    sys->st_flg |= 0x4;
+    
+    switch (plp->mode3)
+    {
+    case 0:
+        plp->flg &= ~0x28C0008;
+        
+        EXP1_I(0) &= ~0x4;
+        EXP1_I(0) |= 0x1E0;
+        
+        plp->flg2 |= 0x1;
+        
+        plp->mtn_no = PlMtnAct[((EXP_WORK*)plp->exp0)->wpntp][((EXP_WORK*)plp->exp0)->dmlvl][1];
+        
+        plp->hokan_rate  = 32768;
+        plp->hokan_count = 4;
+        
+        plp->mtn_add = 65536;
+        
+        ((EXP_WORK*)plp->exp0)->arp = 0;
+        
+        plp->frm_no = 0;
+        
+        plp->ayp = 32768 - ((int)(182.04445f * (htp->prm1 * 90)) & 0xFFFF);
+        
+        ayn = plp->ay;
+        
+        if ((short)((short)plp->ayp - ayn) >= 0) 
+        {
+            plp->mode3 = 2;
+        }
+        else
+        {
+            plp->mode3 = 1;
+        }
+        
+        break;
+    case 1:      
+        ayn = plp->ay;
+        
+        if (ABS(((short)plp->ayp - ayn)) < 1310)
+        {
+            plp->mode3 = 3;
+        }
+        else
+        {
+            plp->ay -= (int)(182.04445f * (7.2f * ((EXP_WORK*)plp->exp0)->rtspd));
+        
+            plp->mtn_add = -65536;
+        }
+        
+        break;
+    case 2:         
+        ayn = plp->ay;
+        
+        if (ABS(((short)plp->ayp - ayn)) < 1310)
+        {
+            plp->mode3 = 3;
+        }
+        else
+        {
+            plp->ay += (int)(182.04445f * (7.2f * ((EXP_WORK*)plp->exp0)->rtspd));
+        
+            plp->mtn_add = 65536;
+        }
+        
+        break;
+    case 3:
+        plp->flg &= ~0x4C0000;
+        
+        plp->mtn_no = 65;
+        
+        plp->hokan_rate  = 32768;
+        plp->hokan_count = 4;
+        
+        plp->mtn_add = 65536;
+        
+        plp->frm_no = 0;
+        
+        plp->ay = 32768 - ((int)(182.04445f * (htp->prm1 * 90)) & 0xFFFF);
+        
+        plp->ct0 = (htp->prm2 / 2) - 2;
+        
+        plp->mode3 = 4;
+        
+        plp->px = htp->px + (0.5f * htp->w);
+        plp->pz = htp->pz + (0.5f * htp->d);
+        
+        switch (htp->prm1)
+        {  
+        case 0:
+            plp->pz += 0.5f;
+            break;
+        case 1:
+            plp->px -= 0.5f;
+            break;
+        case 2:
+            plp->pz -= 0.5f;
+            break;
+        case 3:
+            plp->px += 0.5f;
+            break;
+        }
+        
+        break;
+    case 4:
+        if ((plp->frm_no / 65536) == 0)
+        {
+            plp->px = plp->mlwP->owP->mtx[12];
+            plp->pz = plp->mlwP->owP->mtx[14];
+            plp->py = plp->mlwP->owP->mtx[13];
+            
+            plp->mode3 = 5;
+            
+            plp->mtn_no = 66;
+            plp->frm_no = 0;
+        }
+        
+        break;
+    case 5:
+        plp->flg |= 0x200000;
+        
+        if ((plp->frm_no / 65536) == 0) 
+        {
+            plp->py = plp->mlwP->owP->mtx[13];
+            
+            plp->frm_no = 65536;
+            
+            plp->ct0--;
+            
+            if (plp->ct0 <= 0) 
+            {
+                plp->px = plp->mlwP->owP->mtx[12];
+                plp->pz = plp->mlwP->owP->mtx[14];
+                
+                plp->mode3 = 6;
+                
+                plp->mtn_no = 67;
+                plp->frm_no = 0;
+            }
+        }
+        
+        break;
+    case 6:
+        if ((plp->frm_no / 65536) == 0) 
+        {
+            bhClrUseKaidanFlag(plp);
+            
+            plp->px = plp->mlwP->owP->mtx[12];
+            plp->py = htp->py - (4.0f * htp->prm2);
+            plp->pz = plp->mlwP->owP->mtx[14];
+            
+            ((EXP_WORK*)plp->exp0)->bpx = ((EXP_WORK*)plp->exp0)->bpxb = plp->px;
+            ((EXP_WORK*)plp->exp0)->bpy = ((EXP_WORK*)plp->exp0)->bpyb = 12.5f + plp->py;
+            ((EXP_WORK*)plp->exp0)->bpz = ((EXP_WORK*)plp->exp0)->bpzb = plp->pz;
+            
+            plp->pxb = plp->px;
+            plp->pyb = plp->py;
+            plp->pzb = plp->pz;
+            
+            plp->stflg &= ~0x80010010;
+            plp->flg   &= ~0xD0400;
+            
+            plp->flg |= 0x118;
+            
+            bhSetFloorNum(plp);
+            
+            plp->py = rom->grand[plp->flr_no + 2];
+            
+            *(int*)&plp->mode0 = 1;
+            
+            plp->mtn_no = PlMtnAct[((EXP_WORK*)plp->exp0)->wpntp][((EXP_WORK*)plp->exp0)->dmlvl][0];
+            
+            plp->hokan_rate  = 49152;
+            plp->hokan_count = 8;
+            
+            plp->mtn_add = 65536;
+            
+            plp->frm_no = 0;
+            
+            plp->mtn_md |= 0x100;
+        }
+
+        break;
+    }
+}
+
+// 98.19% matching
+void bhCPM2_act_rpsh()
+{
+	short ayn;
+
+    sys->st_flg |= 0x4;
+    
+    switch (plp->mode3)
+    {
+    case 0:
+        plp->stflg |= 0x10080;
+        plp->flg   &= ~0x28C0000;
+        
+        EXP1_I(0) &= ~0x4;
+        EXP1_I(0) |= 0x1E0;
+        
+        plp->flg2 |= 0x1;
+        
+        plp->mtn_no = PlMtnAct[((EXP_WORK*)plp->exp0)->wpntp][((EXP_WORK*)plp->exp0)->dmlvl][1];
+        
+        plp->hokan_rate  = 42598;
+        plp->hokan_count = 4;
+        
+        plp->mtn_add = 65536;
+        
+        ((EXP_WORK*)plp->exp0)->arp = 0;
+        
+        plp->frm_no = 0;
+        
+        plp->ayp = plp->azp;
+        
+        ayn = plp->ay;
+    
+        if ((short)((short)plp->ayp - ayn) >= 0) 
+        {
+            plp->mode3 = 2;
+        }
+        else
+        {
+            plp->mode3 = 1;
+        }
+        
+        break;
+    case 1:
+        ayn = plp->ay;
+    
+        if (ABS((short)plp->ayp - ayn) < 1310)
+        {
+            plp->mode3 = 3;
+        }
+        else
+        {
+            plp->ay -= (int)(182.04445f * (7.2f * ((EXP_WORK*)plp->exp0)->rtspd));
+        
+            plp->mtn_add = -65536;
+        }
+        
+        break;
+    case 2:
+        ayn = plp->ay;
+    
+        if (ABS((short)plp->ayp - ayn) < 1310)
+        {
+            plp->mode3 = 3;
+        }
+        else
+        {
+            plp->ay += (int)(182.04445f * (7.2f * ((EXP_WORK*)plp->exp0)->rtspd));
+        
+            plp->mtn_add = 65536;
+        }
+        
+        break;
+    case 3:
+        plp->mnwP = sys->rmthp;
+        
+        plp->mtn_no = 0;
+        
+        plp->hokan_rate  = 42598;
+        plp->hokan_count = 4;
+        
+        plp->mtn_add = 65536;
+        
+        plp->frm_no = 0;
+        
+        plp->ay = plp->azp;
+        
+        plp->mode3 = 4;
+        break;
+    case 4:
+        plp->flg |= 0x200000;
+        
+        if ((plp->flg & 0x400000)) 
+        {
+            plp->mtn_no = 1;
+            
+            plp->hokan_rate  = 42598;
+            plp->hokan_count = 4;
+            
+            plp->mtn_add = 65536;
+            
+            plp->frm_no = 0;
+            
+            plp->mode3 = 5;
+            
+            CallPlayerActionSe(530, 1);
+            
+            StartVibrationEx(0, 8);
+        }
+        
+        break;
+    case 5:
+        plp->flg |= 0x10000000;
+        
+        if ((plp->flg & 0x400000)) 
+        {
+            CallPlayerActionSe(530, 1);
+            
+            StartVibrationEx(0, 8);
+        }
+        
+        if (!(sys->pad_on & 0x1)) 
+        {
+            plp->mode3 = 6;
+        }
+        
+        break;
+    case 6:
+        plp->flg &= ~0x10000000;
+        
+        plp->mtn_no = 0;
+        
+        plp->hokan_rate  = 42598;
+        plp->hokan_count = 4;
+        
+        plp->mtn_add = -65536;
+        
+        plp->frm_no = (plp->mnwP[plp->mtn_no].frm_num - 1) * 65536; 
+        
+        plp->mode3 = 7;
+        break;
+    case 7:
+        if ((plp->frm_no / 65536) <= 0) 
+        {
+            *(int*)&plp->mode0 = 1;
+            
+            plp->mnwP = plp->mnwPb;
+            
+            plp->mtn_add = 0;
+            
+            plp->stflg &= ~0x10080;
+        }
+
+        break;
+    }
+}
+
+// 100% matching!
+void bhCPM1_act_atk()
+{
+    sys->st_flg |= 0x4;
+    plp->stflg |= 0x10000;
+    
+    if ((plp->flg2 & 0x400)) 
+    {
+        plp->flg &= ~0x2800000;
+        plp->flg2 &= ~0x400;
+    }
+    else 
+    {
+        plp->flg &= ~0x2A00000;
+    }
+    
+    plp->flg2 &= ~0x1;
+    
+    if (!(sys->gm_flg & 0x40)) 
+    {
+        ((EXP_WORK*)plp->exp0)->rtspd = 1.0f;
+    }
+    else 
+    {
+        if ((sys->pad_on & 0xC)) 
+        {
+            ((EXP_WORK*)plp->exp0)->rtspd = 0.0078125f * fabsf(sys->pad_dx);
+        }
+        else 
+        {
+            ((EXP_WORK*)plp->exp0)->rtspd = 0.0078125f * fabsf(sys->pad_ax);
+        }
+    }
+    
+    if ((WpnTab[plp->wpnr_no].flg & 0x800)) 
+    {
+        if (plp->mode2 == 64) 
+        {
+            plp->mode2 = 164;
+        }
+        
+        if (plp->mode2 == 69) 
+        {
+            plp->mode2 = 169;
+        }
+    }
+    
+    switch (plp->mode2)
+    {
+    case 64:
+        bhCPM2_act_suw();
+        break;
+    case 65:
+        bhCPM2_act_wpn();
+        break;
+    case 66:
+        bhCPM2_act_wpn();
+        break;
+    case 67:
+        bhCPM2_act_wpn();
+        break;
+    case 68:
+        bhCPM2_act_wre();
+        break;
+    case 69:
+        bhCPM2_act_atk();
+        break;
+    case 70:
+        bhCPM2_act_rld();
+        break;
+    case 71:
+        bhCPM2_act_scp();
+        break;
+    case 72:
+        bhCPM2_act_knf();
+        break;
+    case 164:
+        bhCPM2_act_suw_pch();
+        break;
+    case 169:
+        bhCPM2_act_atk_pch();
+        break;
+    case 197:
+        bhCPM2_act_wsc_pch();
+        break;
+    }
+}
+
+// 100% matching!
+void bhCPM2_act_suw()
+{
+	float ln;   
+    BH_PWORK* epp;
+    int i;
+
+    switch (plp->mode3)
+    {
+    case 0:
+        ln = plp->mlwP->owP[5].mtx[13] - plp->py;
+        
+        plp->ayp = 0;
+        
+        epp = ene;
+        
+        for (i = 0; i < sys->ewk_n; i++, epp++)
+        {
+            epp->stflg &= ~0x800;
+        }
+        
+        plp->flg &= ~0xC0000;
+        
+        plp->wax = 0;
+        
+        plp->at_flg &= ~0x10;
+        
+        plp->mtn_no = PlMtnWpn[0];
+        
+        plp->hokan_rate = 42598;
+        plp->hokan_count = 4;
+        
+        plp->mtn_add = 65536;
+        
+        ((EXP_WORK*)plp->exp0)->arp = 2.0f;
+        
+        plp->frm_no = 0;
+        
+        if (bhSearchNearEnemy(plp, &plp->ayp, &ln, &plp->src_no) != 0) 
+        {
+            if ((WpnTab[plp->wpnr_no].flg & 0x4000000)) 
+            {
+                plp->flg &= ~0x80000;
+            }
+            else 
+            {
+                plp->flg |= 0x80000;
+            }
+            
+            plp->ayp = bhCalcLockEneYR(plp, plp->src_no);
+            
+            plp->flg   |= 0x100000;
+            plp->stflg |= 0x800;
+            
+            ((EXP_WORK*)plp->exp0)->yrct = 8;
+        }
+        
+        if ((plp->stflg & 0x100000)) 
+        {
+            bhSetEffect(108, (POINT*)&plp->px, NULL, 10);
+            bhSetWaterSplash(plp, 15, 0, 0.8f, 0.8f, 0.8f);
+            bhSetWaterSplash(plp, 19, 0, 0.8f, 0.8f, 0.8f);
+        }
+        
+        if (!bhCheckBullet()) 
+        {
+            sys->gm_flg |= 0x40000;
+        }
+        
+        plp->mode3++;
+    case 1:
+        if (plp->hokan_count == 0) 
+        {
+            plp->flg |= 0x40000;
+            
+            if ((WpnTab[plp->wpnr_no].flg & 0x4000000)) 
+            {
+                plp->flg &= ~0x80000;
+            }
+            else 
+            {
+                plp->flg |= 0x80000;
+            }
+        }
+        else 
+        {
+            plp->flg |= 0x200000;
+        }
+        
+        if (((unsigned int)plp->frm_no / 65536) >= (plp->mnwP[plp->mtn_no].frm_num - 4)) 
+        {
+            plp->at_flg &= ~0x1;
+        }
+        
+        if ((WpnTab[plp->wpnr_no].flg & 0x20))
+        {
+            if ((plp->mnwP[plp->mtn_no].frm_num - 1) <= (plp->frm_no / 65536))
+            {
+                plp->at_flg &= ~0x1;
+                
+                if ((sys->pad_on & 0x10)) 
+                {
+                    plp->mtn_add = 0;
+                    
+                    plp->mode2 = 71;
+                    plp->mode3 = 0;
+                    
+                    plp->at_flg = 2;
+                    
+                    plp->hokan_count = 0;
+                    
+                    plp->wax = 0;
+                    plp->waxp = 0;
+                    
+                    cam.pe_ax = 0;
+                    cam.pe_pers = 11832;
+                    
+                    sys->gm_flg |= 0x2000;
+                }
+                else 
+                {
+                    plp->mode2 = 68;
+                    plp->mode3 = 0;
+                    
+                    plp->at_flg = 0;
+                }
+            }
+
+            return;
+        } 
+        else 
+        {
+            if ((plp->mnwP[plp->mtn_no].frm_num - 1) <= ((unsigned int)plp->frm_no / 65536))
+            {
+                plp->mtn_add = 0;
+                
+                plp->mode2 = 65;
+                plp->mode3 = 0;
+                
+                plp->at_flg = 2;
+                
+                plp->hokan_count = 1;
+                
+                plp->wax = 0;
+                plp->waxp = 0;
+                return;
+            }
+            
+            if (!(WpnTab[plp->wpnr_no].flg & 0x1)) 
+            {
+                if ((sys->pad_on & 0x20)) 
+                {
+                    if (!(plp->at_flg & 0x1)) 
+                    {
+                        plp->mode2 = 66;
+                        plp->mode3 = 0;
+                        
+                        plp->at_flg = 4;
+                        
+                        plp->hokan_count = 8;
+                        
+                        plp->wax = 0;
+                        plp->waxp = 8192;
+                        return;
+                    }
+                }
+                
+                if (((sys->pad_on & 0x40)) && (!(plp->at_flg & 0x1))) 
+                {
+                    plp->mode2 = 67;
+                    plp->mode3 = 0;
+                    
+                    plp->at_flg = 8;
+                    
+                    plp->hokan_count = 8;
+                    
+                    plp->wax = 0;
+                    plp->waxp = -8192;
+                    return;
+                }
+            }
+        }
+    }
+
+    if ((sys->pad_on & 0x8))
+    {
+        plp->ay -= (int)(182.04445f * (2.4f * ((EXP_WORK*)plp->exp0)->rtspd));
+    }
+    
+    if ((sys->pad_on & 0x4)) 
+    {
+        plp->ay += (int)(182.04445f * (2.4f * ((EXP_WORK*)plp->exp0)->rtspd));
+    }
+}
+
+// 99.96% matching
+void bhCPM2_act_wpn()
+{
+	int wno;
+    short bn;
+    NJS_POINT3 pos;    
+    EF_WORK* eft;
+    NJS_POINT3 fps, fpsb;    
+
+    switch (plp->mode3)
+    {
+    case 0: 
+        plp->flg |= 0xC0000;
+        
+        if ((WpnTab[plp->wpnr_no].flg & 0x4000000)) 
+        {
+            plp->flg &= ~0x80000; 
+        }
+        
+        switch (plp->at_flg & 0xE)
+        { 
+        case 2: 
+            plp->mtn_no = PlMtnWpn[1];
+            
+            plp->waxp = 0;
+            break;
+        case 4: 
+            plp->mtn_no = PlMtnWpn[2];
+            
+            plp->waxp = 8192;
+            break;
+        case 8:                                    
+            plp->mtn_no = PlMtnWpn[3];
+            
+            plp->waxp = -8192;
+            break;
+        }
+        
+        plp->hokan_rate  = 45875;
+        plp->hokan_ctbak = plp->hokan_count;
+        
+        plp->mtn_add = 65536;
+        
+        ((EXP_WORK*)plp->exp0)->arp = 2.0f;
+        
+        plp->frm_no = 0;
+        
+        plp->mode3++;
+        
+        if ((ply.at_flg & 0xE) == 0x2) 
+        {
+            if ((*(int*)ply.exp2 & 0x4)) // TODO: find the correct parsing  
+            {
+                ply.mtn_no += 13;
+            }
+        }
+        else 
+        {
+            *(int*)ply.exp2 &= ~0x4; // same as above
+        }
+    case 1: 
+        if (!(sys->pad_on & 0x100))
+        {
+            plp->at_flg &= ~0x40;
+        }
+        
+        if (((plp->at_flg & 0x20)) && (plp->hokan_count == 0)) 
+        {
+            plp->at_flg &= ~0x20;
+        }
+        
+        plp->wax += (plp->waxp - plp->wax) / 4;
+        
+        if (!(sys->pad_on & 0x10)) 
+        {
+            plp->mode2 = 68;
+            plp->mode3 = 0;
+            
+            plp->at_flg = 0;
+            return;
+        }
+        
+        plp->at_flg |= 0x10;
+        
+        if ((WpnTab[plp->wpnr_no].flg & 0x1))
+        {
+            wno = sys->pad_on & 0x10;
+        }
+        else 
+        {
+            wno = sys->pad_on & 0x70;
+        }
+        
+        switch (wno) 
+        { 
+        case 16:
+            if (plp->mode2 != 65) 
+            {
+                plp->mode3 = 0;
+                
+                plp->at_flg |= 0x30;
+                
+                plp->hokan_count = 12;
+            }
+            
+            plp->mode2 = 65;
+            
+            plp->at_flg &= ~0xE;
+            plp->at_flg |=  0x2;
+            
+            plp->hokan_ctbak = plp->hokan_count;
+            
+            plp->waxp = 0;
+            break;
+        case 48:
+            if (plp->mode2 != 66) 
+            {
+                plp->mode3 = 0;
+                
+                plp->at_flg |= 0x30;
+                
+                plp->hokan_count = 12;
+            }
+            
+            plp->mode2 = 66;
+            
+            plp->at_flg &= ~0xE;
+            plp->at_flg |=  0x4;
+            
+            plp->hokan_ctbak = plp->hokan_count;
+            
+            plp->waxp = 8192;
+            break;
+        case 80:
+            if (plp->mode2 != 67) 
+            {
+                plp->mode3 = 0;
+                
+                plp->at_flg |= 0x30;
+                
+                plp->hokan_count = 12;
+            }
+            
+            plp->mode2 = 67;
+            
+            plp->at_flg &= ~0xE;
+            plp->at_flg |=  0x8;
+            
+            plp->hokan_ctbak = plp->hokan_count;
+        
+            plp->waxp = -8192;
+            break;
+        }
+        
+        if ((plp->wpnr_no != 18) || (!(sys->ef_flg & 0x2)))
+        {
+            if ((WpnTab[plp->wpnr_no].flg & 0x40000000)) 
+            {
+                bn = -1;
+            }
+            else 
+            {
+                bn = bhCheckBullet();
+            }
+            
+            if (((((sys->pad_on & 0x100)) && ((sys->pad_on & 0x10))) && ((!(plp->at_flg & 0x40)) && ((plp->at_flg & 0x10))) && (bn)) || ((((sys->pad_ps & 0x100)) && ((sys->pad_on & 0x10))) && ((!(plp->at_flg & 0x40)) && ((plp->at_flg & 0x10))) && (!bn)))
+            {
+                if (!bn) 
+                {
+                    if ((bhSearchBullet() != 0) && ((sys->gm_flg & 0x40000))) 
+                    {
+                        sys->gm_flg &= ~0x40000;
+                        
+                        plp->mode2 = 70;
+                        plp->mode3 = 0;
+                        return;
+                    }
+                    
+                    njCalcPoint(&plp->mlwP->owP[9].mtx, (NJS_POINT3*)&WpnTab[plp->wpnr_no].wp_fps1, &pos);
+                    
+                    CallPlayerWeaponSeEx(&pos, 260, 0); 
+                }
+                else
+                {
+                    sys->gm_flg &= ~0x40000;
+                    
+                    plp->mode2 = 69;
+                    plp->mode3 = 0;
+                    
+                    plp->at_flg &= ~0x10;
+                    
+                    wno = plp->wpnr_no;
+                    
+                    if (plp->wpnr_no == 3) 
+                    {
+                        if ((sys->gm_flg & 0x10000000))
+                        {
+                            if ((int)(30.0f * (-rand() / -2.1474836E9f)) == 15) 
+                            {
+                                wno = 6;
+                                
+                                plp->at_flg |= 0x100;
+                            }
+                            else 
+                            {
+                                plp->at_flg &= ~0x100;
+                            }
+                        }
+                    }
+                    
+                    if ((!(WpnTab[plp->wpnr_no].flg & 0x40)) || (((WpnTab[plp->wpnr_no].flg & 0x200)) && (bhCkFlg(sys->ev_flg, 74) != 0))) 
+                    {
+                        plp->at_flg |= 0x40;
+                        
+                        bhSetGunFire(plp, wno, 9, 0, plp->ay);
+                        
+                        if (WpnTab[wno].seno0 != 0) 
+                        {
+                            CallPlayerWeaponSeEx((NJS_POINT3*)&plp->mlwP->owP[9].mtx[12], (unsigned int)WpnTab[wno].seno0, 0);
+                            
+                            if (!(WpnTab[wno].flg & 0x100)) 
+                            {
+                                plp->stflg |= 0x100;
+                            }
+                        }
+                    }
+                    
+                    if (((WpnTab[plp->wpnr_no].flg & 0x20000000)) && (WpnEffTab[plp->wpnr_no][2].flg != 0))  
+                    {
+                        plp->way = plp->ay;
+                        plp->waz = 0;
+                        
+                        eft = &WpnEffTab[plp->wpnr_no][2];
+                        
+                        njSetMatrix(NULL, &plp->mlwP->owP[9].mtx);
+                        
+                        njCalcPoint(NULL, (NJS_POINT3*)&WpnTab[plp->wpnr_no].wp_fps1, (NJS_POINT3*)&eft->px);
+                        
+                        njUnitRotPortion(NULL);
+                        njRotateXYZ(NULL, plp->wax, plp->way, plp->waz);
+                        
+                        switch (plp->wpnr_no)
+                        {
+                        case 10:          
+                        case 19:          
+                            fps.x = fps.y = 0;
+                            fps.z = -3.0f;
+                            
+                            eft->ax = plp->wax;
+                            eft->ay = plp->way;
+                            
+                            njCalcVector(NULL, &fps, &fpsb);
+#ifdef TARGET_PC
+                            {   /* VR: the arrow flies along the barrel in the hand, not the body's aim (pc/glue/vr_glue.c, vr136) */
+                                extern int vr_fly_dir(NJS_POINT3* v, int* ax, int* ay, int wno);
+                                int vax, vay;
+                                if (vr_fly_dir((NJS_POINT3*)&fpsb, &vax, &vay, plp->wpnr_no)) { extern void vr_fly_from(float* p, int wno); eft->ax = vax; eft->ay = vay; vr_fly_from(&eft->px, plp->wpnr_no); }   /* vr214: from the muzzle, where the sight starts */
+                            }
+#endif
+
+                            bhSetEffectTb(eft, &fpsb, NULL, 0);
+                            break;
+                        case 14:
+                            if (plp->wax < 0)
+                            {
+                                njRotateX(NULL, -(plp->wax / 2));
+                            }
+                            
+                            fps.x = fps.y = 0;
+                            fps.z = -2.0f;
+                            
+                            eft->ax = plp->wax;
+                            eft->ay = plp->way;
+                            
+                            njCalcVector(NULL, &fps, &fpsb);
+                            
+                            bhSetEffectTb(eft, &fpsb, NULL, 0);
+                            
+                            njRotateX(NULL, -3276);
+                            
+                            njPushMatrixEx();
+                            njRotateY(NULL, -2730);
+                            
+                            fps.z = -1.6f;
+                            
+                            njCalcVector(NULL, &fps, &fpsb);
+                            
+                            bhSetEffectTb(eft, &fpsb, NULL, 0);
+                            
+                            njPopMatrixEx();
+                            njRotateX(NULL, -728);
+                            
+                            njPushMatrixEx();
+                            njRotateY(NULL, 2730);
+                            
+                            fps.z = -1.6f;
+                            
+                            njCalcVector(NULL, &fps, &fpsb);
+                            
+                            bhSetEffectTb(eft, &fpsb, NULL, 0);
+                            
+                            njPopMatrixEx();
+                            njRotateX(NULL, -2548);
+
+                            njPushMatrixEx();
+                            njRotateY(NULL, -1092);
+                            
+                            fps.z = -1.2f;
+                            
+                            njCalcVector(NULL, &fps, &fpsb);
+                            
+                            bhSetEffectTb(eft, &fpsb, NULL, 0);
+                            
+                            njPopMatrixEx();
+                            njRotateX(NULL, -364);
+                            
+                            njPushMatrixEx();
+                            njRotateY(NULL, 1092);
+                            
+                            fps.z = -1.2f;
+                            
+                            njCalcVector(NULL, &fps, &fpsb);
+                            
+                            bhSetEffectTb(eft, &fpsb, NULL, 0);
+                            
+                            njPopMatrixEx();
+                            break;
+                        case 15:          
+                        case 16:          
+                        case 17:          
+                            fps.x = fps.y = 0;
+                            fps.z = -2.5f;
+                            
+                            eft->ax = plp->wax;
+                            eft->ay = plp->way;
+                            
+                            njCalcVector(NULL, &fps, &fpsb);
+#ifdef TARGET_PC
+                            {   /* VR: the shell flies along the barrel in the hand, not the body's aim - the body turns with the head (vr202, as vr136) */
+                                extern int vr_fly_dir(NJS_POINT3* v, int* ax, int* ay, int wno);
+                                int vax, vay;
+                                if (vr_fly_dir((NJS_POINT3*)&fpsb, &vax, &vay, plp->wpnr_no)) { extern void vr_fly_from(float* p, int wno); eft->ax = vax; eft->ay = vay; vr_fly_from(&eft->px, plp->wpnr_no); }   /* vr214: from the muzzle, where the sight starts */
+                            }
+#endif
+                            
+                            bhSetEffectTb(eft, &fpsb, NULL, 0);
+                            break;
+                        case 18:          
+                            fps.x = fps.y = 0;
+                            fps.z = -2.5f;
+                            
+                            eft->ax = plp->wax;
+                            eft->ay = plp->way;
+                            
+                            njCalcVector(NULL, &fps, &fpsb);
+#ifdef TARGET_PC
+                            {   /* VR: the shell flies along the barrel in the hand, not the body's aim - the body turns with the head (vr202, as vr136) */
+                                extern int vr_fly_dir(NJS_POINT3* v, int* ax, int* ay, int wno);
+                                int vax, vay;
+                                if (vr_fly_dir((NJS_POINT3*)&fpsb, &vax, &vay, plp->wpnr_no)) { extern void vr_fly_from(float* p, int wno); eft->ax = vax; eft->ay = vay; vr_fly_from(&eft->px, plp->wpnr_no); }   /* vr214: from the muzzle, where the sight starts */
+                            }
+#endif
+                            
+                            bhSetEffectTb(eft, &fpsb, NULL, 0);
+                            
+                            if (sys->gm_mode == 3) 
+                            {
+                                bhStFlg(sys->ev_flg, 75);
+                            }
+                            
+                            break;
+                        case 20:          
+                            fps.x = fps.y = 0;
+                            fps.z = -3.0f;
+                            
+                            eft->ax = plp->wax;
+                            eft->ay = plp->way;
+                            
+                            njCalcVector(NULL, &fps, &fpsb);
+#ifdef TARGET_PC
+                            {   /* VR: the shell flies along the barrel in the hand, not the body's aim - the body turns with the head (vr202, as vr136) */
+                                extern int vr_fly_dir(NJS_POINT3* v, int* ax, int* ay, int wno);
+                                int vax, vay;
+                                if (vr_fly_dir((NJS_POINT3*)&fpsb, &vax, &vay, plp->wpnr_no)) { extern void vr_fly_from(float* p, int wno); eft->ax = vax; eft->ay = vay; vr_fly_from(&eft->px, plp->wpnr_no); }   /* vr214: from the muzzle, where the sight starts */
+                            }
+#endif
+                            
+                            bhSetEffectTb(eft, &fpsb, NULL, 0);
+                            
+                            bhStFlg(sys->ev_flg, 75);
+                            break;
+                        }
+                        
+                        bhCountBullet();
+                    }
+                }
+            }
+        }
+    default: 
+        if ((sys->pad_on & 0x8)) 
+        {
+            plp->ay -= (int)(182.04445f * (2.4f * ((EXP_WORK*)plp->exp0)->rtspd));
+            
+            if (((plp->stflg & 0x100000)) && (!(sys->eor_ct & 0xF))) 
+            {
+                bhSetEffect(108, (POINT*)&plp->px, NULL, 10);
+                
+                if ((sys->eor_ct & 0x10)) 
+                {
+                    bhSetWaterSplash(plp, 15, 0, 0.8f, 0.8f, 0.8f);
+                }
+                else 
+                {
+                    bhSetWaterSplash(plp, 19, 0, 0.8f, 0.8f, 0.8f);
+                }
+            }
+        }
+        
+        if ((sys->pad_on & 0x4)) 
+        {
+            plp->ay += (int)(182.04445f * (2.4f * ((EXP_WORK*)plp->exp0)->rtspd));
+            
+            if (((plp->stflg & 0x100000)) && (!(sys->eor_ct & 0xF))) 
+            {
+                bhSetEffect(108, (POINT*)&plp->px, NULL, 10);
+                
+                if ((sys->eor_ct & 0x10)) 
+                {
+                    bhSetWaterSplash(plp, 15, 0, 0.8f, 0.8f, 0.8f);
+                }
+                else 
+                {
+                    bhSetWaterSplash(plp, 19, 0, 0.8f, 0.8f, 0.8f);
+                }
+            }
+        }
+        
+        if ((sys->pad_ps & 0x80)) 
+        {
+            if ((WpnTab[plp->wpnr_no].flg & 0x800)) 
+            {
+                bhCPM2_SearchPch(plp, plp->wpnr_no);
+                return;
+            }
+            
+            plp->ayp = bhSearchNextEnemy(plp, 15473, plp->mlwP->owP[5].mtx[13] - plp->py);
+            
+            if (plp->ayp != -1) 
+            {
+                plp->ayp = bhCalcLockEneYR(plp, plp->src_no);
+                
+                plp->flg   |= 0x100000;
+                plp->stflg |= 0x800;
+                
+                ((EXP_WORK*)plp->exp0)->yrct = 4;
+            }
+        }
+        
+        break;
+    }
+}
+
+// 100% matching!
+void bhCPM2_act_wre()
+{
+    switch (plp->mode3)
+    { 
+    case 0:
+        if ((WpnTab[plp->wpnr_no].flg & 0x20)) 
+        {
+            sys->pt_flg |= 0x1;
+        }
+        
+        plp->flg |= 0xC0000;
+        
+        if ((WpnTab[plp->wpnr_no].flg & 0x4000000))
+        {
+            plp->flg &= ~0x80000;
+        }
+        
+        plp->mtn_no = PlMtnWpn[0];
+        
+        plp->hokan_rate = 45875;
+        plp->hokan_count = 12;
+        
+        plp->mtn_add = -131072;
+        
+        plp->frm_no = (plp->mnwP[plp->mtn_no].frm_num - 1) * 65536;
+        
+        ((EXP_WORK*)plp->exp0)->arp = 0;
+        
+        plp->wax = 0;
+        
+        if ((plp->stflg & 0x100000)) 
+        {
+            bhSetEffect(108, (POINT*)&plp->px, NULL, 10);
+            bhSetWaterSplash(plp, 15, 0, 0.8f, 0.8f, 0.8f);
+            bhSetWaterSplash(plp, 19, 0, 0.8f, 0.8f, 0.8f);
+        }
+        
+        plp->mode3++;
+    case 1:
+#ifdef TARGET_PC
+        {   /* VR: the aim let go while walking - no lowering of the weapon, she walks at once */
+            extern int vr_walk_at_once(void);
+            if (vr_walk_at_once()) plp->frm_no = 0;
+        }
+#endif
+        if (((int)plp->frm_no / 65536) < 2) 
+        {
+            plp->stflg &= ~0x10400;
+            
+            plp->mtn_add = 0;
+            
+            plp->flg &= ~0x10000;
+            
+            sys->pad_on &= ~0xF;
+            break;
+        }
+    default:
+        if ((sys->pad_on & 0x8)) 
+        {
+            plp->ay -= (int)(182.04445f * (2.4f * ((EXP_WORK*)plp->exp0)->rtspd));
+        }
+        
+        if ((sys->pad_on & 0x4)) 
+        {
+            plp->ay += (int)(182.04445f * (2.4f * ((EXP_WORK*)plp->exp0)->rtspd));
+        }
+    }
+}
+
+// 100% matching!
+void bhCPM2_act_atk()
+{
+	NJS_POINT3 ps;  
+    GA_WORK gap;    
+    int frm_no;
+    short* act_ct;
+
+    if ((!(WpnTab[plp->wpnr_no].flg & 0x40)) || (((WpnTab[plp->wpnr_no].flg & 0x200)) && (bhCkFlg(sys->ev_flg, 74) != 0))) 
+    {
+        switch (plp->mode3)
+        {
+        case 0:
+            plp->flg |= 0xC0000;
+            
+            if ((WpnTab[plp->wpnr_no].flg & 0x8000000)) 
+            {
+                plp->flg &= ~0x80000;
+            }
+            
+            switch (plp->at_flg & 0xE)
+            {
+            case 2:
+                plp->mtn_no = PlMtnWpn[4];
+                break;
+            case 4:
+                plp->mtn_no = PlMtnWpn[4] + 5;
+                break;
+            case 8:
+                plp->mtn_no =  PlMtnWpn[4] + 10;
+                break;
+            }
+            
+            plp->hokan_rate = (int)(65536.0f * WpnTab[plp->wpnr_no].hrate);
+            
+            plp->mtn_add = 65536;
+            
+            plp->frm_no = 0;
+            
+            plp->mode3++;
+            
+            if ((WpnTab[plp->wpnr_no].flg & 0x2000000)) 
+            {
+                plp->flg |= 0x20000000;
+                
+                switch (plp->wpnr_no)
+                {
+                case 20:
+                    if (sys->ply_id == 0) 
+                    {
+                        plp->spd = 0.8f;
+                    }
+                    else 
+                    {
+                        plp->spd = 0.4f;
+                    }
+                    
+                    break;
+                default:
+                    if (sys->ply_id == 0) 
+                    {
+                        plp->spd = 0.5f;
+                    }
+                    else 
+                    {
+                        plp->spd = 0.1f;
+                    }
+
+                    break;
+                }
+            }
+            
+            if ((WpnTab[plp->wpnr_no].flg & 0x2))
+            {
+                sys->obwp->flg |= 0x80000;
+                
+                sys->obwp->mode0 = 0;
+            }
+            
+            if ((WpnTab[plp->wpnr_no].flg & 0x10000000))
+            {
+                gap.at_flg = plp->at_flg;
+                
+                gap.wpn_no = plp->wpnr_no;
+                
+                gap.r = WpnTab[plp->wpnr_no].r;
+                gap.l = WpnTab[plp->wpnr_no].l;
+                
+                gap.rn   = WpnTab[plp->wpnr_no].rn;
+                gap.rmax = WpnTab[plp->wpnr_no].rmax;
+                
+                gap.ax = plp->wax;
+                gap.ay = plp->ay;
+                
+                plp->way = plp->ay;
+                plp->waz = 0;
+                
+                njSetMatrix(NULL, &plp->mlwP->owP[9].mtx);
+                
+                ps.x = ps.y = 0;
+                ps.z = WpnTab[plp->wpnr_no].wp_fps1.z;
+
+                (void*)&gap.gx; // FAKE
+                njCalcPoint(NULL, (NJS_POINT3*)&ps, (NJS_POINT3*)&gap.gx);
+                
+                njSinCos(plp->ay, &gap.px, &gap.pz);
+                
+                gap.px = plp->px - (gap.px * (3.0f + gap.r));
+                gap.py = 11.0f + plp->py;
+                gap.pz = plp->pz - (gap.pz * (3.0f + gap.r));
+                
+                njUnitRotPortion(NULL);
+                
+                njPushMatrix(NULL);
+                
+                njRotateXYZ(NULL, plp->wax, plp->way, plp->waz);
+                
+                ps.x = 0;
+                ps.y = 0;
+                ps.z = -gap.l;
+                
+                (void*)&gap.vx; // FAKE
+                njCalcVector(NULL, (NJS_VECTOR*)&ps, (NJS_VECTOR*)&gap.vx);
+                
+                bhCheckGunAtari(&gap);
+                
+                bhCountBullet();
+                
+                njPopMatrix(1);
+            }
+            
+            if (((plp->stflg & 0x100000)) && ((WpnTab[plp->wpnr_no].flg & 0x800000)))
+            {
+                if ((WpnTab[plp->wpnr_no].flg & 0x1000000)) 
+                {
+                    bhSetEffect(108, (POINT*)&plp->px, NULL, 13);
+                    bhSetWaterSplash(plp, 15, 1, 1.6f, 1.6f, 1.6f);
+                    bhSetWaterSplash(plp, 19, 1, 1.6f, 1.6f, 1.6f);
+                }
+                else 
+                {
+                    bhSetEffect(108, (POINT*)&plp->px, NULL, 10);
+                    bhSetWaterSplash(plp, 15, 1, 0.8f, 0.8f, 0.8f);
+                    bhSetWaterSplash(plp, 19, 1, 0.8f, 0.8f, 0.8f);
+                }
+            }
+        case 1:
+            frm_no = plp->frm_no / 65536;
+            
+            if ((frm_no == WpnTab[plp->wpnr_no].ef_yct) && (WpnEffTab[plp->wpnr_no][3].flg != 0)) 
+            {
+                bhSetYakkyou(plp, plp->wpnr_no, 9, 0, plp->ay);
+            }
+
+            act_ct = (short*)&WpnTab[plp->wpnr_no].act_ct0;
+            act_ct += sys->ply_id;
+            
+            if ((frm_no == *act_ct) && ((WpnTab[plp->wpnr_no].flg & 0x1000)))
+            {
+                sys->obwp->flg |= 0x400000;
+                
+                sys->obwp->mode0 = 0;
+            }
+            
+            if ((frm_no == (*act_ct + 4)) && (plp->wpnr_no == 11))
+            {
+                CallPlayerWeaponSeEx((NJS_POINT3*)&plp->mlwP->owP[9].mtx[12], WpnTab[plp->wpnr_no].seno1, 0);
+            }
+            
+            if ((frm_no == 12) && (((WpnTab[plp->wpnr_no].flg & 0x400)) && (bhCheckBullet() != 0))) 
+            {
+                sys->obwp->flg |= 0x800000;
+                
+                sys->obwp->mode0 = 0;
+                
+                CallPlayerWeaponSeEx((NJS_POINT3*)&plp->mlwP->owP[9].mtx[12], 263, 0);
+            }
+            
+            if ((frm_no == 35) && (((WpnTab[plp->wpnr_no].flg & 0x400)) && (bhCheckBullet() != 0))) 
+            {
+                sys->obwp->mode0 = 1;
+                
+                CallPlayerWeaponSeEx((NJS_POINT3*)&plp->mlwP->owP[9].mtx[12], 264, 0);
+            }
+            
+            if (((((plp->at_flg & 0x10)) && (!(plp->at_flg & 0x40))) && (((sys->pad_on & 0x100)) && ((sys->pad_on & 0x10)))) || (frm_no >= (plp->mnwP[plp->mtn_no].frm_num - 1)) || ((frm_no == 10) && ((WpnTab[plp->wpnr_no].flg & 0x400)) && (!bhCheckBullet())))
+            {
+                if ((((plp->at_flg & 0x10)) && (!(plp->at_flg & 0x40))) && (((sys->pad_on & 0x100)) && ((sys->pad_on & 0x10))) && ((!bhCheckBullet()) && (bhSearchBullet() != 0)))
+                {
+                    sys->gm_flg &= ~0x40000;
+                    
+                    plp->mode2 = 70;
+                    plp->mode3 = 0;
+                    return;
+                }
+                
+                switch (plp->at_flg & 0xE)
+                {
+                case 2:
+                    plp->mode2 = 65;
+                    break;
+                case 4:
+                    plp->mode2 = 66;
+                    break;
+                case 8:
+                    plp->mode2 = 67;
+                    break;
+                }
+                
+                plp->hokan_count = 1;
+                
+                switch (((WpnTab[plp->wpnr_no].flg & 0x1)) ? sys->pad_on & 0x10 : sys->pad_on & 0x70)
+                {
+                case 0x10:
+                    if (!(plp->at_flg & 0x2)) 
+                    {
+                        plp->hokan_count = 12;
+                    }
+                    
+                    break;
+                case 0x30:
+                    if (!(plp->at_flg & 0x4)) 
+                    {
+                        plp->hokan_count = 12;
+                    }
+                    
+                    break;
+                case 0x50:
+                    if (!(plp->at_flg & 0x8)) 
+                    {
+                        plp->hokan_count = 12;
+                    }
+
+                    break;
+                }
+                
+                if (((WpnTab[plp->wpnr_no].flg & 0x400)) && (!bhCheckBullet())) 
+                {
+                    plp->hokan_count = 5;
+                }
+                
+                plp->mode3 = 0;
+                break;
+            }
+            
+            if (frm_no >= (plp->mnwP[plp->mtn_no].frm_num - WpnTab[plp->wpnr_no].at_cct)) 
+            {
+                plp->at_flg |= 0x10;
+            }
+            
+            if (!(sys->pad_on & 0x100)) 
+            {
+                plp->at_flg &= ~0x40;
+            }
+        default:
+            plp->wax += (plp->waxp - plp->wax) / 4;
+            
+            if ((sys->pad_on & 0x8)) 
+            {
+                plp->ay -= (int)(182.04445f * (2.4f * ((EXP_WORK*)plp->exp0)->rtspd));
+                
+                if (((plp->stflg & 0x100000)) && (!(sys->eor_ct & 0xF))) 
+                {
+                    bhSetEffect(108, (POINT*)&plp->px, NULL, 10);
+                    
+                    if ((sys->eor_ct & 0x10)) 
+                    {
+                        bhSetWaterSplash(plp, 15, 0, 0.8f, 0.8f, 0.8f); 
+                    }
+                    else 
+                    {
+                        bhSetWaterSplash(plp, 19, 0, 0.8f, 0.8f, 0.8f);
+                    }
+                }
+            }
+            
+            if ((sys->pad_on & 0x4)) 
+            {
+                plp->ay += (int)(182.04445f * (2.4f * ((EXP_WORK*)plp->exp0)->rtspd));
+                
+                if (((plp->stflg & 0x100000)) && (!(sys->eor_ct & 0xF)))
+                {
+                    bhSetEffect(108, (POINT*)&plp->px, NULL, 10);
+                    
+                    if ((sys->eor_ct & 0x10)) 
+                    {
+                        bhSetWaterSplash(plp, 15, 0, 0.8f, 0.8f, 0.8f);
+                    }
+                    else
+                    {
+                        bhSetWaterSplash(plp, 19, 0, 0.8f, 0.8f, 0.8f);
+                    }
+                }
+            }
+            
+            break;
+        }
+    } 
+    else 
+    {
+        if ((plp->ct0 >= WpnTab[plp->wpnr_no].fend_ct) && (plp->mode3 == 2)) 
+        {
+            plp->mode3 = 1;
+            
+            plp->ct0 = 0;
+            plp->ct1++;
+        } 
+        else 
+        {
+            plp->ct0++;
+        }
+        
+        switch (plp->mode3) 
+        {
+        case 0:
+            plp->flg |= 0xC0000;
+            
+            if ((WpnTab[plp->wpnr_no].flg & 0x8000000))
+            {
+                plp->flg &= ~0x80000;
+            }
+            
+            switch (plp->at_flg & 0xE)
+            {
+            case 2:
+                plp->mtn_no = PlMtnWpn[4];
+                break;
+            case 4:
+                plp->mtn_no = PlMtnWpn[4] + 5;
+                break;
+            case 8:
+                plp->mtn_no = PlMtnWpn[4] + 10;
+                break;
+            }
+            
+            plp->hokan_rate = 65536.0f * WpnTab[plp->wpnr_no].hrate;
+            
+            plp->mtn_add = 65536;
+            
+            plp->frm_no = 0;
+            
+            plp->ct1 = 0;
+            plp->ct0 = 0;
+            
+            plp->mode3 = 1;
+        case 1:
+            bhSetGunFire(plp, plp->wpnr_no, 9, 0, plp->ay);
+            
+            if ((WpnTab[plp->wpnr_no].flg & 0x2)) 
+            {
+                sys->obwp->flg |= 0x80000;
+                
+                sys->obwp->mode0 = 0;
+            }
+            
+            if ((WpnTab[plp->wpnr_no].flg & 0x10000000)) 
+            {
+                gap.at_flg = plp->at_flg;
+                
+                gap.wpn_no = plp->wpnr_no;
+                
+                gap.r = WpnTab[plp->wpnr_no].r;
+                gap.l = WpnTab[plp->wpnr_no].l;
+                
+                gap.rn   = WpnTab[plp->wpnr_no].rn;
+                gap.rmax = WpnTab[plp->wpnr_no].rmax;
+                
+                gap.ax = plp->wax;
+                gap.ay = plp->ay;
+        
+                plp->way = plp->ay;
+                plp->waz = 0;
+        
+                njSetMatrix(NULL, &plp->mlwP->owP[9].mtx);
+        
+                ps.x = ps.y = 0;
+                ps.z = WpnTab[plp->wpnr_no].wp_fps1.z;
+        
+                njCalcPoint(NULL, &ps, (NJS_POINT3*)&gap.gx);
+                
+                njSinCos(plp->ay, &gap.px, &gap.pz);
+        
+                gap.px = plp->px - (gap.px * (3.0f + gap.r));
+                gap.py = 11.0f + plp->py;
+                gap.pz = plp->pz - (gap.pz * (3.0f + gap.r));
+        
+                njUnitRotPortion(NULL);
+                njRotateXYZ(NULL, plp->wax, plp->way, plp->waz);
+        
+                ps.x = 0;
+                ps.y = 0;
+                ps.z = -gap.l;
+        
+                njCalcVector(NULL, &ps, (NJS_POINT3*)&gap.vx);
+                
+                bhCheckGunAtari(&gap);
+                
+                if (bhCountBullet() == 0)
+                {
+                    sys->gm_flg |= 0x40000;
+                    
+                    plp->mode3 = 3;
+                    
+                    if (!(WpnTab[plp->wpnr_no].flg & 0x200)) 
+                    {
+                        switch (plp->at_flg & 0xE)
+                        {
+                        case 2:
+                            plp->mtn_no = 102;
+                            break;
+                        case 4:
+                            plp->mtn_no = 107;
+                            break;
+                        case 8:
+                            plp->mtn_no = 112;
+                            break;
+                        }
+                    }
+    
+                    break;
+                } 
+            }
+            
+            if (WpnTab[plp->wpnr_no].seno0 != 0)
+            {
+                CallPlayerWeaponSeEx((NJS_POINT3*)&plp->mlwP->owP[9].mtx[12], (unsigned short)WpnTab[plp->wpnr_no].seno0, 0);
+                
+                if (!(WpnTab[plp->wpnr_no].flg & 0x100)) 
+                {
+                    plp->stflg |= 0x100;
+                }
+            }
+            
+            plp->mode3 = 2;
+        case 2:
+            if ((plp->ct0 == WpnTab[plp->wpnr_no].ef_yct) && (WpnEffTab[plp->wpnr_no][3].flg != 0)) 
+            {
+                bhSetYakkyou(plp, plp->wpnr_no, 9, 0, plp->ay);
+            }
+            
+            if (((!(sys->pad_on & 0x100)) || (!(sys->pad_on & 0x10))) || (((WpnTab[plp->wpnr_no].flg & 0x200)) && (plp->ct1 > 1))) 
+            {
+                plp->mode3 = 3;
+                
+                plp->ct1 = 0;
+                
+                if ((WpnTab[plp->wpnr_no].flg & 0x200)) 
+                {
+                    plp->at_flg |= 0x40;
+                }
+                else 
+                {
+                    plp->at_flg &= ~0x40;
+                    
+                    switch (plp->at_flg & 0xE)
+                    {
+                    case 2:
+                        plp->mtn_no = 102;
+                        break;
+                    case 4:
+                        plp->mtn_no = 107;
+                        break;
+                    case 8:
+                        plp->mtn_no = 112;
+                        break;
+                    }
+                }
+            }
+
+            break;
+        case 3:
+            if ((plp->ct0 == WpnTab[plp->wpnr_no].ef_yct) && (WpnEffTab[plp->wpnr_no][3].flg != 0)) 
+            {
+                bhSetYakkyou(plp, plp->wpnr_no, 9, 0, plp->ay);
+            }
+            
+            if (!(sys->pad_on & 0x100)) 
+            {
+                plp->at_flg &= ~0x40;
+            }
+            
+            plp->at_flg |= 0x10;
+            
+            if ((plp->flg & 0x400000)) 
+            {
+                switch (plp->at_flg & 0xE)
+                {
+                case 2:
+                    plp->mode2 = 65;
+                    
+                    plp->mtn_no = PlMtnWpn[1];
+                    
+                    plp->waxp = 0;
+                    break;
+                case 4:
+                    plp->mode2 = 66;
+                    
+                    plp->mtn_no = PlMtnWpn[2];
+                    
+                    plp->waxp = 8192;
+                    break;
+                case 8:
+                    plp->mode2 = 67;
+                    
+                    plp->mtn_no = PlMtnWpn[3];
+                    
+                    plp->waxp = -8192;
+                    break;
+                }
+                
+                plp->mode3 = 0;
+                
+                plp->frm_no = 0;
+                
+                plp->hokan_count = 0;
+                return;
+            }
+            
+            break;
+        case 4:
+            plp->hokan_count = 12;
+            plp->hokan_rate = 45875;
+            
+            switch (plp->at_flg & 0xE)
+            {
+            case 2:
+                plp->mode2 = 65;
+
+                plp->mtn_no = PlMtnWpn[1];
+                
+                plp->waxp = 0;
+                break;
+            case 4:
+                plp->mode2 = 66;
+                
+                plp->mtn_no = PlMtnWpn[2];
+                
+                plp->waxp = 8192;
+                break;
+            case 8:
+                plp->mode2 = 67;
+                
+                plp->mtn_no = PlMtnWpn[3];
+                
+                plp->waxp = -8192;
+                break;
+            }
+            
+            plp->mode3 = 0;
+            return;
+        }
+
+        if ((plp->mode3 >= 3) && (!(sys->gm_flg & 0x40000)) && (((sys->pad_on & 0x100)) && ((sys->pad_on & 0x10))) && (((plp->at_flg & 0x10)) && (!(plp->at_flg & 0x40))))
+        {
+            plp->mode3 = 0;
+            
+            plp->hokan_count = 0;
+        }
+        
+        plp->wax += (plp->waxp - plp->wax) / 4;
+        
+        switch (sys->pad_on & 0x70)
+        {
+        case 0x10:
+            if (!(plp->at_flg & 0x2)) 
+            {
+                plp->at_flg &= ~0xE;
+                plp->at_flg |=  0x2;
+                
+                plp->mtn_no = PlMtnWpn[4];
+
+                plp->hokan_rate = 65536.0f * WpnTab[plp->wpnr_no].hrate;
+                
+                plp->hokan_count = 20;
+                
+                plp->frm_no = 0;
+                
+                plp->hokan_ctbak = plp->hokan_count;
+                
+                plp->waxp = 0;
+                
+                if (plp->mode3 == 3) 
+                {
+                    plp->mode3 = 4;
+                }
+            }
+            
+            break;
+        case 0x30:
+            if (!(plp->at_flg & 0x4)) 
+            {
+                plp->at_flg &= ~0xE;
+                plp->at_flg |=  0x4;
+                
+                plp->mtn_no = PlMtnWpn[4] + 5;
+                
+                plp->hokan_rate = 65536.0f * WpnTab[plp->wpnr_no].hrate;
+                plp->hokan_count = 20;
+                
+                plp->frm_no = 0;
+                
+                plp->hokan_ctbak = plp->hokan_count;
+                
+                plp->waxp = 8192;
+                
+                if (plp->mode3 == 3) 
+                {
+                    plp->mode3 = 4;
+                }
+            }
+            
+            break;
+        case 0x50:
+            if (!(plp->at_flg & 0x8)) 
+            {
+                plp->at_flg &= ~0xE;
+                plp->at_flg |=  0x8;
+                
+                plp->mtn_no = PlMtnWpn[4] + 10;
+                
+                plp->hokan_rate = 65536.0f * WpnTab[plp->wpnr_no].hrate;
+                plp->hokan_count = 20;
+                
+                plp->frm_no = 0;
+                
+                plp->hokan_ctbak = plp->hokan_count;
+                
+                plp->waxp = -8192;
+                
+                if (plp->mode3 == 3) 
+                {
+                    plp->mode3 = 4;
+                }
+            }
+        }
+        
+        if ((sys->pad_on & 0x8)) 
+        {
+            plp->ay -= (int)(182.04445f * (2.4f * ((EXP_WORK*)plp->exp0)->rtspd));
+            
+            if (((plp->stflg & 0x100000)) && (!(sys->eor_ct & 0xF))) 
+            {
+                bhSetEffect(108, (POINT*)&plp->px, NULL, 10);
+                
+                if ((sys->eor_ct & 0x10)) 
+                {
+                    bhSetWaterSplash(plp, 15, 0, 0.8f, 0.8f, 0.8f);
+                }
+                else 
+                {
+                    bhSetWaterSplash(plp, 19, 0, 0.8f, 0.8f, 0.8f);
+                }
+            }
+        }
+        
+        if ((sys->pad_on & 0x4))
+        {
+            plp->ay += (int)(182.04445f * (2.4f * ((EXP_WORK*)plp->exp0)->rtspd));
+            
+            if (((plp->stflg & 0x100000)) && (!(sys->eor_ct & 0xF))) 
+            {
+                bhSetEffect(108, (POINT*)&plp->px, NULL, 10);
+                
+                if ((sys->eor_ct & 0x10)) 
+                {
+                    bhSetWaterSplash(plp, 15, 0, 0.8f, 0.8f, 0.8f);
+                }
+                else 
+                {
+                    bhSetWaterSplash(plp, 19, 0, 0.8f, 0.8f, 0.8f);
+                }
+            }
+        }
+        
+        if ((sys->pad_ps & 0x80)) 
+        {
+            plp->ayp = bhSearchNextEnemy(plp, 15473, plp->mlwP->owP[5].mtx[13] - plp->py);
+            
+            if (plp->ayp != -1) 
+            {
+                plp->ayp = bhCalcLockEneYR(plp, plp->src_no);
+                
+                plp->flg   |= 0x100000;
+                plp->stflg |= 0x800;
+                
+                ((EXP_WORK*)plp->exp0)->yrct = 4;
+            }
+        }
+    }
+}
+
+// 100% matching!
+void bhCPM2_act_rld()
+{
+	int i, j;
+    int frm_no;
+
+    if (((sys->gm_flg & 0x40)) && ((sys->st_flg & 0x800000))) 
+    {
+        sys->gm_flg &= ~0x40;
+        
+        if (!(sys->gm_flg & 0x1000000)) 
+        {
+            sys->gm_flg &= ~0x80;
+        }
+        
+        sys->gm_flg |= 0x800;
+        
+        if ((sys->st_flg & 0x800000)) 
+        {
+            sys->st_flg &= ~0x800000;
+            sys->gm_flg &= ~0x80000;
+            
+            sys->pt_flg |= 0x1;
+        }
+    }
+    
+    switch (plp->mode3)
+    {
+    case 0: 
+        plp->flg |= 0xC0000;
+        
+        plp->mtn_no = 116;
+        
+        plp->hokan_rate  = 45875;
+        plp->hokan_count = 4;
+        
+        plp->mtn_add = 65536;
+        
+        plp->frm_no = 0;
+        
+        ((EXP_WORK*)plp->exp0)->arp = 2.0f;
+        
+        if ((WpnTab[plp->wpnr_no].flg & 0x400)) 
+        {
+            sys->obwp->flg |= 0x800000;
+            
+            sys->obwp->mode0 = 0;
+            
+            CallPlayerWeaponSeEx((NJS_POINT3*)&plp->mlwP->owP[9].mtx[12], 263, 0);
+        }
+        
+        plp->mode3++;
+    case 1:
+        frm_no = plp->frm_no / 65536;
+            
+        if (((WpnTab[plp->wpnr_no].flg & 0x400)) && (frm_no == WpnTab[plp->wpnr_no].act_ct1)) 
+        {
+            sys->obwp->flg |= 0x800000;
+            
+            sys->obwp->mode0 = 1;
+            
+            CallPlayerWeaponSeEx((NJS_POINT3*)&plp->mlwP->owP[9].mtx[12], 264, 0);
+        }
+        
+        if (frm_no == WpnTab[plp->wpnr_no].act_ct0)
+        {
+            if ((WpnTab[plp->wpnr_no].flg & 0x90)) 
+            {
+                if ((WpnTab[plp->wpnr_no].flg & 0x80)) 
+                {
+                    bhSetMagazine(plp, plp->wpnr_no, 9, 0, plp->ay);
+                    
+                    CallPlayerWeaponSeEx((NJS_POINT3*)&plp->mlwP->owP[9].mtx[12], 257, 0);
+                }
+                else 
+                {
+                    sys->ef.id = 0;
+                    
+                    sys->ef.flg = 1;
+                    
+                    sys->ef.mdlver = 0;
+                    
+                    sys->ef.type = 10;
+                    
+                    sys->ef.sx = 1.2f;
+                    sys->ef.sy = 1.2f;
+                    sys->ef.sz = 1.2f;
+                    
+                    sys->ef.px = plp->px;
+                    sys->ef.py = plp->py;
+                    sys->ef.pz = plp->pz;
+                    
+                    sys->ef.ay = sys->ef.ax = 0;
+                    
+                    for (i = 0; i < 6; i++)
+                    {
+                        sys->ef.flr_no = sys->yk_ct;
+                        
+                        if (bhSetEffectTb(&sys->ef, (NJS_POINT3*)&WpnTab[plp->wpnr_no].wp_cps, (unsigned char*)plp, 9) >= 0) 
+                        {
+                            sys->yk_ct = (sys->yk_ct + 1) & 0x1F;
+                            
+                            for (j = 0; j < 512; j++)
+                            {
+                                if ((((eff[j].flg & 0x1)) && (eff[j].id == 0)) && (sys->yk_ct == eff[j].flr_no)) 
+                                {
+                                    eff[j].flg = 0;
+                                }
+                            }
+                        }
+                    }
+                    
+                    CallPlayerWeaponSeEx((NJS_POINT3*)&plp->mlwP->owP[9].mtx[12], 286, 0);
+                }
+            }
+        }
+        
+        if ((frm_no == WpnTab[plp->wpnr_no].act_ct1) && ((WpnTab[plp->wpnr_no].flg & 0x80))) 
+        {
+            CallPlayerWeaponSeEx((NJS_POINT3*)&plp->mlwP->owP[9].mtx[12], 258, 0);
+            
+            if (plp->wpnr_no == 12) 
+            {
+                sys->obwp->mlwP->objP[2].evalflags &= ~0x8;
+            }
+        }
+        
+        if ((WpnTab[plp->wpnr_no].flg & 0x1000))
+        {
+            if (sys->ply_id == 0) 
+            {
+                if ((frm_no == 25) || (frm_no == 38))  
+                {
+                    CallPlayerWeaponSeEx((NJS_POINT3*)&plp->mlwP->owP[9].mtx[12], 265, 0);
+                }
+            }
+            else if (frm_no == 20) 
+            {
+                CallPlayerWeaponSeEx((NJS_POINT3*)&plp->mlwP->owP[9].mtx[12], 265, 0);
+            }
+        }
+        
+        if (((WpnTab[plp->wpnr_no].flg & 0x10)) && ((frm_no == WpnTab[plp->wpnr_no].act_ct1) || (frm_no == WpnTab[plp->wpnr_no].act_ct2))) 
+        {
+            CallPlayerWeaponSeEx((NJS_POINT3*)&plp->mlwP->owP[9].mtx[12], 285, 0);
+        }
+        
+        if ((frm_no == WpnTab[plp->wpnr_no].act_ct0) && ((WpnTab[plp->wpnr_no].flg & 0x2000))) 
+        {
+            CallPlayerWeaponSeEx((NJS_POINT3*)&plp->mlwP->owP[9].mtx[12], 272, 0);
+        }
+        
+        if (frm_no >= (plp->mnwP[plp->mtn_no].frm_num - 1))
+        {
+            if ((WpnTab[plp->wpnr_no].flg & 0x20))
+            {
+                plp->mtn_add = 0;
+                
+                plp->mode2 = 71;
+                plp->mode3 = 0;
+                
+                plp->at_flg = 2;
+                
+                plp->hokan_count = 0;
+                
+                plp->wax  = 0;
+                plp->waxp = 0;
+                
+                cam.pe_ax   = 0;
+                cam.pe_pers = 11832;
+                
+                sys->gm_flg |= 0x2000;
+                return;
+            }
+            
+            switch (plp->at_flg & 0xE)
+            {
+            case 2:
+                plp->hokan_count = 2;
+                
+                plp->mode2 = 65;
+                break;
+            case 4:
+                plp->hokan_count = 12;
+                
+                plp->mode2 = 66;
+                break;
+            case 8:
+                plp->hokan_count = 12;
+                
+                plp->mode2 = 67;
+                break;
+            }
+            
+            plp->mode3 = 0;
+        } 
+        
+        return;
+    }
+}
+
+// 100% matching!
+void bhCPM2_act_knf()
+{
+    switch (plp->mode3) 
+    {
+    case 0:
+        plp->flg |= 0xC0000;
+        
+        switch (plp->at_flg & 0xE)
+        {
+        case 2:
+            plp->mtn_no = 103;
+            break;
+        case 4:
+            plp->mtn_no = 108;
+            break;
+        case 8:
+            plp->mtn_no = 113;
+            break;
+        }
+        
+        plp->hokan_rate = 45875;
+        plp->hokan_count = 4;
+        
+        plp->mtn_add = 65536;
+        
+        plp->frm_no = 0;
+        
+        ((EXP_WORK*)plp->exp0)->arp = 2.0f;
+        
+        plp->mode3++;
+    case 1:
+        if ((plp->frm_no / 65536) >= (plp->mnwP[plp->mtn_no].frm_num - 1))
+        {
+            switch (plp->at_flg & 0xE)
+            {
+            case 2:
+                plp->hokan_count = 1;
+                
+                plp->mode2 = 65;
+                break;
+            case 4:
+                plp->hokan_count = 1;
+                
+                plp->mode2 = 66;
+                break;
+            case 8:
+                plp->hokan_count = 1;
+                
+                plp->mode2 = 67;
+                break;
+            }
+            
+            plp->mode3 = 0;
+        }
+        
+        return;
+    }
+}
+
+// 100% matching!
+void bhCPM0_damage()
+{
+	float* trsz;
+
+#ifdef TARGET_PC
+    /* damage levels are 0..2 (motions 71..76, translations 11..16). A Black Widow's grab writes
+       level 4/5 into mode2 while it holds the player (en03.c) and does not check that another
+       type's hit took the player over meanwhile (the PS2 never put them in one room): the
+       missing motion and translation crashed here. The heaviest level instead (3 levels: PlyTrsZ,
+       en29's dmg_mde < 3). */
+    if (plp->mode2 > 2)
+    {
+        plp->mode2 = 2;
+    }
+#endif
+
+    sys->st_flg |= 0x4;
+    
+    plp->flg |= 0x200000;
+    
+    switch (plp->mode1)
+    { 
+    case 0:
+        switch (plp->mode3)
+        {
+        case 0: 
+            plp->flg |= 0x10000;
+            plp->flg &= ~0x36940000;
+            
+            plp->stflg &= ~0x80;
+            plp->stflg |= 0x10000;
+            
+            EXP1_I(0) &= ~0x4;
+            EXP1_I(0) |= 0x1E0;
+            
+            plp->mtn_no = (plp->mode2 * 2) + 71;
+            
+            plp->hokan_rate = 49152;
+            plp->hokan_count = 4;
+            
+            plp->mtn_add = 65536;
+            
+            plp->frm_no = 0;
+            
+            plp->mode3 = 1;
+            
+            ((EXP_WORK*)plp->exp0)->arp = -(1.0f + plp->mode2);
+            
+            if (plp->mode2 < 2) 
+            {
+                CallPlayerVoice(1026);
+            }
+            else 
+            {
+                CallPlayerVoice(1027);
+            }
+        
+            break;
+        case 1:    
+            if ((plp->flg & 0x400000))
+            {
+                plp->flg   &= ~0x10004;
+                plp->stflg &= ~0x10000;
+                
+                *(int*)&plp->mode0 = 1;
+                return;
+            }
+            
+            trsz = bhGetTransZ((plp->mode2 * 2) + 11);
+            
+            plp->spd = trsz[plp->frm_no / 65536];
+                
+            bhAddSpeed(plp, 0);
+        }
+        
+        break;
+    case 1:  
+        switch (plp->mode3)
+        {
+        case 0:
+            plp->flg |= 0x10000;
+            plp->flg &= ~0x36940000;
+            
+            plp->stflg &= ~0x80;
+            plp->stflg |= 0x10000;
+            
+            EXP1_I(0) &= ~0x4;
+            EXP1_I(0) |= 0x1E0;
+            
+            plp->mtn_no = (plp->mode2 * 2) + 72;
+            
+            plp->hokan_rate = 49152;
+            plp->hokan_count = 4;
+            
+            plp->mtn_add = 65536;
+            
+            plp->frm_no = 0;
+            
+            plp->mode3 = 1;
+            
+            ((EXP_WORK*)plp->exp0)->arp = 1.0f + plp->mode2;
+            
+            CallPlayerVoice(1024);
+            break;
+        case 1:
+            if ((plp->flg & 0x400000)) 
+            {
+                plp->flg   &= ~0x10004;
+                plp->stflg &= ~0x10000;
+                
+                *(int*)&plp->mode0 = 1;
+                return;
+            }
+            
+            trsz = bhGetTransZ((plp->mode2 * 2) + 12);
+            
+            plp->spd = trsz[plp->frm_no / 65536];
+            
+            bhAddSpeed(plp, 0);
+        }
+    }
+
+    if ((sys->gm_flg & 0x40)) 
+    {
+        sys->gm_flg &= ~0x40;
+        
+        if (!(sys->gm_flg & 0x1000000)) 
+        {
+            sys->gm_flg &= ~0x80;
+        }
+        
+        sys->gm_flg |= 0x800;
+        
+        if ((sys->st_flg & 0x800000)) 
+        {
+            sys->st_flg &= ~0x800000;
+            sys->gm_flg &= ~0x80000; 
+            
+            sys->pt_flg |= 0x1;
+        }
+    }
+}
+
+// 100% matching!
+void bhCPM0_die()
+{
+    NJS_POINT3 pos; 
+    float gy;
+    float* trsz;
+
+    sys->st_flg |= 0x4;
+    
+    plp->flg2 |= 0x1;
+    
+    switch (plp->mode1)
+    {   
+    case 0:
+        switch (plp->mode3)
+        { 
+        case 0:
+            sys->fade_an = 0;
+            sys->fade_rn = 0;
+            sys->fade_gn = 0;
+            sys->fade_bn = 0;
+            
+            plp->flg |=  0x10002;
+            plp->flg &= ~0x36940000;
+            
+            plp->stflg |= 0x10000;
+            plp->flg   |= 0x10;
+            
+            EXP1_I(0) &= ~0x4;
+            EXP1_I(0) |= 0x1E0;
+            
+            plp->mtn_no = 25;
+            
+            plp->hokan_rate = 49152;
+            plp->hokan_count = 8;
+            
+            plp->mtn_add = 65536;
+            
+            plp->frm_no = 0;
+            
+            plp->mode3 = 1;
+            
+            ((EXP_WORK*)plp->exp0)->arp = 3.0f;
+            
+            plp->yn = 0;
+            
+            CallPlayerVoice(1025);
+            break;
+        case 1:      
+            pos.x = plp->mlwP->owP[2].mtx[12];
+            pos.y = 1.0f + plp->mlwP->owP[2].mtx[13];
+            pos.z = plp->mlwP->owP[2].mtx[14];
+            
+            gy = bhGetGroundPosition(&pos);
+            
+            if (rom->grand[plp->flr_no + 2] < gy)
+            {
+                gy = rom->grand[plp->flr_no + 2];
+            }
+            
+            if (gy < plp->py)
+            {
+                plp->py += plp->yn;
+                
+                if (plp->yn > -2.0f) 
+                {
+                    plp->yn -= 0.2f;
+                }
+            }
+            
+            if (gy >= plp->py) 
+            {
+                plp->py = gy;
+            }
+            
+            if ((plp->frm_no / 65536) == 0)
+            {
+                if ((sys->ts_flg & 0x4000))
+                {
+                    sys->ts_flg &= ~0x4000;
+                    
+                    *(unsigned int*)&sys->gov_md0 = 0;
+                }
+                
+                plp->mtn_no = 26;
+                
+                plp->mode3 = 2;
+                
+                plp->hokan_rate = 49152;
+                plp->hokan_count = 4;
+            }
+            else 
+            {
+                trsz = bhGetTransZ(17);
+                
+                plp->spd = trsz[plp->frm_no / 65536];
+                
+                bhAddSpeed(plp, 0);
+            }
+            
+            break;
+        case 2:  
+            pos.x = plp->mlwP->owP[2].mtx[12];
+            pos.y = 1.0f + plp->mlwP->owP[2].mtx[13];
+            pos.z = plp->mlwP->owP[2].mtx[14];
+            
+            gy = bhGetGroundPosition(&pos);
+            
+            if (rom->grand[plp->flr_no + 2] < gy)
+            {
+                gy = rom->grand[plp->flr_no + 2];
+            }
+            
+            if (gy >= plp->py) 
+            {
+                plp->py = gy;
+            }
+        }
+        
+        break;
+    case 1:        
+        switch (plp->mode3)
+        {         
+        case 0:       
+            sys->fade_an = 0;
+            sys->fade_rn = 0;
+            sys->fade_gn = 0;
+            sys->fade_bn = 0;
+            
+            plp->flg |=  0x10002;
+            plp->flg &= ~0x36940000;
+            
+            plp->stflg |= 0x10000;
+            plp->flg   |= 0x10;
+            
+            EXP1_I(0) &= ~0x4;
+            EXP1_I(0) |= 0x1E0;
+            
+            plp->mtn_no = 27;
+            
+            plp->hokan_rate = 49152;
+            plp->hokan_count = 8;
+            
+            plp->mtn_add = 65536;
+            
+            plp->frm_no = 0;
+            
+            plp->mode3 = 1;
+
+            ((EXP_WORK*)plp->exp0)->arp = -3.0f;
+            
+            plp->yn = 0;
+            
+            CallPlayerVoice(1025);
+            break;
+        case 1:          
+            pos.x = plp->mlwP->owP[2].mtx[12];
+            pos.y = 1.0f + plp->mlwP->owP[2].mtx[13];
+            pos.z = plp->mlwP->owP[2].mtx[14];
+            
+            gy = bhGetGroundPosition(&pos);
+            
+            if (rom->grand[plp->flr_no + 2] < gy)
+            {
+                gy = rom->grand[plp->flr_no + 2];
+            }
+            
+            if (gy < plp->py)
+            {
+                plp->py += plp->yn;
+                
+                if (plp->yn > -2.0f) 
+                {
+                    plp->yn -= 0.2f;
+                }
+            }
+            
+            if (gy >= plp->py) 
+            {
+                plp->py = gy;
+            }
+            
+            if ((plp->frm_no / 65536) == 0)
+            {
+                if ((sys->ts_flg & 0x4000)) 
+                {
+                    sys->ts_flg &= ~0x4000;
+                    
+                    *(unsigned int*)&sys->gov_md0 = 0;
+                }
+                
+                plp->mtn_no = 28;
+                
+                plp->mode3 = 2;
+                
+                plp->hokan_rate = 49152;
+                plp->hokan_count = 4;
+            } 
+            else 
+            {
+                trsz = bhGetTransZ(18);
+                
+                plp->spd = trsz[plp->frm_no / 65536];
+                
+                bhAddSpeed(plp, 0);
+            }
+            
+            break;
+        case 2:              
+            pos.x = plp->mlwP->owP[2].mtx[12];
+            pos.y = 1.0f + plp->mlwP->owP[2].mtx[13];
+            pos.z = plp->mlwP->owP[2].mtx[14];
+            
+            gy = bhGetGroundPosition(&pos);
+            
+            if (rom->grand[plp->flr_no + 2] < gy)
+            {
+                gy = rom->grand[plp->flr_no + 2];
+            }
+            
+            if (gy >= plp->py) 
+            {
+                plp->py = gy;
+            }
+            
+            break;
+        }
+    }
+    
+    if ((sys->gm_flg & 0x40)) 
+    {
+        sys->gm_flg &= ~0x40;
+        
+        if (!(sys->gm_flg & 0x1000000)) 
+        {
+            sys->gm_flg &= ~0x80;
+        }
+        
+        sys->gm_flg |= 0x800;
+        
+        if ((sys->st_flg & 0x800000)) 
+        {
+            sys->st_flg &= ~0x800000;
+            sys->gm_flg &= ~0x80000; 
+            
+            sys->pt_flg |= 0x1;
+        }
+    }
+}
+
+// 100% matching!
+void bhCPM0_nage() 
+{
+    if ((EXP1_I(0) & 0x4))
+    {
+        EXP1_I(0) &= ~0x4;
+        EXP1_I(0) |= 0x1E0;
+    }
+    
+    sys->st_flg |= 0x4;
+    
+    ((EXP_WORK*)plp->exp0)->spx = plp->px;
+    ((EXP_WORK*)plp->exp0)->spz = plp->pz;
+    
+    ((EXP_WORK*)plp->exp0)->arp = 0;
+    
+    plp->flg &= ~0x36900000;
+    
+    if ((sys->gm_flg & 0x40)) 
+    {
+        sys->gm_flg &= ~0x40;
+        
+        if (!(sys->gm_flg & 0x1000000)) 
+        {
+            sys->gm_flg &= ~0x80;
+        }
+        
+        sys->gm_flg |= 0x800;
+        
+        if ((sys->st_flg & 0x800000)) 
+        {
+            sys->st_flg &= ~0x800000;
+            sys->gm_flg &= ~0x80000;
+            
+            sys->pt_flg |= 0x1;
+        }
+    }
+}
+
+// 100% matching!
+void bhCPM0_enedam() 
+{
+    if ((EXP1_I(0) & 0x4))
+    {
+        EXP1_I(0) &= ~0x4;
+        EXP1_I(0) |= 0x1E0;
+    }
+    
+    sys->st_flg |= 0x4;
+    
+    ((EXP_WORK*)plp->exp0)->spx = plp->px;
+    ((EXP_WORK*)plp->exp0)->spz = plp->pz;
+    
+    ((EXP_WORK*)plp->exp0)->arp = 0;
+    
+    plp->flg &= ~0x36900000;
+    
+    if ((sys->gm_flg & 0x40)) 
+    {
+        sys->gm_flg &= ~0x40;
+        
+        if (!(sys->gm_flg & 0x1000000)) 
+        {
+            sys->gm_flg &= ~0x80;
+        }
+        
+        sys->gm_flg |= 0x800;
+        
+        if ((sys->st_flg & 0x800000)) 
+        {
+            sys->st_flg &= ~0x800000;
+            sys->gm_flg &= ~0x80000;
+            
+            sys->pt_flg |= 0x1;
+        }
+    }
+}
+
+// 100% matching!
+void bhCPM0_enedie() 
+{
+    if ((EXP1_I(0) & 0x4))
+    {
+        EXP1_I(0) &= ~0x4;
+        EXP1_I(0) |= 0x1E0;
+    }
+    
+    sys->st_flg |= 0x4;
+    
+    ((EXP_WORK*)plp->exp0)->spx = plp->px;
+    ((EXP_WORK*)plp->exp0)->spz = plp->pz;
+    
+    ((EXP_WORK*)plp->exp0)->arp = 0;
+    
+    plp->flg &= ~0x36900000;
+    
+    if ((sys->gm_flg & 0x40)) 
+    {
+        sys->gm_flg &= ~0x40;
+        
+        if (!(sys->gm_flg & 0x1000000)) 
+        {
+            sys->gm_flg &= ~0x80;
+        }
+        
+        sys->gm_flg |= 0x800;
+        
+        if ((sys->st_flg & 0x800000)) 
+        {
+            sys->st_flg &= ~0x800000;
+            sys->gm_flg &= ~0x80000;
+            
+            sys->pt_flg |= 0x1;
+        }
+    }
+    
+    if (((plp->flg & 0x2)) && ((sys->ts_flg & 0x4000))) 
+    {
+        sys->ts_flg &= ~0x4000;
+        
+        *(int*)&sys->gov_md0 = 0;
+    }
+}
+
+// 100% matching!
+void bhCPM0_nothing()
+{
+    switch (plp->mode3)
+    {
+    case 0:
+        plp->mtn_no = 218;
+        
+        plp->hokan_rate = 49152;
+        plp->hokan_count = 8;
+        
+        plp->mtn_add = 65536;
+        
+        plp->frm_no = 0;
+        
+        plp->mode3++;
+    case 1:
+        if (((unsigned int)plp->frm_no / 65536) >= (plp->mnwP[plp->mtn_no].frm_num - 1)) 
+        {
+            plp->frm_no = (plp->mnwP[plp->mtn_no].frm_num - 1) * 65536;
+            
+            plp->mtn_add = 0;
+        }
+    }
+}
+
+// 100% matching!
+void bhControlPlayerHead()
+{
+    short ax, ay, az;  
+    short lax, lay; 
+    short pax, pay; 
+
+    EXP1_F(24) = EXP1_F(12);
+    EXP1_F(28) = EXP1_F(16);
+    EXP1_F(32) = EXP1_F(20);
+    
+    EXP1_S(42) = EXP1_S(36);
+    EXP1_S(44) = EXP1_S(38);
+    EXP1_S(46) = EXP1_S(40);
+    
+    ax = plp->ax + plp->mlwP->objP[0].ang[0];
+    ay = plp->ay + plp->mlwP->objP[0].ang[1];
+    az = plp->az + plp->mlwP->objP[0].ang[2];
+
+    ax += plp->mlwP->objP[1].ang[0];
+    ay += plp->mlwP->objP[1].ang[1];
+    az += plp->mlwP->objP[1].ang[2];
+
+    ax += plp->mlwP->objP[2].ang[0];
+    ay += plp->mlwP->objP[2].ang[1];
+    az += plp->mlwP->objP[2].ang[2];
+
+    ax += plp->mlwP->objP[3].ang[0];
+    ay += plp->mlwP->objP[3].ang[1];
+    az += plp->mlwP->objP[3].ang[2];
+
+    if ((EXP1_UC(120) & 0xF0))
+    {
+        if ((EXP1_UC(120) & 0x20))
+        {
+            EXP1_I(112) -= EXP1_I(100);
+            
+            if (EXP1_I(88) >= EXP1_I(112))
+            {
+                EXP1_I(112) = EXP1_I(88);
+            }
+        }
+        else
+        {
+            EXP1_I(112) += EXP1_I(100);
+            
+            if (EXP1_I(112) >= EXP1_I(88))
+            {
+                EXP1_I(112) = EXP1_I(88);
+            }
+        }
+        
+        plp->mlwP->objP[4].ang[1] = EXP1_I(112);
+        
+        if ((EXP1_UC(120) & 0x40))
+        {
+            EXP1_I(108) -= EXP1_I(96);
+            
+            if (EXP1_I(84) >= EXP1_I(108))
+            {
+                EXP1_I(108) = EXP1_I(84);
+            }
+        }
+        else
+        {
+            EXP1_I(108) += EXP1_I(96);
+            
+            if (EXP1_I(108) >= EXP1_I(84))
+            {
+                EXP1_I(108) = EXP1_I(84);
+            }
+        }
+        
+        plp->mlwP->objP[4].ang[0] = EXP1_I(108);
+    }
+    else
+    {
+        if ((EXP1_I(0) & 0x4))
+        {
+            if (!(EXP1_I(0) & 0x8))
+            {
+                bhLookNearEnemy();
+            }
+            
+            if (((EXP1_I(0) & 0x10)) && (EXP1_S(68) >= 0))
+            {
+                bhSetHeadRotation(ax, ay);
+            }
+            else
+            {
+                if (!(EXP1_I(0) & 0x20))
+                {
+                    EXP1_S(48) = plp->mlwP->objP[4].ang[0];
+                }
+                
+                if (!(EXP1_I(0) & 0x40))
+                {
+                    EXP1_S(50) = plp->mlwP->objP[4].ang[1];
+                }
+                
+                if (!(EXP1_I(0) & 0x80))
+                {
+                    EXP1_S(54) = plp->mlwP->objP[5].ang[0];
+                }
+                
+                if (!(EXP1_I(0) & 0x100))
+                {
+                    EXP1_S(56) = plp->mlwP->objP[5].ang[1];
+                }
+            }
+        }
+        else
+        {
+            if (!(EXP1_I(0) & 0x20))
+            {
+                EXP1_S(48) = plp->mlwP->objP[4].ang[0];
+            }
+            
+            if (!(EXP1_I(0) & 0x40))
+            {
+                EXP1_S(50) = plp->mlwP->objP[4].ang[1];
+            }
+            
+            if (!(EXP1_I(0) & 0x80))
+            {
+                EXP1_S(54) = plp->mlwP->objP[5].ang[0];
+            }
+            
+            if (!(EXP1_I(0) & 0x100))
+            {
+                EXP1_S(56) = plp->mlwP->objP[5].ang[1];
+            }
+        }
+        
+        if ((EXP1_I(0) & 0x20))
+        {
+            lax = EXP1_S(48);
+            pax = plp->mlwP->objP[4].ang[0];
+
+            if (ABS(pax - lax) > 182)
+            {
+                lax += ((short)pax - (short)lax) / 4;
+                
+                plp->mlwP->objP[4].ang[0] = EXP1_S(48) = lax;
+            }
+            else
+            {
+                EXP1_I(0) &= ~0x20;
+            }
+        }
+        
+        if ((EXP1_I(0) & 0x40))
+        {
+            lay = EXP1_S(50);
+            pay = plp->mlwP->objP[4].ang[1];
+
+            if (ABS(pay - lay) > 182)
+            {
+                lay += ((short)pay - (short)lay) / 4;
+                
+                plp->mlwP->objP[4].ang[1] = EXP1_S(50) = lay;
+            }
+            else
+            {
+                EXP1_I(0) &= ~0x40;
+            }
+        }
+    }
+    
+    ax += plp->mlwP->objP[4].ang[0];
+    ay += plp->mlwP->objP[4].ang[1];
+    az += plp->mlwP->objP[4].ang[2];
+    
+    if ((EXP1_UC(120) & 0xF0))
+    {
+        plp->mlwP->objP[5].ang[1] = EXP1_I(112);
+        plp->mlwP->objP[5].ang[0] = EXP1_I(108);
+    }
+    else
+    {
+        if ((EXP1_I(0) & 0x80))
+        {
+            lax = plp->mlwP->objP[5].ang[0];
+            pax = EXP1_S(54);
+
+            if (ABS(lax - pax) > 182)
+            {
+                pax += ((short)lax - (short)pax) / 4;
+                
+                plp->mlwP->objP[5].ang[0] = EXP1_S(54) = pax;
+            }
+            else
+            {
+                EXP1_I(0) &= ~0x80;
+            }
+        }
+        
+        if ((EXP1_I(0) & 0x100))
+        {
+            pay = EXP1_S(56);
+            lay = plp->mlwP->objP[5].ang[1];
+
+            if (ABS(lay - pay) > 182)
+            {
+                pay += ((short)lay - (short)pay) / 4;
+                
+                plp->mlwP->objP[5].ang[1] = EXP1_S(56) = pay;
+            }
+            else
+            {
+                EXP1_I(0) &= ~0x100;
+            }
+        }
+    }
+
+    ax += plp->mlwP->objP[5].ang[0];
+    ay += plp->mlwP->objP[5].ang[1];
+    az += plp->mlwP->objP[5].ang[2];
+    
+    EXP1_S(36) = ax;
+    EXP1_S(38) = ay;
+    EXP1_S(40) = az;
+    
+    EXP1_F(12) = plp->mlwP->owP[5].mtx[12];
+    EXP1_F(16) = plp->mlwP->owP[5].mtx[13];
+    EXP1_F(20) = plp->mlwP->owP[5].mtx[14];
+    
+    if (plp->mdl_no != 3)
+    {
+        if (((-rand() / -2.1474836E9f) > 0.97f) && (plp->mode0 != 4) && ((EXP1_I(8) <= 30) == 0))
+        {
+            EXP1_I(0) |= 0x2;
+            
+            EXP1_I(4) = 0;
+            EXP1_I(8) = 0;
+        }
+        else if (EXP1_I(8) < 60)
+        {
+            EXP1_I(8)++;
+        }
+        
+        if ((EXP1_I(0) & 0x1))
+        {
+            plp->mlwP->texP = plp->txp[PlyEyeTab[EXP1_I(4)]];
+            
+            if ((EXP1_I(0) & 0x2))
+            {
+                EXP1_I(4)++;
+                
+                if (EXP1_I(4) > 7) 
+                {
+                    EXP1_I(0) &= ~0x2;
+                    
+                    EXP1_I(4) = 0;
+                    EXP1_I(8) = 0;
+                    
+                    plp->mlwP->texP = plp->txp[0];
+                }
+            }
+        }
+    }
+}
+
+// 100% matching!
+void bhLookNearEnemy()
+{    
+    float h; 
+    int ay; 
+    int id; 
+
+    ay = 23665;
+    
+    h = EXP1_F(16) - plp->py;
+    
+    if (bhSearchNearEnemy2(plp, &ay, &h, &id) != 0)
+    {
+        if (EXP1_I(60) > 30)
+        {
+            if (EXP1_S(68) != id)
+            {
+                EXP1_I(60) = 0;
+            }
+            
+            EXP1_I(0) |= 0x10;
+            
+            EXP1_I(64) = 2;
+            EXP1_S(68) = id;
+            
+            EXP1_S(70) = ene[id].lok_jno;
+        }
+    } 
+    else if ((EXP1_I(0) & 0x10))
+    {
+        EXP1_I(0) |= 0x1E0;
+        
+        EXP1_I(0) &= ~0x10;
+        
+        EXP1_S(68) = -1;
+        EXP1_I(60) = 0;
+    }
+    
+    if (EXP1_I(60) < 1024)
+    {
+        EXP1_I(60)++;
+    }
+}
+
+// 100% matching!
+void bhSetHeadRotation(short ax, short ay) 
+{
+    BH_PWORK* pwp; 
+    POS* psp;      
+    float px, py, pz;     
+    float lpx, lpy, lpz;   
+    int ono;     
+    short lax, lay;    
+    short pax, pay;   
+
+    ono = EXP1_S(70);
+    
+    switch (EXP1_I(64)) 
+    {
+    case 1:
+        EXP1_S(68) = 0;
+        
+        lpx = EXP1_F(72);
+        lpy = EXP1_F(76);
+        lpz = EXP1_F(80);
+        break;
+    case 2:
+        if (sys->ewk_n <= EXP1_S(68)) 
+        {
+            EXP1_S(68) = 0;
+        }
+        
+        pwp = &ene[EXP1_S(68)];
+        break;
+    case 3:
+        if (rom->obj_n <= EXP1_S(68)) 
+        {
+            EXP1_S(68) = 0;
+        }
+        
+        pwp = (BH_PWORK*)&sys->obwp[EXP1_S(68)];
+        break;
+    case 4:
+        if (rom->itm_n <= EXP1_S(68)) 
+        {
+            EXP1_S(68) = 0;
+        }
+        
+        pwp = (BH_PWORK*)&sys->itwp[EXP1_S(68)];
+        break;
+    case 5:
+        if (rom->eff_n <= EXP1_S(68)) 
+        {
+            EXP1_S(68) = 0;
+        }
+        
+        pwp = (BH_PWORK*)&eff[sys->efid[EXP1_S(68)]];
+        break;
+    case 6:
+        EXP1_S(70) = 0;
+        
+        if (rom->pos_n <= EXP1_S(68)) 
+        {
+            EXP1_S(68) = 0;
+        }
+        
+        psp = &rom->posp[EXP1_S(68)];  
+        
+        lpx = psp->px;
+        lpy = psp->py;
+        lpz = psp->pz;
+        break;
+    }
+    
+    if ((EXP1_I(64) > 1) && (EXP1_I(64) < 6)) 
+    {
+        if (ono == 0) 
+        {
+            lpx = pwp->px;
+            lpy = pwp->py;
+            lpz = pwp->pz;
+        } 
+        else
+        {
+            lpx = pwp->mlwP->owP[ono].mtx[12]; 
+            lpy = pwp->mlwP->owP[ono].mtx[13]; 
+            lpz = pwp->mlwP->owP[ono].mtx[14];
+        }
+    }
+    
+    px = lpx - EXP1_F(72);
+    py = lpy - EXP1_F(76);
+    pz = lpz - EXP1_F(80);
+
+    if ((njSqrt((px * px) + (py * py) + (pz * pz)) > 1.6f) && (!(EXP1_I(0) & 0x8))) 
+    {
+        EXP1_F(72) = lpx;
+        EXP1_F(76) = lpy;
+        EXP1_F(80) = lpz; 
+    } 
+    else 
+    {
+        lpx = EXP1_F(72);
+        lpy = EXP1_F(76);
+        lpz = EXP1_F(80);
+    }
+    
+    px = lpx - plp->px;
+    pz = lpz - plp->pz;
+    
+    pax = -(int)(10430.381f * atan2f(lpy - EXP1_F(16), njSqrt((px * px) + (pz * pz))));
+    pax = -(pax + ax);
+    
+    if (pax > 6144)
+    {
+        pax = 6144;
+    }
+    
+    if (pax < -6144)
+    {
+        pax = -6144;
+    }
+    
+    px = lpx - plp->px;
+    pz = lpz - plp->pz;
+    
+    pay = -(int)(10430.381f * atan2f(px, pz)) + 32768;
+    pay = -(pay + ay);
+    
+    if (pay > 8192) 
+    {
+        pay = 8192;
+    }
+    
+    if (pay < -8192)
+    {
+        pay = -8192;
+    }
+    
+    pax = pax / 2;
+    pay = pay / 2;
+    
+    lax = EXP1_S(48) + (short)((short)(pax - EXP1_S(48)) / 4);
+    lay = EXP1_S(50) + (short)((short)(pay - EXP1_S(50)) / 4);
+    
+    EXP1_S(48) = lax; 
+    EXP1_S(50) = lay;
+    
+    EXP1_S(54) = lax;
+    EXP1_S(56) = lay;
+    
+    plp->mlwP->objP[4].ang[0] = EXP1_S(48);
+    plp->mlwP->objP[4].ang[1] = EXP1_S(50); 
+    
+    plp->mlwP->objP[5].ang[0] = EXP1_S(54);
+    plp->mlwP->objP[5].ang[1] = EXP1_S(56);
+}
+
+// 100% matching!
+void bhCalcHair(O_WRK* op, BH_PWORK* pp)
+{    
+    HAIR_WORK* hair; 
+    NJS_POINT3 ps;   
+    short ax, ay, az;        
+
+    hair = (HAIR_WORK*)op->exp3;
+    
+    hair->axb = hair->ax;
+    hair->ayb = hair->ay;
+    hair->azb = hair->az;
+    
+    ax = pp->ax + pp->mlwP->objP[0].ang[0];
+    ay = pp->ay + pp->mlwP->objP[0].ang[1];
+    az = pp->az + pp->mlwP->objP[0].ang[2];
+    
+    ax += pp->mlwP->objP[1].ang[0];
+    ay += pp->mlwP->objP[1].ang[1];
+    az += pp->mlwP->objP[1].ang[2];
+    
+    ax += pp->mlwP->objP[2].ang[0];
+    ay += pp->mlwP->objP[2].ang[1];
+    az += pp->mlwP->objP[2].ang[2];
+    
+    ax += pp->mlwP->objP[3].ang[0];
+    ay += pp->mlwP->objP[3].ang[1];
+    az += pp->mlwP->objP[3].ang[2];
+    
+    ax += pp->mlwP->objP[4].ang[0];
+    ay += pp->mlwP->objP[4].ang[1];
+    az += pp->mlwP->objP[4].ang[2];
+    
+    ax += pp->mlwP->objP[5].ang[0];
+    ay += pp->mlwP->objP[5].ang[1];
+    az += pp->mlwP->objP[5].ang[2];
+    
+    hair->ax = ax;
+    hair->ay = ay;
+    hair->az = az;
+    
+    hair->oxb = hair->ox;
+    hair->oyb = hair->oy;
+    hair->ozb = hair->oz;
+    
+    hair->ox = op->mlwP->owP->mtx[12];
+    hair->oy = op->mlwP->owP->mtx[13];
+    hair->oz = op->mlwP->owP->mtx[14];
+    
+    ps.x = hair->ox - hair->oxb;
+    ps.y = 0;
+    ps.z = hair->oz - hair->ozb;
+    
+    njUnitMatrix(NULL);
+    
+    njRotateY(NULL, -ay);
+    njRotateX(NULL, -ax);
+    njRotateZ(NULL, -az);
+    
+    njCalcPoint(NULL, &ps, (NJS_POINT3*)&hair->spx);
+    
+    hair->spy = hair->oy - hair->oyb;
+    
+    if (hair->spx > 1.0f)
+    {
+        hair->spx = 1.0f;
+    }
+    
+    if (hair->spx < -1.0f) 
+    {
+        hair->spx = -1.0f;
+    }
+    
+    if (hair->spy > 1.0f) 
+    {
+        hair->spy = 1.0f;
+    }
+    
+    if (hair->spy < -1.0f)
+    {
+        hair->spy = -1.0f;
+    }
+    
+    if (hair->spz > 1.0f)
+    {
+        hair->spz = 1.0f;
+    }
+    
+    if (hair->spz < -1.0f) 
+    {
+        hair->spz = -1.0f;
+    }
+}
+
+// 100% matching!
+void* bhGetTransZ(int mtn_no)
+{
+	unsigned char* datp, *retp; 
+    unsigned int sz;     
+    int i;               
+
+    i = mtn_no + 1;
+
+    datp = sys->plzmtp;
+    
+    while (i-- != 0) 
+    {
+        sz = *(unsigned int*)datp;
+        
+        if (sz == -1) 
+        {
+            retp = NULL;
+            break;
+        }
+
+        datp += 4;
+
+        retp = datp;
+
+        datp = &datp[sz];
+    }
+
+    return retp;
+}

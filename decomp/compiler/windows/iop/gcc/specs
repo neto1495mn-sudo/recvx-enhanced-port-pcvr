@@ -1,0 +1,47 @@
+#
+# $Id: iopspecs,v 1.3 1999/08/31 10:23:59 tei Exp $
+#
+# This file copy to
+#    $distdir/lib/gcc-lib/mipsel-scei-elfl/specs
+#   and
+#    $distdir/lib/gcc-lib/mipsel-scei-ecoffl/specs
+#
+# Supprt options
+#    -startfiles		use crt0.o
+#    no -Ttext option		genarate IOP relocatable object
+#    -ilb=<IOPlib>		IOP external module lib
+#    -Map=<MapFileName>		link map output
+#
+#    -Ttext <addr>		genarate IOP fixed addrss object (no support)
+#
+#
+*lib:
+
+
+*startfile:
+crt0%O%s
+
+*endfile:
+
+
+*link_command:
+%{!fsyntax-only:\
+  %{!c:%{!M:%{!MM:%{!E:%{!S:\
+ 	ioplibld %{t:-v} %{zd:-d} %{zi:--ignore-undef} -s %g_ilb_stub.s \
+			%{!A:%{!nostdlib:%{startfiles:%S}}} \
+			%{static:} %{L*} %D %o \
+			%{!nostdlib:%{!nodefaultlibs:%G}} \
+			%{!A:%{!nostdlib:%{startfiles:%E}}} \
+			: %{ilb=*:%*} \
+			%{!noiopilb:%{!nostdlib:%{!nodefaultlibs:iop.ilb%s}}}
+	as %g_ilb_stub.s -o %g_ilb_stub%O
+	ld %l %{Map=*:-Map %*} -dc -r %X -o %g_iop_rel%O %{t} %{u*} %{x} \
+			%{!A:%{!nostdlib:%{startfiles:%S}}} \
+			%{static:} %{L*} %D %o %g_ilb_stub%O \
+			%{!nostdlib:%{!nodefaultlibs:%G}} \
+			%{!A:%{!nostdlib:%{startfiles:%E}}}
+	iopfixup %{!Ttext*:%{e*} %{s:%{o*}} %{!s:%{o*:-r %*}}} \
+		 %{Ttext*:%{e*} %{o*:-f %*} -t %*} \
+		 %g_iop_rel%O}
+ }}}}}}
+

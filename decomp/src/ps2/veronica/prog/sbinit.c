@@ -1,0 +1,57 @@
+#include "../../../ps2/veronica/prog/sbinit.h"
+#include "../../../ps2/veronica/prog/gdlib.h"
+#include "../../../ps2/veronica/prog/ps2_dummy.h"
+#include "../../../ps2/veronica/prog/ps2_NaSystem.h"
+#include "../../../ps2/veronica/prog/ps2_sg_maloc.h"
+#include "../../../ps2/veronica/prog/ps2_sg_pad.h"
+#include "../../../ps2/veronica/prog/ps2_sg_sybt.h"
+#include "../../../ps2/veronica/prog/ps2_sg_syhw.h"
+#include "../../../ps2/veronica/prog/ps2_sg_syrtc.h"
+
+unsigned char gMapleRecvBuf[1024 * 24 * 2 + 32];
+unsigned char gMapleSendBuf[1024 * 24 * 2 + 32];
+
+// 100% matching!
+void sbInitSystem(Int mode, Int frame, Int count)
+{
+    set_imask(15); 
+    
+    syHwInit();
+    syMallocInit(HEAP_AREA, HEAP_SIZE);
+    
+    njSetTextureMemorySize(1310720); 
+    
+    njInitSystem(mode, frame, count); 
+    
+    syHwInit2(); 
+    
+    pdInitPeripheral(PDD_PLOGIC_ACTIVE, &gMapleRecvBuf, &gMapleSendBuf); 
+    
+    syRtcInit(); 
+
+    set_imask(0); 
+    
+    if (InitGdSystemEx(256) != 0) 
+    { 
+        sbExitSystem(); 
+        
+        syBtExit(); 
+    }
+}
+
+// 100% matching!
+void sbExitSystem(void)
+{ 
+    ExitGdSystem(); 
+    
+    syRtcFinish(); 
+    
+    pdExitPeripheral(); 
+    
+    njExitSystem(); 
+    
+    syMallocFinish(); 
+    syHwFinish(); 
+    
+    set_imask(15); 
+} 

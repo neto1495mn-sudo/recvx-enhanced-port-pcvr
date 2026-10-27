@@ -1,0 +1,28 @@
+{
+  "name": "Quarantine Annex",
+  "key_flag": 464,
+  "rooms": [
+    {"id":"1160","name":"Reception","size":[64,80],"style":"reception","sign":"RECEPTION","sound":60,
+     "doors":[["S",111,0],["W",102,3],["N",117,0],["E",121,1]],
+     "items":[[12,12,28,460],[21,50,58,461]],"enemies":[]},
+    {"id":"1170","name":"Decontamination","size":[56,100],"style":"wash","sign":"WASH","sound":60,
+     "doors":[["S",116,2],["N",118,0]],
+     "items":[[12,12,26,462],[21,40,72,463]],
+     "enemies":[[1,1,"0060",0,19,57,460],[1,1,"0060",0,37,74,461]]},
+    {"id":"1180","name":"Records Office","size":[64,80],"style":"records","sign":"RECORDS","sound":60,
+     "doors":[["S",117,1],["E",119,0]],
+     "items":[[72,14,64,464],[21,52,25,465]],
+     "enemies":[[1,1,"0060",0,25,40,462],[1,1,"0060",0,39,65,463]]},
+    {"id":"1190","name":"Isolation Gallery","size":[72,100],"style":"isolation","sign":"ISOLATION","sound":60,
+     "doors":[["W",118,1],["E",120,0],["N",121,0]],
+     "items":[[12,16,24,466],[21,56,77,467]],
+     "enemies":[[1,1,"0060",0,31,27,464],[4,0,"3020",2,43,73,465]]},
+    {"id":"1200","name":"Emergency Supply","size":[56,80],"style":"supply","sign":"SUPPLY","sound":60,
+     "doors":[["W",119,1]],
+     "items":[[12,14,26,468],[22,42,61,469]],"enemies":[]},
+    {"id":"1210","name":"Dispatch Bay","size":[72,100],"style":"dispatch","sign":"DISPATCH","sound":3020,
+     "doors":[["S",119,2],["W",116,3]],
+     "items":[[12,16,25,470],[21,56,77,471]],
+     "enemies":[[4,0,"3020",2,30,30,466],[4,0,"3020",2,45,76,467]]}
+  ]
+}
