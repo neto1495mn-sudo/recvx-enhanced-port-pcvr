@@ -50,7 +50,7 @@ typedef struct {
     int   turn_at;              /* vr141: g_vr_turn_total as this frame took it (the renderer shows the rest) */
     float turn;                 /* vr120: the view's smooth turn this frame (radians, the change of vr_yaw; 0 for a snap turn) */
 } VrView;
-enum { VRMK_DOT = 0, VRMK_BUTTON = 1, VRMK_NUMBER = 2 };   /* aiming dot, the "A" over what the action button would use, the holster's ammo count */
+enum { VRMK_DOT = 0, VRMK_BUTTON = 1, VRMK_NUMBER = 2, VRMK_RING = 3 };   /* vr223: VRMK_RING the shotgun's round reticle (RE4's) */   /* aiming dot, the "A" over what the action button would use, the holster's ammo count */
 
 /* small 4x4 helpers (column-major), vr_math.c */
 void vr_mat_identity(float m[16]);

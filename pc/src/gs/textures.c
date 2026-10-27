@@ -340,7 +340,15 @@ static GLuint decode(const Def* d, uint64_t tex0, uint64_t texa, int* w, int* h,
     if (!px) return 0;
     gs_mem_scratch_begin();
     run_ops(d, d->clut_end, d->nop, d->tbp, d->cbp);
-    if (trep_active()) {   /* an HD pack's image for it (texreplace.c); sampled with the original size's coordinates */
+    if (trep_active() && (uint32_t)(tex0 & 0x3FFF) != d->tbp) {   /* vr194 log */
+        extern void host_log(const char* fmt, ...);
+        static int nl;
+        if (nl++ < 50) host_log("tex: drawn from inside a bigger upload (tbp %u, upload at %u) - its own decode, not the upload's HD image\n", (unsigned)(tex0 & 0x3FFF), (unsigned)d->tbp);
+    }
+    /* vr194: only when the draw starts at the upload's own address - one starting inside it (the equipped weapon's
+       box: tbp 14336 in the inventory icons' upload at 13312) got the whole upload's HD image at its own
+       coordinates, a different picture of it (a gold Luger for any weapon) */
+    if (trep_active() && (uint32_t)(tex0 & 0x3FFF) == d->tbp) {   /* an HD pack's image for it (texreplace.c); sampled with the original size's coordinates */
         GLuint r = trep_lookup((tex0 & ~0x3FFFull) | d->tbp, texa);
         if (r) { gs_mem_scratch_end(); free(px); *w = (int)W; *h = (int)H; *hd = 1; return r; }
     }
@@ -350,6 +358,7 @@ static GLuint decode(const Def* d, uint64_t tex0, uint64_t texa, int* w, int* h,
     glBindTexture(GL_TEXTURE_2D, t);
     glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, (GLsizei)W, (GLsizei)H, 0, GL_RGBA, GL_UNSIGNED_BYTE, px);
+    if (trep_active()) { extern void trep_pending_native(unsigned int gl_tex); trep_pending_native(t); }   /* vr157: replaced once its HD file is read */
     {   /* RECVX_DUMP_TEX=dir: also the native decodes */
         static const char* dd; static int chk, ndump;
         if (!chk++) dd = getenv("RECVX_DUMP_TEX");
@@ -403,6 +412,19 @@ int ntex_lookup(uint64_t tex0, uint64_t texa, unsigned int* out_tex, int* out_w,
     if (!e->hd) ntex_bytes += (uint64_t)e->w * e->h * 4;
     *out_tex = e->tex; *out_w = e->w; *out_h = e->h;
     return e->hd ? 3 : 1;
+}
+
+/* vr157: an original decode whose HD replacement has come in (texreplace.c): dropped, decoded again at the next draw */
+void ntex_drop_native(unsigned int gl_tex)
+{
+    for (int i = 0; i < MAX_NTEX; i++)
+        if (ntex[i].used && !ntex[i].hd && ntex[i].tex == gl_tex) {
+            gs_texcache_drop_gl(gl_tex);
+            gs_tex_delete(gl_tex);
+            ntex_bytes -= (uint64_t)ntex[i].w * ntex[i].h * 4;
+            ntex[i].used = 0;
+            return;
+        }
 }
 
 void ntex_drop_gl(unsigned int gl_tex)

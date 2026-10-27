@@ -43,6 +43,8 @@ int g_tex_hd = 1;        /* ini tex_hd: use the packs */
 int g_tex_hd_log = 0;    /* ini tex_hd_log: log the names of textures without a replacement */
 int g_tex_hd_mb = 600;   /* ini tex_hd_mb: video memory for replacements (MB) */
 int g_tex_hd_max = 1024; /* ini tex_hd_max: largest size kept (bigger images are reduced) */
+int g_tex_loaders = 4;   /* ini tex_loaders: threads reading the replacement files (vr160: 4..6) */
+int g_tex_upload = 0;    /* ini tex_upload_thread: the upload to the video card on a thread of its own (vr160): 0 by the card, 1 on, 2 off */
 int g_tex_hd_per_frame = 2;   /* ini tex_hd_per_frame: replacements converted per frame (vr119: 4 made frames of 25-38 ms on entering a room) */
 
 #define GL_COMPRESSED_RGBA_S3TC_DXT1_EXT 0x83F1
@@ -63,6 +65,12 @@ typedef struct {
     GLuint tex;          /* uploaded (0: not yet, or failed) */
     uint32_t bytes, last;
     int failed, w, ht, mips, queued;
+    /* vr157: read in the background (aikatore's hdpack.c 1352f3b1, here for our pack); job under jm */
+    int job;             /* J_NONE, J_QUEUED (in jq), J_RUNNING, J_DONE (in dq) */
+    uint8_t* data; size_t len;   /* the file read, until uploaded */
+    GLuint native[8];    /* the original decodes drawn meanwhile (dropped when the HD one is in; vr158: all of them -
+                            the game can hold the same texture in several copies, and one left kept switching back) */
+    int nnative;
 } Entry;
 
 static Entry* tab;
@@ -198,6 +206,7 @@ static void scan(const char* dir, int depth)
     closedir(d);
 }
 
+static void loader_start(void);
 static void init(void)
 {
     const char* base = SDL_GetBasePath();
@@ -211,6 +220,7 @@ static void init(void)
     for (int k = 0; k < nign; k++)   /* the ignore list wins over the pack */
         for (uint32_t i = 0; i < tab_cap; i++)
             if (tab[i].path && tab[i].h == ign[k].h && (ign[k].any_clut || tab[i].clut == ign[k].clut)) tab[i].failed = 2;
+    if (tab_n) loader_start();   /* vr157 */
 }
 
 int trep_active(void)
@@ -398,9 +408,11 @@ static void queue_convert(Entry* e)
     queue[nqueue++] = e;
 }
 
+static void bg_finish(void);   /* vr157 (below) */
 void trep_frame_begin(void)
 {
     int done = 0;
+    bg_finish();   /* vr157 */
     while (nqueue && done < (g_tex_hd_per_frame > 0 ? g_tex_hd_per_frame : 1)) {   /* a few per frame: no long hitch on entering a room */
         Entry* e = queue[0];
         int dw = e->w, dh = e->ht;
@@ -426,18 +438,29 @@ void trep_frame_begin(void)
 }
 
 /* vr131: an entry's file loaded (from trep_lookup; trep_named) - 0 when it could not be */
-static int load_entry(Entry* e)
+/* the GL texture from the file's bytes (the render thread, or vr160's upload thread on its shared context) */
+static GLuint make_gl(Entry* e, uint8_t* d, size_t len, uint32_t* bytes, int* mips)
 {
-    size_t len = 0;
-    uint8_t* d = read_file(e->path, &len);
-    int mips = 0;
-    uint32_t bytes = 0;
     GLuint t = 0;
+    *bytes = 0; *mips = 0;
     if (d) {
-        t = (len > 4 && !memcmp(d, "DDS ", 4)) ? load_dds(d, len, &bytes, &mips, &e->w, &e->ht) : load_png(d, len, &bytes, &mips, &e->w, &e->ht);
+        t = (len > 4 && !memcmp(d, "DDS ", 4)) ? load_dds(d, len, bytes, mips, &e->w, &e->ht) : load_png(d, len, bytes, mips, &e->w, &e->ht);
         free(d);
     }
+    return t;
+}
+
+/* (render thread) the texture made is the entry's now */
+static int finish_entry(Entry* e, GLuint t, uint32_t bytes, int mips)
+{
     if (!t) { e->failed = 1; host_log("tex: could not load %s\n", e->path); return 0; }
+    if (e->nnative) {   /* vr157: the original decodes drawn meanwhile go; the next draws get this one */
+        extern void ntex_drop_native(unsigned int gl_tex);
+        static unsigned nl;
+        for (int k = 0; k < e->nnative; k++) ntex_drop_native(e->native[k]);
+        if (e->nnative > 1 && g_tex_hd_log && nl++ < 50) host_log("tex: background: %d originals replaced by one HD (%s)\n", e->nnative, e->path);
+        e->nnative = 0;
+    }
     make_room(bytes);
     e->tex = t; e->bytes = bytes; used_bytes += bytes; e->mips = mips;
     if (t < 65536) hd_kind[t] = (uint8_t)(mips ? 2 : 1);
@@ -448,6 +471,200 @@ static int load_entry(Entry* e)
         if (nlog++ < 1000) host_log("tex: HD at %.1f s: %s (%u KB, %u MB in use)\n", SDL_GetTicks() / 1000.0, name ? name + 1 : e->path, bytes >> 10, (unsigned)(used_bytes >> 20));
     }
     return e->tex != 0;
+}
+
+static int upload_entry(Entry* e, uint8_t* d, size_t len)
+{
+    uint32_t bytes; int mips;
+    GLuint t = make_gl(e, d, len, &bytes, &mips);
+    return finish_entry(e, t, bytes, mips);
+}
+
+static int load_entry(Entry* e)   /* at once, on the render thread (trep_named) */
+{
+    size_t len = 0;
+    uint8_t* d = read_file(e->path, &len);
+    return upload_entry(e, d, len);
+}
+
+/* ---------------- vr157: loading in the background ----------------
+   As aikatore's HD pack (hdpack.c, v0.6.4 "load replacements in the background"): loader threads
+   read the files while the draws keep the original texture; at the start of each frame the render
+   thread uploads what is read, up to 3 ms of it (at least one file). Read but not uploaded: at most
+   128 MB. The original decode drawn meanwhile is dropped once the replacement is in. */
+enum { J_NONE, J_QUEUED, J_RUNNING, J_DONE };
+#define UPLOAD_BUDGET_NS 3000000
+#define READY_MAX (128u << 20)
+#define LOADERS_MAX 6   /* vr160: g_tex_loaders, 4..6 (vr159: 4) */
+static SDL_Mutex* jm;
+static SDL_Condition* jc;
+static Entry** jq; static uint32_t jq_h, jq_n;   /* to read (ring of tab_cap) */
+static Entry** dq; static uint32_t dq_n;         /* read, to upload */
+static uint64_t ready;                           /* bytes read, not uploaded */
+static int loaders;
+/* vr160: the upload thread - its own GL context shared with the render thread's, so the upload to the
+   video card runs on another CPU; the render thread only takes the finished textures (gq) */
+typedef struct { Entry* e; GLuint t; uint32_t bytes; int mips; } Made;
+static Made* gq; static uint32_t gq_n;
+static SDL_Window* up_win; static SDL_GLContext up_ctx;
+static SDL_AtomicInt up_on;                      /* 1 the upload thread runs, 0 the render thread uploads (as vr157) */
+static uint64_t up_ns; static uint32_t up_n;     /* its time, for the log */
+static Entry* pending;                           /* the lookup just answered "not yet" (trep_pending_native) */
+static uint32_t n_bg, n_bg_frames;
+
+static int SDLCALL loader(void* unused)
+{
+    (void)unused;
+    SDL_LockMutex(jm);
+    for (;;) {
+        Entry* e;
+        size_t len = 0;
+        uint8_t* d;
+        while (!jq_n || ready > READY_MAX) SDL_WaitCondition(jc, jm);
+        e = jq[jq_h]; jq_h = (jq_h + 1) % tab_cap; jq_n--;
+        if (e->job != J_QUEUED) continue;
+        e->job = J_RUNNING;
+        SDL_UnlockMutex(jm);
+        d = read_file(e->path, &len);
+        SDL_LockMutex(jm);
+        e->data = d; e->len = len;
+        e->job = J_DONE;
+        ready += len;
+        dq[dq_n++] = e;
+    }
+    return 0;
+}
+
+#ifndef GL_VENDOR
+#define GL_VENDOR 0x1F00
+#endif
+static int SDLCALL uploader(void* unused)
+{
+    (void)unused;
+    if (!SDL_GL_MakeCurrent(up_win, up_ctx)) {
+        host_log("tex: upload thread: cannot use its GL context (%s) - uploads on the render thread\n", SDL_GetError());
+        return 0;
+    }
+    SDL_SetAtomicInt(&up_on, 1);
+    host_log("tex: upload thread on (its own GL context)\n");
+    SDL_LockMutex(jm);
+    for (;;) {
+        Entry* e;
+        uint8_t* d; size_t len;
+        Made m;
+        uint64_t t0;
+        while (!dq_n) SDL_WaitCondition(jc, jm);
+        e = dq[0]; memmove(dq, dq + 1, (size_t)(--dq_n) * sizeof(Entry*));
+        d = e->data; len = e->len; e->data = NULL; e->len = 0;
+        SDL_UnlockMutex(jm);
+        t0 = SDL_GetTicksNS();
+        m.e = e;
+        m.t = make_gl(e, d, len, &m.bytes, &m.mips);
+        glFinish();   /* complete before the render thread draws with it */
+        SDL_LockMutex(jm);
+        up_ns += SDL_GetTicksNS() - t0; up_n++;
+        ready -= len;
+        gq[gq_n++] = m;
+        SDL_BroadcastCondition(jc);
+    }
+    return 0;
+}
+
+static void loader_start(void)
+{
+    const char* vendor = (const char*)glGetString(GL_VENDOR);
+    const char* card = (const char*)glGetString(GL_RENDERER);
+    int n = g_tex_loaders < 4 ? 4 : g_tex_loaders > LOADERS_MAX ? LOADERS_MAX : g_tex_loaders, up;
+    if (!(jq = malloc((size_t)tab_cap * sizeof(Entry*))) || !(dq = malloc((size_t)tab_cap * sizeof(Entry*))) ||
+        !(gq = malloc((size_t)tab_cap * sizeof(Made))) || !(jm = SDL_CreateMutex()) || !(jc = SDL_CreateCondition())) return;
+    for (int i = 0; i < n; i++) {
+        SDL_Thread* th = SDL_CreateThread(loader, "texreplace", NULL);
+        if (th) { SDL_DetachThread(th); loaders++; }
+    }
+    host_log("tex: background loading with %d threads\n", loaders);
+    /* vr160: the upload thread - by the card (NVIDIA and AMD share contexts well), or as the launcher says */
+    up = g_tex_upload == 1 || (g_tex_upload == 0 && vendor && (SDL_strcasestr(vendor, "NVIDIA") || SDL_strcasestr(vendor, "AMD") || SDL_strcasestr(vendor, "ATI")));
+    host_log("tex: video card %s / %s - upload thread %s (%s)\n", vendor ? vendor : "?", card ? card : "?", up ? "wanted" : "off",
+             g_tex_upload == 1 ? "launcher: on" : g_tex_upload == 2 ? "launcher: off" : "automatic");
+    if (up && loaders) {
+        SDL_GLContext main_ctx = SDL_GL_GetCurrentContext();
+        up_win = SDL_GL_GetCurrentWindow();
+        SDL_GL_SetAttribute(SDL_GL_SHARE_WITH_CURRENT_CONTEXT, 1);
+        up_ctx = up_win ? SDL_GL_CreateContext(up_win) : NULL;
+        SDL_GL_SetAttribute(SDL_GL_SHARE_WITH_CURRENT_CONTEXT, 0);
+        if (up_win) SDL_GL_MakeCurrent(up_win, main_ctx);   /* (creating it made it current here) */
+        if (!up_ctx) host_log("tex: upload thread: no shared GL context (%s) - uploads on the render thread\n", SDL_GetError());
+        else {
+            SDL_Thread* th;
+            SDL_GL_MakeCurrent(up_win, main_ctx);
+            if ((th = SDL_CreateThread(uploader, "texupload", NULL))) SDL_DetachThread(th);
+            else host_log("tex: upload thread: cannot start it - uploads on the render thread\n");
+        }
+    }
+}
+
+static void bg_queue(Entry* e)   /* (render thread) */
+{
+    SDL_LockMutex(jm);
+    if (e->job == J_NONE && jq_n < tab_cap) { e->job = J_QUEUED; jq[(jq_h + jq_n) % tab_cap] = e; jq_n++; SDL_SignalCondition(jc); }
+    SDL_UnlockMutex(jm);
+}
+
+/* frame start: upload what the loader threads read, up to the budget */
+static void bg_finish(void)
+{
+    uint64_t t0 = SDL_GetTicksNS();
+    int done = 0;
+    if (!loaders) return;
+    if (SDL_GetAtomicInt(&up_on)) {   /* vr160: the upload thread made them - only taken here */
+        Made* got = NULL;
+        uint32_t n = 0;
+        SDL_LockMutex(jm);
+        if (gq_n && (got = malloc(gq_n * sizeof(Made)))) { memcpy(got, gq, gq_n * sizeof(Made)); n = gq_n; gq_n = 0; }
+        SDL_UnlockMutex(jm);
+        for (uint32_t k = 0; k < n; k++) {
+            Entry* e = got[k].e;
+            SDL_LockMutex(jm); e->job = J_NONE; SDL_UnlockMutex(jm);
+            if (!e->tex && !e->failed) finish_entry(e, got[k].t, got[k].bytes, got[k].mips);
+            else if (got[k].t) glDeleteTextures(1, &got[k].t);
+            n_bg++;
+        }
+        free(got);
+        if (n) n_bg_frames++;
+        if (n && g_tex_hd_log && (n_bg_frames % 50) == 1)
+            host_log("tex: upload thread: %u files (%.1f ms each on its thread), %.2f ms on the render thread this frame\n",
+                     up_n, up_n ? up_ns / 1e6 / up_n : 0.0, (SDL_GetTicksNS() - t0) / 1e6);
+        return;
+    }
+    for (;;) {
+        Entry* e = NULL;
+        uint8_t* d; size_t len;
+        SDL_LockMutex(jm);
+        if (dq_n && (!done || SDL_GetTicksNS() - t0 < UPLOAD_BUDGET_NS)) {
+            e = dq[0]; memmove(dq, dq + 1, (size_t)(--dq_n) * sizeof(Entry*));
+            d = e->data; len = e->len; e->data = NULL; e->len = 0;
+            ready -= len; e->job = J_NONE;
+            SDL_BroadcastCondition(jc);
+        }
+        SDL_UnlockMutex(jm);
+        if (!e) break;
+        if (!e->tex && !e->failed) upload_entry(e, d, len); else free(d);
+        done++; n_bg++;
+    }
+    if (done) n_bg_frames++;
+    if (done && g_tex_hd_log && (n_bg_frames % 50) == 1)
+        host_log("tex: background: %u files uploaded in %u frames (%.1f ms this frame)\n", n_bg, n_bg_frames, (SDL_GetTicksNS() - t0) / 1e6);
+}
+
+/* textures.c decode: the original made for a lookup that answered "not yet" */
+void trep_pending_native(unsigned int gl_tex)
+{
+    if (pending) {
+        int k;
+        for (k = 0; k < pending->nnative && pending->native[k] != gl_tex; k++) {}
+        if (k == pending->nnative && k < 8) pending->native[pending->nnative++] = gl_tex;
+        pending = NULL;
+    }
 }
 
 unsigned int trep_lookup(uint64_t tex0, uint64_t texa)
@@ -469,11 +686,36 @@ unsigned int trep_lookup(uint64_t tex0, uint64_t texa)
         return 0;
     }
     e->last = (uint32_t)SDL_GetTicks();
-    if (!e->tex && !e->failed && !load_entry(e)) return 0;
+    pending = NULL;
+    if (!e->tex && !e->failed) {
+        if (!loaders) { if (!load_entry(e)) return 0; }
+        else { bg_queue(e); pending = e; return 0; }   /* vr157: read in the background; the original meanwhile */
+    }
     if (!e->tex) return 0;
     n_hits++;
     if ((n_lookups % 200) == 0) host_log("tex: %u textures seen, %u replaced\n", n_lookups, n_hits);
     return e->tex;
+}
+
+/* vr188 diagnosis: the HD pack's file for this GS texture, NULL when it has none */
+const char* trep_file_for(uint64_t tex0, uint64_t texa)
+{
+    uint64_t h, clut;
+    uint32_t bits;
+    Entry* e;
+    if (!trep_active()) return NULL;
+    names(tex0, texa, &h, &clut, &bits);
+    e = find(h, clut, bits);
+    if (!e) return NULL;
+    { const char* n = strrchr(e->path, '\\'); const char* m = strrchr(e->path, '/'); if (m > n) n = m; return n ? n + 1 : e->path; }
+}
+
+/* vr192 diagnosis: the HD file of an uploaded replacement, by its GL name */
+const char* trep_file_of_gl(unsigned int gl_tex)
+{
+    for (uint32_t i = 0; gl_tex && i < tab_cap; i++)
+        if (tab[i].path && tab[i].tex == gl_tex) { const char* n = strrchr(tab[i].path, '/'); const char* m = strrchr(tab[i].path, 92); if (m > n) n = m; return n ? n + 1 : tab[i].path; }
+    return NULL;
 }
 
 int trep_kind(unsigned int gl_tex) { return gl_tex < 65536 ? hd_kind[gl_tex] : 0; }
@@ -494,7 +736,7 @@ unsigned int trep_named(const char* file, int* mips)
     }
     if (idx < 0) return 0;
     tab[idx].last = (uint32_t)SDL_GetTicks();
-    if (!tab[idx].tex && !tab[idx].failed && !load_entry(&tab[idx])) return 0;
+    if (!tab[idx].tex && !tab[idx].failed && tab[idx].job == J_NONE && !load_entry(&tab[idx])) return 0;
     if (mips) *mips = tab[idx].mips;
     return tab[idx].tex;
 }

@@ -14,6 +14,7 @@
 #include "../src/host/settings.h"
 #include "../src/host/bindings.h"
 #include "../src/host/menu_mouse.h"
+#include "../src/host/xr.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -28,6 +29,8 @@ int pc_ui_text_wrap(float x, float y, float w, const char* s, float sc, unsigned
 void pc_ui_rect(float x0, float y0, float x1, float y1, unsigned int argb, float z);
 void pc_ui_arrow(float x, float y, int dir, unsigned int argb);
 int bind_any_down(void);
+void config_save(void);
+uint64_t SDL_GetTicks(void);
 
 enum { P_UP = 0x1000, P_RIGHT = 0x2000, P_DOWN = 0x4000, P_LEFT = 0x8000, P_START = 0x800, P_SELECT = 0x100, P_L1 = 0x4, P_R1 = 0x8 };   /* Pad[] bits */
 
@@ -208,7 +211,9 @@ static void move_sel(int dir)
 
 static void set_page(int p)
 {
+    int dir = p < st.page ? -1 : 1;
     st.page = (p + SP_COUNT) % SP_COUNT;
+    if (st.page == SP_EXTRAS && !g_extras_unlocked) st.page = (st.page + dir + SP_COUNT) % SP_COUNT;   /* vr218: hidden until unlocked */
     st.sel = 0; st.top = 0;
     CallSystemSe(0, 2);
 }
@@ -334,7 +339,7 @@ static void draw_row(int i, int sel)
         pc_ui_text(320 - w / 2, y - 2, t, 0.72f, sel ? pulse() : 0xFFE8E0C0);
         pc_ui_arrow(320 - w / 2 - 14, y + 9, -1, col);
         pc_ui_arrow(320 + w / 2 + 14, y + 9, 1, col);
-        snprintf(t, sizeof(t), "%d/%d", st.page + 1, SP_COUNT);
+        snprintf(t, sizeof(t), "%d/%d", st.page + 1, g_extras_unlocked ? SP_COUNT : SP_COUNT - 1);   /* vr218 */
         pc_ui_text(560, y + 2, t, 0.45f, 0xFF909090);
         pc_ui_text(48, y + 2, "L1  R1", 0.45f, 0xFF909090);
         return;
@@ -451,6 +456,34 @@ static void draw(void)
     AdvEasySetTextureList(0);   /* the option screen's textures again (the font set its own) */
 }
 
+/* vr218: the EXTRAS page (cheats: infinite health and ammo, items, teleport...) is hidden; in these pages the Touch
+   controllers' left grip twice, X, Y, X (each within 3 s of the last) unlocks it until the game closes */
+static void extras_code(void)
+{
+    static const int seq[5] = { 1, 1, 2, 3, 2 };   /* 1 left grip, 2 X, 3 Y */
+    static int pos, was;
+    static uint64_t last;
+    VrInput in;
+    int now, b;
+    if (g_extras_unlocked || !xr_input(&in)) return;
+    now = (in.lgrip > 0.5f ? 1 : 0) | ((in.buttons & VRB_X) ? 2 : 0) | ((in.buttons & VRB_Y) ? 4 : 0);
+    b = now & ~was;
+    was = now;
+    if (!b) return;
+    if (pos && SDL_GetTicks() - last > 3000) pos = 0;
+    last = SDL_GetTicks();
+    b = (b & 1) ? 1 : (b & 2) ? 2 : 3;
+    if (b == seq[pos]) pos++;
+    else pos = b == seq[0] ? 1 : 0;
+    if (pos < 5) return;
+    pos = 0;
+    g_extras_unlocked = 1;   /* vr219: until the game closes - not kept in recvx.ini */
+    host_log("options: EXTRAS unlocked (the code)\n");
+    CallSystemSe(0, 3);
+    st.page = SP_EXTRAS; st.sel = 0; st.top = 0;
+    say("EXTRA MENU");
+}
+
 /* 0 stay, 1 back */
 static int input(int port)
 {
@@ -467,6 +500,7 @@ static int input(int port)
         if (bind_any_down() || g_menu_mouse.held) return 0;
         st.wait_release = 0;
     }
+    extras_code();   /* vr218 */
     hit = row_at(mt.x, mt.y);
     if (hit >= 0 && (mt.moved || mt.left) && hit != st.sel) { st.sel = hit; CallSystemSe(0, 2); }
     if (rows[st.sel].kind == K_BIND && hit == st.sel && (mt.moved || mt.left)) st.slot = mt.x >= 360 + 120;

@@ -228,7 +228,8 @@ static const char* fs_src =
     "    vec2 tc = (u_fst != 0) ? v_stq.xy : (v_stq.xy / v_stq.z) * u_texsize;\n"
     "    tc = wrap(tc);\n"
     "    vec4 t = texture(u_tex, tc * u_texofs.xy + u_texofs.zw);\n"
-    "    t.rgb *= 255.0; t.a *= u_tex_alpha_scale;\n"
+    "    t.rgb *= 255.0; t.a *= abs(u_tex_alpha_scale);\n"
+    "    if (u_tex_alpha_scale < 0.0) t.a = min(t.a, 128.0);\n"   /* vr195: an HD pack image: its alpha capped at the GS opaque 0x80 */
     "    if (u_rt16.x != 0.0) {\n"                     /* render target read as 16-bit texels */
     "      t.rgb = floor(clamp(t.rgb, 0.0, 255.0) / 8.0) * 8.0;\n"
     "      t.a = (t.a >= 127.5) ? u_rt16.z : ((u_rt16.w != 0.0 && t.r + t.g + t.b == 0.0) ? 0.0 : u_rt16.y);\n"
@@ -495,6 +496,10 @@ static RenderTarget* rt_get(uint32_t fbp, uint32_t fbw, uint32_t psm)
     return rt;
 }
 
+/* vr162: dynamic resolution - in heavy places the eyes' scene drawn one step lower (4x -> 3x), back when light */
+int g_vr_dyn_res = 0;     /* ini vr_dyn_res: 1 on, 0 off (vr176: off by default, fixed resolution) */
+static int vr_dyn_down;   /* (render thread) the step down is on */
+
 /* internal resolution: the configured multiplier, or (auto) enough to cover the window */
 float gs_wanted_scale(void)
 {
@@ -504,6 +509,7 @@ float gs_wanted_scale(void)
         /* VR: the eye images are the 480-line display area: enough lines for the headset's
            recommended eye height (Quest 2: 1824 -> 4x), whatever the desktop setting */
         s = ceilf((float)xr_recommended_eye_height() * (float)g_vr_res / 100.0f / 480.0f);
+        if (vr_dyn_down && s > 2.0f) s -= 1.0f;   /* vr162 */
         return s < 1.0f ? 1.0f : s > 8.0f ? 8.0f : s;
     }
     if (g_config.scale > 0) return (float)g_config.scale;
@@ -1386,7 +1392,10 @@ void gs_flush(void)
                 if (g_vr_inv_item >= 0 && SDL_GetTicks() - g_vr_inv_ms < 300) trep_note(t, g_vr_inv_item);
             }
             uni4f(u_texofs, 1.0f / (float)w, 1.0f / (float)h, 0.0f, 0.0f);
-            uni1f(u_tex_alpha_scale, ascale);
+            /* vr195: an HD image's alpha at most 0x80 (GS opaque) - the pack's item icons are 255 where the originals
+               are 0x80, and the blend (Cs - Cd) * As / 128 + Cd then gave 2Cs - Cd: the command letters behind the
+               icons showed through them (measured: icon atlas 79dd8d5b... alpha 255, original decode 128) */
+            uni1f(u_tex_alpha_scale, hdk ? -ascale : ascale);
             uni4f(u_rt16, 0, 0, 0, 0);
         }
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, hdk == 2 ? 0x2703 /* GL_LINEAR_MIPMAP_LINEAR */ : hdk ? GL_LINEAR : filt);
@@ -1515,8 +1524,30 @@ static void batch_for(int type, const GsVertex* v, int count, const GsContext* c
     }
 }
 
+/* vr188 diagnosis: the 3 s after the cinema screen goes back to 3D: every big draw (screen layers) - for the flat
+   screen's edges seen fading in the 3D. Original draws only (not the eyes' replays). (vr204: the menu part - the
+   gold weapon and the COMMAND letters, fixed in vr194/195 - taken out) */
+int g_vr_watch_menu;        /* set by present_vr_stereo: the cinema screen is on */
+uint64_t g_vr_watch_back;   /* ... the time (ms) the 3D came back */
+static void vr_watch(int type, const GsVertex* v, int count, const GsContext* c, uint64_t prim)
+{
+    extern int g_vr_debug_log, gs_replaying;
+    float x0 = v[0].x, x1 = v[0].x, y0 = v[0].y, y1 = v[0].y;
+    int tex = (prim >> 4) & 1, abe = (prim >> 6) & 1;
+    if (!g_vr_debug_log || gs_replaying || !xr_active()) return;
+    for (int i = 1; i < count; i++) { x0 = fminf(x0, v[i].x); x1 = fmaxf(x1, v[i].x); y0 = fminf(y0, v[i].y); y1 = fmaxf(y1, v[i].y); }
+    if (g_vr_watch_back && SDL_GetTicks() - g_vr_watch_back < 3000 && ((x1 - x0) > 320.0f || (y1 - y0) > 240.0f)) {
+        static int nlog;
+        if (nlog++ < 400)
+            host_log("vr-watch back to 3D +%u ms: type %d at %.0f,%.0f %.0fx%.0f z %.0f tex %d tbp %u rgba %u %u %u %u blend %s %x frame fbp %u\n",
+                     (unsigned)(SDL_GetTicks() - g_vr_watch_back), type, x0, y0, x1 - x0, y1 - y0, v[0].z, tex, (unsigned)(c->tex0 & 0x3FFF),
+                     v[count - 1].r, v[count - 1].g, v[count - 1].b, v[count - 1].a, abe ? "on" : "off", (unsigned)c->alpha, (unsigned)(c->frame & 0x1FF));
+    }
+}
+
 void gs_draw_primitive(int type, const GsVertex* v, int count, const GsContext* c, uint64_t prim)
 {
+    vr_watch(type, v, count, c, prim);   /* vr188 */
     {
         float x0 = v[0].x, x1 = v[0].x, y0 = v[0].y, y1 = v[0].y;
         for (int i = 1; i < count; i++) { x0 = fminf(x0, v[i].x); x1 = fmaxf(x1, v[i].x); y0 = fminf(y0, v[i].y); y1 = fmaxf(y1, v[i].y); }
@@ -2198,6 +2229,14 @@ static const char* mk_fs =
     "float tri(vec2 p, vec2 a, vec2 b, vec2 c){ return max(max(edge(p, a, b, c), edge(p, b, c, a)), edge(p, c, a, b)); }\n"
     "void main(){\n"
     "  float aa;\n"
+    "  if (u_kind == 3) {\n"   /* vr223: the shotgun's reticle, as RE4's - a ring and a centre dot (vr224: white, thin; vr225: two side arcs and the dot, as the owner drew it: ( + ) ) */
+    "    float r = length(v_c); aa = fwidth(r);\n"
+    "    float ring = 1.0 - smoothstep(0.012 - aa, 0.012 + aa, abs(r - 0.9));\n"
+    "    ring *= 1.0 - smoothstep(0.62, 0.72, abs(v_c.y) / max(r, 1e-4));\n"   /* vr225: only the sides - ( . ) (vr227: thinner still) */
+    "    float cd = 1.0 - smoothstep(0.035 - aa, 0.035 + aa, r);\n"
+    "    float a = max(ring, cd) * 0.9;\n"
+    "    if (a <= 0.0) discard; o = vec4(1.0, 1.0, 1.0, a); return;\n"
+    "  }\n"
     "  if (u_kind == 0) {\n"   /* the dot */
     "    float r = length(v_c); aa = fwidth(r);\n"
     "    float a = 1.0 - smoothstep(1.0 - aa * 1.5, 1.0, r);\n"
@@ -2285,7 +2324,8 @@ static void draw_markers(const VrView* v, const float M[16], const VrEye* E, int
         nx = (tx - E->l) / (E->r - E->l) * 2.0f - 1.0f;
         ny = (ty - E->d) / (E->u - E->d) * 2.0f - 1.0f;
         if (kind == 0) { ang = tanf(g_vr_sight_size / 100.0f * (3.14159265f / 360.0f)); hx = hy = ang; }
-        else if (kind == 1) { hx = hy = 0.04f / e[2]; }                         /* 8 cm across */
+        else if (kind == 1) { hx = hy = 0.04f / e[2]; }
+        else if (kind == 3) { hx = hy = tanf(1.6f * (3.14159265f / 180.0f)); }   /* vr223: the ring 3.2 degrees across, at any distance */                         /* 8 cm across */
         else {
             int val = v->mk_val[i], two = val >= 1000000, va = two ? (val - 1000000) / 1000 : val, vb = two ? val - 1000000 - va * 1000 : 0;
             int n = (va >= 100 ? 3 : va >= 10 ? 2 : 1) + (two ? 1 + (vb >= 100 ? 3 : vb >= 10 ? 2 : 1) : 0);
@@ -2764,6 +2804,8 @@ static float vr_turn_t = 1.0f;   /* vr125: the smooth turn's own t - by the cloc
                                     late or early no longer stops the turn and then jumps it (the arrivals' even grid, render.c) */
 /* vr74 diagnosis: a headset frame's work by step (ns): 0 replay (both eyes), 1 eye image wait, 2 eye copy, 3 mirror window, 4 hand to the headset */
 static uint64_t vr_tm[5];
+static uint64_t vr_tb[3];   /* vr161: before the picture, the picture's path (all of it), the flat path's frame replay */
+static int vr_path;         /* ... 1 held (room change), 2 3D stereo, 3 flat (cinema screen / no VR camera) */
 #define VR_TM(k, stmt) do { uint64_t t_ = SDL_GetTicksNS(); stmt; vr_tm[k] += SDL_GetTicksNS() - t_; } while (0)
 /* vr71 diagnosis (vr_debug_log): how long the 3D picture takes, and the gaps between headset frames (stutter) */
 static int present_vr_stereo(const struct Frame* cur, float t)
@@ -2815,6 +2857,11 @@ static int present_vr_stereo_(const struct Frame* cur, float t)
             last = why;
         }
         g_vr_status = why ? names[why] : NULL;
+        {   /* vr188 diagnosis (vr_watch) */
+            extern int g_vr_watch_menu; extern uint64_t g_vr_watch_back;
+            if (why == 2) g_vr_watch_menu = 1;
+            else if (why == 0 && g_vr_watch_menu) { g_vr_watch_menu = 0; g_vr_watch_back = SDL_GetTicks(); host_log("vr-watch: back to 3D from the cinema screen\n"); }
+        }
         if (why) return 0;
     }
     {   /* vr67: walking moves the play space (W) once a game frame: in between, the play space at t
@@ -3054,6 +3101,15 @@ static uint64_t gs_present_vr(const struct Frame* cur, float t)
         else tdt = last_ns ? (float)(now - last_ns) * 1e-9f : 0.0f;
         last_ns = now; if (disp > 0) last_disp = disp;
         if (tdt > 0.05f) tdt = 0.05f;
+        {   /* vr156 diagnosis (vr_debug_log): the right stick out, no turn - why */
+            extern int g_vr_debug_log;
+            static unsigned held, nl;
+            VrInput di;
+            if (fr == 1 && xr_input(&di) && fabsf(di.rx) > 0.6f && rx_s == 0.0f) held++; else held = 0;
+            if (g_vr_debug_log && held == 90 && nl++ < 20)
+                host_log("vr-diag: smooth turn stuck: stick %.2f, allowed %d, ahead %.2f rad\n", di.rx, SDL_GetAtomicInt(&g_vr_turn_allow),
+                         (float)(int)((unsigned)SDL_GetAtomicInt(&g_vr_turn_total) - (unsigned)SDL_GetAtomicInt(&g_vr_turn_taken)) * 1e-6f);
+        }
         if (fr == 1 && SDL_GetAtomicInt(&g_vr_turn_allow) && xr_input(&in)) {
             float want = fabsf(in.rx) > 0.15f ? in.rx : 0.0f, k = tdt / 0.05f;   /* ~95% of the way in 0.15 s, most of it in 0.1 */
             rx_s += (want - rx_s) * (k > 1.0f ? 1.0f : k);
@@ -3086,13 +3142,18 @@ static uint64_t gs_present_vr(const struct Frame* cur, float t)
     }
     SDL_GetWindowSizeInPixels(g_window, &ww, &wh);
     if (fr != 1) g_vr_status = fr == 0 ? "headset asked not to render" : "headset not running";
+    uint64_t tb0 = SDL_GetTicksNS();   /* vr161 */
+    vr_tb[0] = tb0 - tw0 - tw;
+    vr_path = 3;
     if (fr == 1 && door && hold_valid && xr_have_held()) {   /* room change: the last 3D picture fades out, fixed in the room */
+        vr_path = 1;
         vr_fade -= dt / 0.5f;
         if (vr_fade < 0.0f) vr_fade = 0.0f;
         draw_display(final_vw ? img[fin].tex : 0, final_vw ? final_vw : 640, final_vw ? final_vh : 512);   /* mirror */
         overlay_render();
         if (!present_vr_held()) xr_frame_end_none();
     } else if (fr == 1 && (vr_fade = vr_fade + dt / 0.5f > 1.0f ? 1.0f : vr_fade + dt / 0.5f, present_vr_stereo(cur, t))) {   /* (fading back in after one) */
+        vr_path = 2;
         glBindFramebuffer(GL_FRAMEBUFFER, 0);   /* vr127: the mirror is the left eye (copied while drawing it); the overlay over it */
         { int ww = 0, wh = 0; SDL_GetWindowSizeInPixels(g_window, &ww, &wh); glViewport(0, 0, ww, wh); }
         clip_distances(0);
@@ -3103,7 +3164,7 @@ static uint64_t gs_present_vr(const struct Frame* cur, float t)
         if (!door) vr_fade = 1.0f;   /* (the cinema screen: menus, films - no fade) */
         if (inbetween) {
             RenderTarget* rt;
-            stream_replay(cur, t);
+            { uint64_t tr = SDL_GetTicksNS(); stream_replay(cur, t); vr_tb[2] = SDL_GetTicksNS() - tr; }   /* vr161 */
             rt = rt_find(gs.disp_fbp, gs.disp_fbw ? gs.disp_fbw : 10);
             draw_display(rt ? rt->tex : 0, rt ? rt->vw : 640, rt ? rt->vh : 512);
             overlay_render();
@@ -3121,6 +3182,7 @@ static uint64_t gs_present_vr(const struct Frame* cur, float t)
         }
         else if (fr == 0) xr_frame_end_none();
     }
+    vr_tb[1] = SDL_GetTicksNS() - tb0;   /* vr161 */
     swap = SDL_GetTicksNS();
     SDL_GL_SwapWindow(g_window);
     swap = SDL_GetTicksNS() - swap;
@@ -3135,16 +3197,44 @@ static uint64_t gs_present_vr(const struct Frame* cur, float t)
         if (swap > ssmax) ssmax = swap;
         if (all - tw - swap > sallmax) sallmax = all - tw - swap;
         if (swap > 4000000) nswap_long++;
+        if (fr == 1) {   /* vr162: dynamic resolution - our work averaged over ~0.5 s */
+            static double avg;
+            static uint64_t last_change, light_since;
+            uint64_t now = SDL_GetTicksNS(), wk = all - tw - swap;
+            avg = avg ? avg * 0.978 + wk * 0.022 : (double)wk;
+            if (!g_vr_dyn_res) { if (vr_dyn_down) { vr_dyn_down = 0; host_log("vr: dynamic resolution off (vr_dyn_res 0)\n"); } }
+            else if (now - last_change > 2000000000ull) {
+                if (!vr_dyn_down && avg > 10.0e6) {
+                    vr_dyn_down = 1; last_change = now; light_since = 0;
+                    host_log("vr: dynamic resolution down (our work %.1f ms average)\n", avg / 1e6);
+                } else if (vr_dyn_down) {
+                    if (avg < 6.5e6) { if (!light_since) light_since = now; }
+                    else light_since = 0;
+                    if (light_since && now - light_since > 4000000000ull) {
+                        vr_dyn_down = 0; last_change = now; light_since = 0;
+                        host_log("vr: dynamic resolution back up (our work %.1f ms average)\n", avg / 1e6);
+                    }
+                }
+            }
+        }
         {   /* vr74: a slow headset frame (over 11 ms of our own work), step by step */
             static unsigned nslow;
             uint64_t work = all - tw - swap;
-            if (g_vr_debug_log && fr == 1 && work > 11000000 && nslow < 80) {
+            if (g_vr_debug_log && fr == 1 && work > 11000000 && nslow < 400) {   /* vr161: 400 (was 80: used up at the start) */
                 nslow++;
                 host_log("vr-diag: slow frame %llu: work %.1f ms = replay %.1f, eye image wait %.1f, eye copy %.1f, mirror %.1f, to headset %.1f, other %.1f (t %.2f)\n",
                          (unsigned long long)frame_no, work / 1e6, vr_tm[0] / 1e6, vr_tm[1] / 1e6, vr_tm[2] / 1e6, vr_tm[3] / 1e6, vr_tm[4] / 1e6,
                          (double)(work - vr_tm[0] - vr_tm[1] - vr_tm[2] - vr_tm[3] - vr_tm[4]) / 1e6, t);
+                {   /* vr161: the "other" divided */
+                    static const char* const pn[4] = { "?", "held picture (room change)", "3D stereo", "flat (cinema screen / no VR camera)" };
+                    host_log("vr-diag: slow frame %llu: before the picture %.1f ms; path %s %.1f ms%s; after (mirror swap excluded) %.1f ms\n",
+                             (unsigned long long)frame_no, vr_tb[0] / 1e6, pn[vr_path & 3], vr_tb[1] / 1e6,
+                             vr_path == 3 && vr_tb[2] ? " (of it the frame replay)" : "", (double)(work - vr_tb[0] - vr_tb[1]) / 1e6);
+                    if (vr_path == 3 && vr_tb[2]) host_log("vr-diag: slow frame %llu: flat path frame replay %.1f ms\n", (unsigned long long)frame_no, vr_tb[2] / 1e6);
+                }
             }
             for (int k = 0; k < 5; k++) vr_tm[k] = 0;
+            vr_tb[0] = vr_tb[1] = vr_tb[2] = 0;
         }
         (void)last;
         if (++n >= 450) {

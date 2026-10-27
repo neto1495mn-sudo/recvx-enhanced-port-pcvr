@@ -26,7 +26,7 @@ decompilation by AshfordFamily. All credit for the PC port goes to them.
 
 ### How to play in VR
 
-1. Download `RE-Code-Veronica-X-PC-Port-VR-v1.3.1-windows.zip` from the [Releases](https://github.com/neto1495mn-sudo/recvx-enhanced-port-pcvr/releases)
+1. Download `RE-Code-Veronica-X-PC-Port-VR-v1.4-windows.zip` from the [Releases](https://github.com/neto1495mn-sudo/recvx-enhanced-port-pcvr/releases)
    page and unpack it anywhere.
 2. Start your OpenXR runtime (tested only on a Quest 2 through Virtual Desktop / VDXR).
 3. Run `recvx_vr.exe` (or `PLAY_VR.bat`). On the first start, pick your own `.iso` of the game (PS2, NTSC-U,
@@ -37,6 +37,27 @@ decompilation by AshfordFamily. All credit for the PC port goes to them.
    (see "The VR page" below).
 
 When a newer version is out, the game says so when it starts (see "Update check" below).
+
+### What's new in 1.4
+
+- **Hold the gun with both hands**: bring your left hand to the gun and squeeze the left grip. Pistols:
+  the left hand just holds on (pull it about 10 cm away to let go). Big guns (assault rifle, shotgun,
+  grenade launcher...): the left hand aims the gun with you.
+- **Every gun fires along its own barrel**: the shot, the laser, grenades and crossbow bolts leave the
+  muzzle where the sight starts (the grenade launcher no longer fires low).
+- **No more aim help**: crossbow bolts no longer curve towards the nearest enemy; they always drop a
+  little, the same way every time.
+- **Recoil per gun**, stronger with one hand than with two; the assault rifle climbs and sways when
+  fired with one hand.
+- **Shotgun**: a thin round reticle ( + ) instead of the laser. **Sniper rifle**: no laser; zoom with
+  the right stick (forward / back) in the scope.
+- **Head shots**: blood from the head; a head shot that kills a common zombie bursts its head.
+  Head damage is now 115%.
+- **Controls**: quick knife on **X** (hold), map on the **right stick click**.
+- **Knife**: one hit per swing; no longer goes through walls on stairs; fixed a freeze and a crash.
+- Movies that cannot be decoded (some dubbed discs) are skipped instead of freezing the game.
+- HD textures: the equipped weapon and the inventory letters show right.
+- Fixed resolution by default (dynamic resolution is an option in the launcher).
 
 ### What's new in 1.3.1
 
@@ -141,15 +162,17 @@ on the PC offers it). Set `update_check = 0` in
 | Left trigger (hold) | Run |
 | Right stick left/right | Snap turn (locked on stairs) |
 | Right grip (hold) | Raise the gun and aim with your hand |
+| Left grip, with the left hand at the gun | Hold the gun with both hands |
 | Right trigger | Fire (with twin guns: the right gun) |
 | Left trigger, while aiming twin guns | Fire the left gun |
-| Left grip | Knife (cut by swinging it); at the belt: take an ammo box |
+| X (hold) | Knife (cut by swinging it) |
+| Left grip at the belt | Take an ammo box |
 | A | Action: open doors, pick up items, examine, confirm |
 | B | Cancel / back; with a gun in hand: drop the magazine |
 | Y | Inventory (status screen) |
-| X | Map |
+| Right stick click | Map |
+| Right stick forward / back, in the sniper scope | Zoom in / out |
 | Left menu button (three lines) | Select |
-| Hold left trigger + press Y | Start (pause, options) |
 | Long press of the headset's system button | Recentre the view |
 
 Walking around your room moves Claire too. An arrow shows over a door you look at from a little
@@ -175,7 +198,7 @@ With an empty gun, or to top it up with the magazine in, you can skip step 1.
   the trigger. The red laser shows where the shot will hit.
 - **Twin guns** (the dual pistols): hold the right grip, then each trigger fires its own gun.
   A quick pull during the last shot is kept and fired as soon as the game allows it.
-- **Knife**: squeeze the **left grip** to hold it and swing it like a real knife, edge first.
+- **Knife**: hold **X** to hold it and swing it like a real knife, edge first.
   A slow move does not cut.
 - **Doors, cutscenes and menus** are shown on a big screen in front of you at eye height. Use the
   stick and A/B as on a gamepad there. The 3D comes back by itself when you can play again.
@@ -265,7 +288,7 @@ own: write its file name (one per line) in `textures\ignore.txt`.
   the rounds left, gone when there are none) and you put it in the gun with your left hand.
 
 **Knife**
-- Left grip draws the knife; you cut by swinging, only with the edge leading, with a real swing
+- X draws the knife; you cut by swinging, only with the edge leading, with a real swing
   (`vr_slash_speed`, cm/s).
 
 **Combat feel**

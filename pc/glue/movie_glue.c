@@ -47,6 +47,8 @@ static uint64_t start_vblank, paused_at, paused_total;
 static int skip_movies, skip_frames, frame_shown = -1, clock_ofs;
 static FILE* trace;   /* RECVX_MOVIE_TRACE (test aid): one line per game frame of a movie */
 
+static int open_failed;   /* vr189: the movie could not be decoded */
+
 void initAll(void)
 {
     memset(&rmi, 0, sizeof(rmi));
@@ -62,7 +64,13 @@ void initAll(void)
         sceCdSearchFile(&infile.fp, name);
     }
     if (getenv("RECVX_MOVIE_TRACE") && !trace) trace = fopen(getenv("RECVX_MOVIE_TRACE"), "w");
-    if (!skip_movies && !movie_open(infile.fp.lsn, infile.fp.size)) printf("movie: cannot decode %u\n", infile.fp.lsn);
+    open_failed = 0;
+    if (!skip_movies && !movie_open(infile.fp.lsn, infile.fp.size)) {
+        /* vr189: a movie with no picture to decode (the BR dubbed disc's MV_002..004 have no MPEG sequence header:
+           their start is missing) is ended at once - waiting for its frames froze the game on a black screen */
+        printf("movie: cannot decode %u - skipped\n", infile.fp.lsn);
+        open_failed = 1;
+    }
     movie_size(&__image_w__, &__image_h__);
 }
 
@@ -71,6 +79,7 @@ void readMpeg(void)
     uint64_t now = ps2_vblank_count(), t0 = SDL_GetTicksNS();
     int index, total;
     double a, queued;
+    int was_prep = rmi.iMovieState == MOVIE_STAT_PREP;
 
     if (rmi.iMovieState == MOVIE_STAT_PREP) {
         rmi.iMovieState = MOVIE_STAT_PLAYING;
@@ -78,6 +87,16 @@ void readMpeg(void)
         start_vblank = now;
         skip_frames = 0;
         movie_pause(0);
+    }
+    if (open_failed) {   /* vr191: ended before the game's pause check too (vr189 put it after: the in-game movie stayed until Select) */
+        /* vr192: not on the call that starts it - the game's WaitPrePlayMovie (sdfunc.c) waits there for "playing";
+           ended in that same call it was stopped and destroyed before, never saw "playing" and waited forever */
+        static int nlog;
+        movie_draw = 1;
+        if (was_prep) { if (nlog++ < 20) printf("movie: undecodable - shown as playing for one frame\n"); return; }
+        if (nlog++ < 20) printf("movie: undecodable - ended (state %d, flags %x)\n", rmi.iMovieState, rmi.uiContFlag);
+        rmi.iMovieState = MOVIE_STAT_PLAYEND;
+        return;
     }
     if (rmi.uiContFlag & 2) {   /* paused by the game */
         if (!paused_at) { paused_at = now; movie_pause(1); }

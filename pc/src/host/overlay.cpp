@@ -65,7 +65,7 @@ int overlay_event(const void* e)
         return 1;
     }
     if (bind_hotkey(ev, B_CHEATS)) {
-        cheats_visible = !cheats_visible;
+        cheats_visible = g_extras_unlocked && !cheats_visible;   /* vr218: only once unlocked */
         return 1;
     }
     if (bind_hotkey(ev, B_COOP)) {
@@ -257,7 +257,7 @@ static void settings_window(void)
     }
     if (ImGui::CollapsingHeader("Audio", ImGuiTreeNodeFlags_DefaultOpen)) changed |= settings_imgui(SP_AUDIO);
     for (int p = SP_COOP; p <= SP_EXTRAS; p += SP_EXTRAS - SP_COOP)   /* pages with their own windows (F3, F2): the SET_F1 rows */
-        if (settings_imgui_any(p) && ImGui::CollapsingHeader(p == SP_COOP ? "Co-op" : "Extras", ImGuiTreeNodeFlags_DefaultOpen))
+        if ((p != SP_EXTRAS || g_extras_unlocked) && settings_imgui_any(p) && ImGui::CollapsingHeader(p == SP_COOP ? "Co-op" : "Extras", ImGuiTreeNodeFlags_DefaultOpen))
             changed |= settings_imgui(p, false);
 
     if (ImGui::CollapsingHeader("Performance")) {
@@ -657,7 +657,7 @@ void overlay_render(void)
     bool ping = g_config.show_ping && coop_on && cs.state == COOP_CONNECTED;   /* co-op: next to the frame rate */
     extern const char* g_vr_status;   /* gs_gl.c: why VR is on the cinema screen (NULL: stereo or no VR) */
     extern int g_vr_debug_log;        /* glue/vr_glue.c: ini vr_debug_log */
-    const char* vrs = g_vr_debug_log ? g_vr_status : nullptr;   /* a diagnosis aid: shown only with the debug log */
+    const char* vrs = nullptr; (void)g_vr_debug_log; (void)g_vr_status;   /* vr188: the tag is no longer drawn in the picture (the reason stays in the log) */
     if (!visible && !cheats_visible && !coop_visible && !g_config.show_fps && !ping && !crosshair && !hint && !tag && !vrs) return;
     {   /* readable on large displays: scale text with the window height (1080p = 1x) */
         int ww, wh;
@@ -722,7 +722,7 @@ void overlay_render(void)
    the mod), else a dark panel. One PLAY button: the game is played in VR. The options on their own page, in
    Portuguese. Main thread, before xr_init; the game's window itself, small and centred, given back its own size /
    full screen on PLAY. ini launcher = 1 (--no-launcher skips it). Returns 0 to quit, 1 to play. */
-extern "C" int g_vr_request, g_launcher, g_tex_hd, g_tex_hd_per_frame, g_vr_turn, g_vr_comfort, g_vr_sight, g_vr_res;
+extern "C" int g_vr_request, g_launcher, g_tex_hd, g_tex_hd_per_frame, g_tex_loaders, g_tex_upload, g_vr_turn, g_vr_comfort, g_vr_sight, g_vr_res;
 extern "C" char g_update_tag[64];
 extern "C" int g_update_newer;
 extern "C" unsigned char* stbi_load(const char* filename, int* x, int* y, int* comp, int req_comp);
@@ -761,8 +761,8 @@ static const char* const ltext[3][L_N] = {
         "VSync",
         "Frame rate limit",
         "HD textures",
-        "Prepared per frame",
-        "Fewer: a lighter stutter on entering a room; the room gets sharp a little later.",
+        "Reading threads",
+        "Upload in the background: the HD textures go to the video card on another CPU. Automatic: on with NVIDIA and AMD.",
         "Show this launcher when the game starts",
         "BACK",
         "DEFAULT",
@@ -795,8 +795,8 @@ static const char* const ltext[3][L_N] = {
         "VSync",
         "Limite de quadros",
         "Texturas HD",
-        "Preparadas por quadro",
-        "Menos: travada mais leve ao entrar numa sala; a sala fica n\xC3\xADtida um pouco depois.",
+        "Threads de leitura",
+        "Envio em segundo plano: as texturas HD v\xC3\xA3o para a placa de v\xC3\xADdeo em outra CPU. Autom\xC3\xA1tico: liga em NVIDIA e AMD.",
         "Mostrar este launcher ao abrir o jogo",
         "VOLTAR",
         "PADR\xC3\x83O",
@@ -829,8 +829,8 @@ static const char* const ltext[3][L_N] = {
         "VSync",
         "L\xC3\xADmite de fotogramas",
         "Texturas HD",
-        "Preparadas por fotograma",
-        "Menos: tir\xC3\xB3n m\xC3\xA1s leve al entrar en una sala; la sala se ve n\xC3\xADtida un poco despu\xC3\xA9s.",
+        "Hilos de lectura",
+        "Env\xC3\xADo en segundo plano: las texturas HD van a la tarjeta de v\xC3\xADdeo en otra CPU. Autom\xC3\xA1tico: activo con NVIDIA y AMD.",
         "Mostrar este launcher al iniciar el juego",
         "VOLVER",
         "PREDETERMINADO",
@@ -1108,8 +1108,17 @@ extern "C" int overlay_launcher(void)
                 bool hd = g_tex_hd != 0;
                 opt_label(L(L_TEXHD));
                 if (ImGui::Checkbox("##hd", &hd)) { g_tex_hd = hd; settings_save_later(); }
+                /* vr157: no "per frame" limiter - the replacements load in the background (texreplace.c);
+                   vr160: how many threads read them, and the upload thread */
                 opt_label(L(L_PERFRAME));
-                if (ImGui::SliderInt("##pf", &g_tex_hd_per_frame, 1, 4)) settings_save_later();
+                if (ImGui::SliderInt("##rt", &g_tex_loaders, 4, 6)) settings_save_later();
+                {
+                    static const char* const up_names[3][3] = { { "Automatic", "On", "Off" }, { "Autom\xC3\xA1tico", "Ligado", "Desligado" },
+                                                                { "Autom\xC3\xA1tico", "Activado", "Desactivado" } };
+                    static const char* const up_label[3] = { "Background upload", "Envio em segundo plano", "Env\xC3\xADo en segundo plano" };
+                    int lg = g_launcher_lang >= 0 && g_launcher_lang < 3 ? g_launcher_lang : 0, u = g_tex_upload >= 0 && g_tex_upload < 3 ? g_tex_upload : 0;
+                    if (opt_combo(up_label[lg], up_names[lg], 3, &u)) { g_tex_upload = u; settings_save_later(); }
+                }
                 ImGui::TextDisabled("%s", L(L_PERFRAME_HELP));
             }
             ImGui::SetCursorPosY(ImGui::GetWindowHeight() - 52);
@@ -1122,7 +1131,7 @@ extern "C" int overlay_launcher(void)
             float dw;
             ImGui::PushFont(lf_bold, 20.0f); dw = ImGui::CalcTextSize(L(L_DEFAULT)).x + 44.0f; ImGui::PopFont();
             if (l_button(L(L_DEFAULT), ImVec2(x + 194, ds.y - 80), ImVec2(dw > 160.0f ? dw : 160.0f, 46), false, 20.0f)) {   /* as the release has them */
-                g_vr_turn = 45; g_vr_comfort = 0; g_vr_sight = 2; g_vr_res = 100; g_tex_hd = 1; g_tex_hd_per_frame = 2;
+                g_vr_turn = 45; g_vr_comfort = 0; g_vr_sight = 2; g_vr_res = 100; g_tex_hd = 1; g_tex_hd_per_frame = 2; g_tex_loaders = 4; g_tex_upload = 0;
                 settings_save_later();
             }
         }

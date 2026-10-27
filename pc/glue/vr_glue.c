@@ -19,7 +19,7 @@
  *
  * Game thread only. Hooks: tps_camera() end (vr_camera), tps_after_draw() (vr_after_draw),
  * game.c around bhPutModel(plp) (vr_hide_player), tps_glue.c (vr_on, vr_hand_ray),
- * tps_input.c (vr_tps_keys), pad.c (vr_pad_start, vr_quick_knife).
+ * tps_input.c (vr_tps_keys), pad.c (vr_pad_select, vr_quick_knife).
  */
 #include "../../decomp/include/ps2/veronica/prog/types.h"
 #include "../../decomp/include/ps2/veronica/prog/main.h"
@@ -51,7 +51,7 @@ int g_vr_slash_speed = 180;  /* ini vr_slash_speed: the knife cuts when the righ
 extern int g_vr_danger_fx;    /* gs_gl.c, ini vr_danger_fx */
 int g_vr_hit_tilt = 5;       /* ini vr_hit_tilt: the view tilts this many degrees away from a hit; 0 = off */
 int g_vr_left_mirror = 1;    /* ini vr_left_mirror: the left hand without a weapon holds its controller as the right does, mirrored (1/2/3: the bone axis mirrored x/y/z; 0 = the game's own pose) */
-int g_vr_dmg_head = 125, g_vr_dmg_body = 75, g_vr_dmg_body_max = 100, g_vr_dmg_arm = 50, g_vr_dmg_leg = 50;   /* ini vr_dmg_*: damage by the body part hit (zombies), percent; the body's between _body and _body_max */
+int g_vr_dmg_head = 115, g_vr_dmg_body = 75, g_vr_dmg_body_max = 100, g_vr_dmg_arm = 50, g_vr_dmg_leg = 50;   /* ini vr_dmg_*: damage by the body part hit (zombies), percent; the body's between _body and _body_max */
 int g_vr_wake_shots = 1;     /* ini vr_wake_shots: a zombie still asleep can be shot from afar (and wakes) */
 int g_vr_precise_hits = 1;   /* ini vr_precise_hits: thin bullets hitting the enemy's body parts (its 3D), not the game's wide aim assist */
 int g_vr_barrel_pitch = 0;   /* ini vr_barrel_pitch: the barrel line turned up (+) or down (-), tenths of a degree */   /* ini vr_dmg_*: damage by the body part hit (zombies), percent */
@@ -118,6 +118,12 @@ static unsigned base_gen, cam_gen = 1;
 static float base[3], base_res[3], root_ref, sm_y;
 static int root_ok;
 static int on_stairs = -1;
+/* vr186: she is on stairs (the game's stair walk, mode2 14/15, or its stair flags) - no knife drawn, no aiming there */
+int vr_on_stairs(void)
+{
+    return plp && plp->mode0 == 1 && ((plp->mode1 == 0 && (plp->mode2 == 14 || plp->mode2 == 15)) ||
+                                      ((plp->stflg & 0x80000000u) && (plp->flg & 0x400)));
+}
 static float frame_follow[2];   /* this frame's move of the player by the room walking (body_follow) */
 static float frame_aimwalk[2];  /* vr76: this frame's move by the VR walking while aiming (aim_walk_update) */
 extern float walk_spd, run_spd;
@@ -503,6 +509,7 @@ static int holster_ok;
 static float hand_pos[2][3];        /* where each hand was put this frame (world) */
 static int hand_ok[2];
 static VrPose hand_aim[2];
+static void aim_rows(float r[9], const VrPose* p);   /* vr196: the right controller's rows, turned for the two-handed hold */
 static float frame_body[3];
 static int laser_ok[2];                       /* vr77: the laser sight of each hand's gun (world): muzzle -> hit */
 static float laser_a[2][3], laser_b[2][3];   /* vr71: the body's place this frame, and the room-walking part of its move */              /* ... and whether it was */
@@ -1301,7 +1308,14 @@ int vr_dual_block_shell(void* pp, int jno)
 
 /* recoil and vibration of a shot from a hand */
 static uint64_t recoil_ms[2];
-static float recoil_deg[2], recoil_back[2], recoil_tau[2];   /* vr132: each shot's kick: degrees up, metres back, how fast it settles (s) */
+static float recoil_deg[2], recoil_back[2], recoil_tau[2];
+static int two_on, two_steer;   /* (vr196/199, below) */
+/* vr205: the assault rifle (weapon 12) held in one hand climbs and sways as it fires: each shot adds 3.5 degrees up and up
+   to 2.5 to a side, settling with 0.18 s (a burst builds to about 8 up, at most 12); held with both hands it does not move */
+#define RIFLE_WPN 12
+static float shake_p, shake_y;   /* degrees at shake_ms */
+static uint64_t shake_ms;
+static float shake_decay(void) { return shake_ms ? expf(-(float)(SDL_GetTicks() - shake_ms) / 180.0f) : 0.0f; }   /* vr132: each shot's kick: degrees up, metres back, how fast it settles (s) */
 /* vr132: the gun in hand takes the handgun bullets (item 12): a 9 mm pistol (the game's combination list) */
 static int handgun_equipped(void)
 {
@@ -1314,7 +1328,7 @@ static int handgun_equipped(void)
     for (; z > 0; z--, it += 3) if (wpn == combidata[it] && (combidata[it + 2] & 0xF000)) return 1;
     return 0;
 }
-static void shot_feedback(int side, int wno)
+static void shot_kick(int side, int wno)
 {
     float k = (wno >= 0 && wno < 22) ? EneDamNear[1][wno] / 60.0f : 0.5f;   /* by the weapon's power (zombie damage) */
     int pistol = handgun_equipped();
@@ -1328,13 +1342,57 @@ static void shot_feedback(int side, int wno)
                    pistol ? "the handgun's own (6 deg, 2 cm)" : "as before (by the weapon's power)");
         }
     }
+    if (wno == RIFLE_WPN && side == 0) {   /* vr205 */
+        static int logged;
+        float e = shake_decay();
+        recoil_deg[side] = 0; recoil_back[side] = 0; recoil_tau[side] = 0.07f;
+        if (two_on && two_steer) {
+            shake_p = shake_y = 0; shake_ms = 0;
+            if (!(logged & 1)) { logged |= 1; vr_log("vr: rifle fired with both hands - no recoil\n"); }
+        } else {
+            shake_p = shake_p * e + 3.5f;
+            shake_y = shake_y * e + ((rand() % 2001) / 1000.0f - 1.0f) * 2.5f;
+            if (shake_p > 12.0f) shake_p = 12.0f;
+            if (shake_y > 6.0f) shake_y = 6.0f; else if (shake_y < -6.0f) shake_y = -6.0f;
+            shake_ms = SDL_GetTicks() | 1;
+            recoil_back[side] = 0.015f;
+            if (!(logged & 2)) { logged |= 2; vr_log("vr: rifle fired with one hand - it climbs and sways\n"); }
+        }
+        if (g_vr_haptics) xr_haptic(side, two_on && two_steer ? 0.4f : 0.7f, 40);
+        return;
+    }
+    if (wno == 11 && side == 0) {   /* vr223: the shotgun - the muzzle thrown 65 degrees up one-handed; with both hands 15 */
+        int both = two_on && two_steer;
+        recoil_deg[side] = both ? 15.0f : 30.0f;   /* vr223: 15 with both hands (owner); vr226: 30 one-handed */ recoil_back[side] = both ? 0.015f : 0.06f; recoil_tau[side] = both ? 0.09f : 0.15f;
+        if (g_vr_haptics) xr_haptic(side, 1.0f, both ? 60 : 90);
+        return;
+    }
+    if (wno >= 15 && wno <= 17 && side == 0) {   /* vr208: the grenade launcher - the muzzle thrown up; with both hands only a little */
+        int both = two_on && two_steer;
+        recoil_deg[side] = both ? 3.0f : 60.0f;   /* vr210: 60 */   /* vr209: 45 one-handed (owner: the muzzle well up) */
+        recoil_back[side] = both ? 0.015f : 0.05f; recoil_tau[side] = both ? 0.09f : 0.15f;
+        if (g_vr_haptics) xr_haptic(side, both ? 0.6f : 1.0f, 80);
+        return;
+    }
     if (pistol) {   /* vr132: a 9 mm's kick - a sharp snap of the muzzle up and the hand back, settled in about a tenth of a second */
-        recoil_deg[side] = 6.0f; recoil_back[side] = 0.02f; recoil_tau[side] = 0.045f;
+        /* vr208: stronger one-handed (8 deg, 3 cm, settles slower); with the left hand on it, 3 deg, 1.2 cm */
+        int both = two_on && side == 0;
+        recoil_deg[side] = both ? 3.96f : 10.56f; recoil_back[side] = both ? 0.0158f : 0.0396f;   /* vr210: 10% more */   /* vr209: 20% more */
+        recoil_tau[side] = both ? 0.05f : 0.075f;
         if (g_vr_haptics) xr_haptic(side, 0.8f, 35);
         return;
     }
     recoil_deg[side] = 9.0f * k; recoil_back[side] = 0.03f * k; recoil_tau[side] = 0.07f;
     if (g_vr_haptics) xr_haptic(side, k > 1.0f ? 1.0f : 0.3f + 0.6f * k, k > 1.0f ? 90 : 50);
+}
+static void shot_feedback(int side, int wno)
+{
+    static int nlog;
+    shot_kick(side, wno);
+    if (nlog++ < 400)
+        vr_log("vr: shot %u ms, weapon %d %s hand, %s: kick %.1f deg up, %.1f cm back%s\n", (unsigned)SDL_GetTicks(), wno, side ? "left" : "right",
+               two_on ? (two_steer ? "both hands (aiming)" : "both hands (holding)") : "one hand", recoil_deg[side], recoil_back[side] * 100.0f,
+               g_vr_recoil ? "" : " - recoil off in the ini");
 }
 
 static int player_shot(const GA_WORK* gap)
@@ -1379,12 +1437,13 @@ int vr_shot_wakes(BH_PWORK* pp, GA_WORK* gap)
 /* weapon.c bhCheckGunAtari, after the damage of a player's hit is added (and the knife's):
    in VR, scaled by the part of a zombie's body hit - the hit point (dpx..) against the enemy:
    the top of it the head, the lower part the legs, away from the body capsule's axis the arms */
+static int vr_knife_cut;          /* vr156: our swinging knife's hit test is running (vr_slash) */
+static int vr_knife_hits;         /* ... and what it hit this cut (damage added) */
 int vr_part_damage(BH_PWORK* pp, int kno, int d0, int d1)
 {
     static const char* names[] = { "body", "head", "arm", "leg" };
     float top = 0, h, rel, mult;
     int part = 0, add = d1 - d0, out;
-    (void)kno;
     if (!vr_on() || !pp || add <= 0 || (pp->id != 1 && pp->id != 26) || !pp->mlwP) return d1;   /* zombies */
     for (int j = 1; j < (int)pp->mlwP->obj_num; j++) if (pp->mlwP->owP[j].mtx[13] - pp->py > top) top = pp->mlwP->owP[j].mtx[13] - pp->py;
     h = top > 1.0f ? top : 17.0f;
@@ -1403,9 +1462,22 @@ int vr_part_damage(BH_PWORK* pp, int kno, int d0, int d1)
         int lo = g_vr_dmg_body, hi = g_vr_dmg_body_max > g_vr_dmg_body ? g_vr_dmg_body_max : g_vr_dmg_body;
         mult = (lo + (hi > lo ? rand() % (hi - lo + 1) : 0)) / 100.0f;
     } else mult = (part == 1 ? g_vr_dmg_head : part == 2 ? g_vr_dmg_arm : g_vr_dmg_leg) / 100.0f;
+    if (vr_knife_cut) mult *= 0.7f;   /* vr156: the swinging knife at 70% */
     out = (int)(add * mult + 0.5f);
     if (out < 1) out = 1;
-    { static int nlog; if (nlog++ < 300 || g_vr_debug_log) vr_log("vr: hit zombie %d %s x%.2f (%d -> %d)\n", (int)(pp - ene), names[part], mult, add, out); }
+    if (vr_knife_cut) vr_knife_hits += out;
+    { static int nlog; if (nlog++ < 300 || g_vr_debug_log) vr_log("vr: hit zombie %d %s x%.2f (%d -> %d), joint %d\n", (int)(pp - ene), names[part], mult, add, out, kno); }
+    if (part == 1 && pp->id == 1 && pp->exp0 && kno >= 0 && kno < 64) {
+        /* vr215: the common zombie (en01.c) - a head shot that kills it is a critical: its head bursts, as the game's own
+           (bhEne01_CheckExpHead: the head's damage count, exp0 + 0x78, above 0; -1 = no head left) */
+        int sum = 0, *hc = (int*)((char*)pp->exp0 + 0x78);
+        for (int i = 0; i < 64; i++) sum += i == kno ? d0 + out : pp->dam[i];
+        if (pp->hp - sum <= 0 && *hc != -1) {
+            if (*hc <= 0) *hc = 1;
+            { extern unsigned char vr_crit_mark[64]; int ix = (int)(pp - ene); if (ix >= 0 && ix < 64) vr_crit_mark[ix] = 1; }   /* vr216 */
+            vr_log("vr: critical - zombie %d killed by a head shot (hp %d, damage %d): its head bursts\n", (int)(pp - ene), pp->hp, sum);
+        }
+    }
     return d0 + out;
 }
 
@@ -1418,7 +1490,7 @@ int vr_hand_ray(NJS_POINT3* o, NJS_POINT3* d)
     o->x = frame_Wg[0] * in.aim.px + frame_Wg[4] * in.aim.py + frame_Wg[8] * in.aim.pz + frame_Wg[12];
     o->y = frame_Wg[1] * in.aim.px + frame_Wg[5] * in.aim.py + frame_Wg[9] * in.aim.pz + frame_Wg[13];
     o->z = frame_Wg[2] * in.aim.px + frame_Wg[6] * in.aim.py + frame_Wg[10] * in.aim.pz + frame_Wg[14];
-    quat_to_rows(r, &in.aim);
+    aim_rows(r, &in.aim);
     f[0] = -r[2]; f[1] = -r[5]; f[2] = -r[8];          /* -z of the hand */
     d->x = c * f[0] + s * f[2]; d->y = f[1]; d->z = -s * f[0] + c * f[2];   /* turned by the heading */
     l = sqrtf(d->x * d->x + d->y * d->y + d->z * d->z);
@@ -1463,9 +1535,10 @@ unsigned vr_tps_keys(void)
         if (!dual_aim) pull_ms[0] = pull_ms[1] = 0;
     }
     if (in.buttons & VRB_A) k |= 32;     /* TPS_K_ACTION */
-    if ((in.buttons & VRB_Y) && in.ltrig <= 0.5f) k |= 64;   /* TPS_K_STATUS (LT + Y is Start, vr_pad_start) */
-    if (in.buttons & VRB_X) k |= 128;    /* TPS_K_MAP */
-    if (in.rgrip > 0.5f) k |= 256;       /* TPS_K_AIM */
+    if (in.buttons & VRB_Y) k |= 64;   /* TPS_K_STATUS (vr155: LT + Y is no longer Start) */
+    if (in.buttons & VRB_RSTICK) k |= 128;   /* TPS_K_MAP (vr197: the right stick's click - X is the quick knife since vr196) */
+    if (in.rgrip > 0.5f && !vr_on_stairs()) k |= 256;       /* TPS_K_AIM (vr186: not on stairs - raising a weapon there takes her out of the stair walk, off its path, through the wall) */
+    else if (in.rgrip > 0.5f) { static uint64_t lm; uint64_t t = SDL_GetTicksNS() / 1000000; if (t > lm + 1000) { lm = t; vr_log("vr: aim held on the stairs - not passed to the game (mode %d/%d)\n", plp->mode1, plp->mode2); } }
     if (in.rtrig > 0.5f && !(vr_playing() && knife_equipped() && g_vr_slash_speed > 0)) k |= 512;   /* TPS_K_FIRE (the knife cuts by swinging) */
     vw_fire_vr = (k & 512) != 0; vw_fire_finger = in.ltrig > 0.5f || in.rtrig > 0.5f;   /* vr108 watch */
     if ((in.buttons & VRB_B) && !(g_vr_manual_reload && vr_playing() && gun_slot())) k |= 1024;   /* TPS_K_CANCEL (with a gun in hand B drops the magazine) */
@@ -1599,6 +1672,8 @@ static void vr_slash(BH_PWORK* p, const VrPose* hp, const float* H)
     static float lp[3];
     static uint64_t lt;
     static int have, swing, armed = 1;
+    static uint64_t last_cut;   /* vr174 */
+    static uint64_t bounce_watch;   /* vr185 */
     uint64_t now = SDL_GetTicksNS();
     float v[3] = { 0, 0, 0 }, sp = 0;
     if (have && now > lt) {
@@ -1608,9 +1683,31 @@ static void vr_slash(BH_PWORK* p, const VrPose* hp, const float* H)
         if (dt > 0.2f) sp = 0;   /* a pause, not a swing */
     }
     lp[0] = hp->px; lp[1] = hp->py; lp[2] = hp->pz; lt = now; have = 1;
+    if (p->mode0 == 1 && p->mode1 == 1 && p->mode2 == 72 && !(p->at_flg & 0xE)) {
+        /* vr184: stuck in the knife's wall bounce (mode 72). The game leaves it only for an aiming stance (at_flg
+           2/4/8, bhCPM2_act_knf); our swing hits the wall without one (or the knife is put away during it), so
+           the bounce restarted forever - she walked on the spot (vr183 log) */
+        /* vr185: not by setting the modes ourselves (vr184's mode 0/0/0 left her half out of it - mode 1/0/3,
+           stflg 0x10000 still set, no door or item would answer A): the aiming stance the game wants is given
+           instead, and the game's own end of the bounce (to stance 65, mid) does the rest */
+        vr_log("vr: stuck in the knife's wall bounce (at_flg %x, flg %x, stflg %x) - given the mid aiming stance, the game ends it\n", p->at_flg, p->flg, p->stflg);
+        p->at_flg |= 2;
+        bounce_watch = now;
+    }
+    if (bounce_watch && now - bounce_watch < 3000000000ull) {   /* vr185 log: her state the 3 s after, at each change */
+        static int lm1 = -1, lm2 = -1; static unsigned lst;
+        if (p->mode1 != lm1 || p->mode2 != lm2 || p->stflg != lst) {
+            lm1 = p->mode1; lm2 = p->mode2; lst = p->stflg;
+            vr_log("vr: after the bounce: mode %d/%d/%d at_flg %x flg %x stflg %x\n", p->mode0, p->mode1, p->mode2, p->at_flg, p->flg, p->stflg);
+        }
+    }
     if (!knife_equipped() || g_vr_slash_speed <= 0 || p->mode0 != 1 || !vr_playing()) { swing = 0; return; }
-    if (sp * 100.0f < 0.5f * g_vr_slash_speed) armed = 1;   /* vr91: the hand slowed down - the next swing may cut (no time limit) */
-    if (!swing && armed && sp * 100.0f > g_vr_slash_speed) {
+    if (sp * 100.0f < 0.5f * g_vr_slash_speed) armed = 1;   /* vr91: the hand slowed down - the next swing may cut (vr183: vr180's 0.15 s slow wait undone, it held back real swings; the burst was vr182's wall fix) */
+    if (!swing && sp * 100.0f > g_vr_slash_speed && (!armed || now - last_cut <= 350000000ull)) {   /* vr183 log: a fast swing that did not cut, and why */
+        static uint64_t last_ms;
+        if (now / 1000000 > last_ms + 300) { last_ms = now / 1000000; vr_log("vr: knife swing held back (hand %.1f m/s, %s)\n", sp, !armed ? "hand not slowed since the last cut" : "within 0.35 s of the last cut"); }
+    }
+    if (!swing && armed && sp * 100.0f > g_vr_slash_speed && now - last_cut > 350000000ull) {   /* vr179: at least 0.35 s apart (back from vr176 1 s, the wall bounce fixed in vr178) (vr174: 0.35 s was still too close) (one swing of the arm made 2-3 cuts) */
         /* vr89: only the edge cuts - the knife's +z (measured, vr88: it led 33 of 34 right cuts) ahead of the hand's move */
         float c = cosf(vr_yaw), sn = sinf(vr_yaw), mw[3] = { c * v[0] + sn * v[2], v[1], -sn * v[0] + c * v[2] };
         float ml = sqrtf(mw[0] * mw[0] + mw[1] * mw[1] + mw[2] * mw[2]), zl = sqrtf(H[8] * H[8] + H[9] * H[9] + H[10] * H[10]);
@@ -1618,12 +1715,20 @@ static void vr_slash(BH_PWORK* p, const VrPose* hp, const float* H)
         if (edge >= 0.5f) {   /* vr93: within ~60 degrees of the edge (45 was too tight, vr91 log) */
             swing = 4;
             armed = 0;
-            vr_log("vr: knife cut (hand %.1f m/s, edge %+.2f)\n", sp, edge);
+            uint64_t prev_cut = last_cut;
+            last_cut = now;
+            vr_log("vr: knife cut t=%u ms (%u ms after the last, hand %.1f m/s, edge %+.2f, mode %d/%d)\n", (unsigned)(now / 1000000), (unsigned)((now - prev_cut) / 1000000), sp, edge, p->mode1, p->mode2);   /* vr181 log */
             if (g_vr_haptics) xr_haptic(0, 0.5f, 40);
         } else if (g_vr_debug_log) {
             static uint64_t last_ms;
             if (now / 1000000 > last_ms + 300) { last_ms = now / 1000000; vr_log("vr-diag: knife swing not on the edge (edge %+.2f): no cut\n", edge); }
         }
+    }
+    {   /* vr181 log: the game's own knife stab (mode 69) - not ours */
+        static int was;
+        int is = p->mode1 == 1 && p->mode2 == 0x45;
+        if (is && !was) vr_log("vr: game's own knife stab t=%u ms\n", (unsigned)(now / 1000000));
+        was = is;
     }
     if (swing > 0) {
         GA_WORK gap;
@@ -1643,8 +1748,24 @@ static void vr_slash(BH_PWORK* p, const VrPose* hp, const float* H)
         gap.gx = H[12]; gap.gy = H[13]; gap.gz = H[14];
         gap.vx = gap.px - gap.gx; gap.vy = gap.py - gap.gy; gap.vz = gap.pz - gap.gz;
         if (swing == 4) CallPlayerWeaponSeEx(&tip, 276, 0);
+        int m2 = plp->mode2, wall;
+        /* vr182: a wall hit sets mode2 to 72 (the bounce); a cut started while still bouncing (mode2 already 72)
+           did not see its hit and tested the wall again each frame - 4 clanks at once (vr181 log: those cuts had
+           no "hit a wall"). A mark in mode2 first: 72 after the test is a hit whatever it was before */
+        plp->mode2 = 0xEE;
+        vr_knife_cut = 1; vr_knife_hits = 0;
         bhCheckKnifeAtari(&gap);
-        swing--;
+        vr_knife_cut = 0;
+        wall = plp->mode2 == 72;
+        if (plp->mode2 == 0xEE) plp->mode2 = m2;
+        vr_log("vr: knife test frame %d (mode before %d): %s\n", 5 - swing, m2, wall ? "wall" : vr_knife_hits > 0 ? "enemy" : "nothing");   /* vr182 log */
+        if (wall) {   /* vr178: the blade hit a wall (the game's bounce, mode 72) - one hit, the cut ends */
+            vr_log("vr: knife cut hit a wall, cut ends\n");
+            swing = 0;
+        } else if (vr_knife_hits > 0) {   /* vr156: one hit a cut - the blade still in the body the next frames hit again (up to 4) */
+            vr_log("vr: knife cut hit (%d damage), cut ends\n", vr_knife_hits);
+            swing = 0;
+        } else swing--;
     }
 }
 
@@ -1663,6 +1784,211 @@ static void mk_add(int kind, const float p[3], int val)
    pose points that weapon, carried by the hand - the controller's forward through the hand
    pose, turned by how this weapon sits in the hand compared with it */
 static float barrel_w[2][3], muzzle_w[2][3];
+
+/* vr196: both hands on the gun - the left grip held with the left hand near the gun turns the right
+   controller so the barrel runs from the right hand to the left one (its roll stays the right hand's).
+   two_q is that turn, in the tracking space; aim_rows() gives the right controller's rows with it. */
+static int two_on;
+static int two_steer, two_item;
+static float two_near_cm = 1e9f, two_grab_cm;   /* two_grab_cm (vr212): how near it was when taken */
+static float two_t0[3];       /* vr202: the line between the hands at the grab, in the right controller's frame */
+static int two_need_ref;   /* vr201: last frame, the left hand (on its controller) from where it would hold the gun, cm */   /* vr199: the left hand turns the gun only on the big two-handed guns; on the rest it just holds on */
+static int equipped_item(void) { S_WORK* st = &swork; return st->pip && *st->pip ? (int)((st->pip[*st->pip] >> 16) & 0xFF) : 0; }
+/* items 1 rocket launcher, 2 assault rifle, 3 sniper rifle, 4 shotgun, 6 grenade launcher (RECVX_EQUIP 4102 = 0x1006), 7 bow gun,
+   11 linear launcher (8 is the knife, knife_glue.c) */
+static int big_gun(int it) { return it == 1 || it == 2 || it == 3 || it == 4 || it == 6 || it == 11; }   /* vr200: the bow gun (7) is one-handed, left out */
+static float two_q[9], two_t[3];
+static uint64_t two_ms;   /* vr198: when both hands took the gun (the turn and the left hand go over in 150 ms) */
+static float two_w(void) { float w = (SDL_GetTicks() - two_ms) / 150.0f; return two_on ? (w > 1 ? 1 : w < 0 ? 0 : w) : 0; }
+
+/* vr198: the game's own aim pose puts the left hand on the gun: where it is from the right hand node (inverse(H9) * H13),
+   per weapon, taken while she stands aimed (mode 65..67) - the hook sees the game's pose before the hands are moved */
+static float two_rel[64][16];
+static int two_rel_ok[64], two_rel_near[64], two_left_logged;
+static float grab_rel[16];   /* vr213: the left hand's hold taken at the grab, for a weapon with none fixed */
+static int grab_on;
+/* vr203: the drawn barrel of each weapon in the right hand node's frame - in the game's aim pose the gun points where she
+   aims (Ry(ay) Rx(wax), the frame the hand pose is learned with), so that way, taken into the node, is its barrel. The
+   node's x axis (vr96..202) is the pistol's barrel only: the grenade launcher's lies another way in the hand. */
+static float two_bl[64][3];
+static int two_bl_ok[64];
+static void m4_mul(float* o, const float* a, const float* b)   /* affine, column-major: o = a * b */
+{
+    float r[16];
+    for (int j = 0; j < 4; j++)
+        for (int i = 0; i < 3; i++)
+            r[j * 4 + i] = a[0 * 4 + i] * b[j * 4 + 0] + a[1 * 4 + i] * b[j * 4 + 1] + a[2 * 4 + i] * b[j * 4 + 2] + (j == 3 ? a[12 + i] : 0);
+    r[3] = r[7] = r[11] = 0; r[15] = 1;
+    memcpy(o, r, sizeof(r));
+}
+static int m4_inv(float* o, const float* m)   /* affine inverse */
+{
+    float a = m[0], b = m[4], c = m[8], d = m[1], e = m[5], f = m[9], g = m[2], h = m[6], i = m[10], det, r[16];
+    det = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g);
+    if (fabsf(det) < 1e-12f) return 0;
+    r[0] = (e * i - f * h) / det; r[4] = (c * h - b * i) / det; r[8] = (b * f - c * e) / det;
+    r[1] = (f * g - d * i) / det; r[5] = (a * i - c * g) / det; r[9] = (c * d - a * f) / det;
+    r[2] = (d * h - e * g) / det; r[6] = (b * g - a * h) / det; r[10] = (a * e - b * d) / det;
+    for (int k = 0; k < 3; k++) r[12 + k] = -(r[k] * m[12] + r[4 + k] * m[13] + r[8 + k] * m[14]);
+    r[3] = r[7] = r[11] = 0; r[15] = 1;
+    memcpy(o, r, sizeof(r));
+    return 1;
+}
+/* vr207: what was learned of each weapon (its barrel, the left hand's hold) is kept in <save>/vr_barrel.txt and read at the
+   start - learned once, not every session. The rifle's and the grenade launcher's barrels come built in (vr205's log). */
+static int bar_loaded;
+const char* pc_save_dir(void);   /* config.c */
+static void bar_path(char* out, size_t n) { snprintf(out, n, "%s/vr_barrel.txt", pc_save_dir()); }
+static void bar_save(void)
+{
+    char pth[512];
+    FILE* f;
+    bar_path(pth, sizeof(pth));
+    if (!(f = fopen(pth, "w"))) return;
+    for (int w = 0; w < 64; w++) {
+        if (two_bl_ok[w]) fprintf(f, "b %d %.6f %.6f %.6f\n", w, two_bl[w][0], two_bl[w][1], two_bl[w][2]);
+        if (two_rel_ok[w]) {
+            fprintf(f, "h %d %d", w, two_rel_near[w]);
+            for (int k = 0; k < 16; k++) fprintf(f, " %.6f", two_rel[w][k]);
+            fprintf(f, "\n");
+        }
+    }
+    fclose(f);
+}
+static void bar_load(void)
+{
+    /* vr213: fixed - what the owner's game learned and he confirmed (save/vr_barrel.txt of vr212): the pistol (4), the
+       rifle (12), the grenade launcher (14..17: one table entry for its four rounds, 15 and 17 as 16). No longer learned
+       nor read from the file. A weapon without one keeps the hand node's x axis as its barrel and the left hand holds it
+       where it took it (vr213, below). */
+    static const struct { int w; float b[3]; } bars[] = {
+        { 4, { 0.999885f, -0.003533f, 0.014759f } }, { 12, { 0.999750f, -0.009998f, 0.019995f } },
+        { 14, { 0.646480f, 0.003353f, -0.762923f } }, { 15, { 0.691905f, 0.000000f, -0.721988f } },
+        { 16, { 0.691905f, 0.000000f, -0.721988f } }, { 17, { 0.691905f, 0.000000f, -0.721988f } },
+    };
+    static const float hold4[16] = { -0.839847f, -0.536678f, 0.081225f, 0, 0.144463f, -0.076750f, 0.986542f, 0, -0.523176f, 0.840307f, 0.142045f, 0, 0.117384f, -0.434351f, 0.450694f, 1 };
+    static const float hold_gl[16] = { -0.448615f, -0.855858f, 0.257448f, 0, 0.724132f, -0.179230f, 0.666047f, 0, -0.523919f, 0.485275f, 0.700157f, 0, 2.243025f, -1.023558f, -1.827977f, 1 };
+    bar_loaded = 1;
+    for (unsigned k = 0; k < sizeof(bars) / sizeof(bars[0]); k++) { memcpy(two_bl[bars[k].w], bars[k].b, sizeof(bars[k].b)); two_bl_ok[bars[k].w] = 1; }
+    memcpy(two_rel[4], hold4, sizeof(hold4)); two_rel_ok[4] = two_rel_near[4] = 1;
+    for (int w = 14; w <= 17; w++) { memcpy(two_rel[w], hold_gl, sizeof(hold_gl)); two_rel_ok[w] = two_rel_near[w] = 1; }
+    vr_log("vr: weapon barrels and left-hand holds fixed (built in)\n");
+}
+
+static void two_learn(const BH_PWORK* p, int wn)
+{
+    static int steady, last_wn = -1;
+    const float *h9, *h13;
+    float inv[16], dx, dy, dz, dist, s = g_vr_scale / 10.0f;
+    int level = (short)p->wax <= 546 && (short)p->wax >= -546;   /* vr206: the aim level, within 3 degrees */
+    if (!bar_loaded) bar_load();
+    return;   /* vr213: nothing learned - all fixed (bar_load) */
+    if (wn != last_wn) { steady = 0; last_wn = wn; }
+    if (!(p->mode0 == 1 && p->mode1 == 1 && p->mode2 >= 65 && p->mode2 <= 67) || knife_equipped() || dual_equipped()) { steady = 0; return; }
+    if (++steady < 10) return;
+    if (!level || (two_rel_ok[wn] && two_bl_ok[wn])) return;   /* vr207: each learned once, with the aim level, and kept */
+    h9 = p->mlwP->owP[9].mtx; h13 = p->mlwP->owP[13].mtx;
+    if (!m4_inv(inv, h9)) return;
+    if (!two_bl_ok[wn]) {   /* vr203: the aim's way in the node's frame (its columns may be scaled) */
+        float A[9], a[3], bl[3], xa, el, yw;
+        rows_from_angles(A, (float)(short)p->ay * (3.14159265f / 32768.0f), (float)(short)p->wax * (3.14159265f / 32768.0f));
+        a[0] = -A[2]; a[1] = -A[5]; a[2] = -A[8];
+        for (int j = 0; j < 3; j++) {
+            float c2 = h9[j * 4 + 0] * h9[j * 4 + 0] + h9[j * 4 + 1] * h9[j * 4 + 1] + h9[j * 4 + 2] * h9[j * 4 + 2];
+            bl[j] = c2 > 1e-12f ? (h9[j * 4 + 0] * a[0] + h9[j * 4 + 1] * a[1] + h9[j * 4 + 2] * a[2]) / c2 : 0;
+        }
+        xa = sqrtf(bl[0] * bl[0] + bl[1] * bl[1] + bl[2] * bl[2]);
+        if (xa > 1e-6f) {
+            for (int j = 0; j < 3; j++) bl[j] /= xa;
+            /* how far from the node's x axis (the old barrel line): about z ("height" in wp_fps1) and about y */
+            xa = acosf(fabsf(bl[0]) > 1 ? 1 : fabsf(bl[0])) * (180.0f / 3.14159265f);
+            el = atan2f(bl[2], fabsf(bl[0])) * (180.0f / 3.14159265f);
+            yw = atan2f(bl[1], fabsf(bl[0])) * (180.0f / 3.14159265f);
+            vr_log("vr: weapon %d drawn barrel learned and kept (aim %.1f deg) %.1f deg from the hand's x axis (%.1f toward the barrel's height axis, %.1f to the side), in the node %.2f %.2f %.2f\n",
+                   wn, (short)p->wax * (180.0f / 32768.0f), xa, el, yw, bl[0], bl[1], bl[2]);
+            memcpy(two_bl[wn], bl, sizeof(bl));
+            two_bl_ok[wn] = 1;
+        }
+    }
+    if (!two_rel_ok[wn]) {
+        m4_mul(two_rel[wn], inv, h13);
+        dx = h13[12] - h9[12]; dy = h13[13] - h9[13]; dz = h13[14] - h9[14];
+        dist = sqrtf(dx * dx + dy * dy + dz * dz) / (s > 0 ? s : 1);   /* metres (game units per metre: vr_scale / 10) */
+        vr_log("vr: weapon %d aim pose - the game's left hand %.0f cm from the right (%s), kept\n", wn, dist * 100,
+               dist < 0.35f ? "two-handed: the left hand will hold it" : "one-handed: the left hand stays free");
+        two_rel_ok[wn] = 1;
+        two_rel_near[wn] = dist < 0.35f;
+    }
+    bar_save();
+}
+static void two_hand_update(const VrInput* in, float ra[9], const float* R)
+{
+    float t[3], b[3], v[3], k[3], d, c, sg, q[9], m[9];
+    int want = in->lgrip > 0.5f && in->grip_valid && in->gripl_valid && !knife_equipped() && !dual_equipped() && plp && plp->wpnr_no != 1 && plp->wpnr_no != 10 && plp->wpnr_no != 19 &&   /* vr199: not the lighter (weapon 1); vr200: nor the bow gun (weapons 10, 19) */
+               !mag_held && !grip_latch && !(g_vr_manual_reload && near_holster());
+    t[0] = in->gripl.px - in->grip.px; t[1] = in->gripl.py - in->grip.py; t[2] = in->gripl.pz - in->grip.pz;
+    d = sqrtf(t[0] * t[0] + t[1] * t[1] + t[2] * t[2]);
+    {   /* vr198: the left grip held near the gun for 300 ms first */
+        static uint64_t want_ms;
+        uint64_t now = SDL_GetTicks();
+        float near_cm = two_near_cm;
+        two_near_cm = 1e9f;   /* measured again this frame (the left hand, after this) */
+        /* vr201: near the gun itself - the left hand within 12 cm of where it holds it (vr196..200: the two
+           controllers within 40 cm, which took the hand from almost anywhere in front) */
+        if (two_on && !two_steer && near_cm < 1e8f && near_cm > two_grab_cm + 10.0f) {   /* vr212: the small guns let go once
+                                                                                 the left hand is pulled 10 cm off (before: held on at any distance) */
+            two_on = 0;
+            vr_log("vr: gun back to one hand (left hand pulled %.0f cm off the gun)\n", near_cm - two_grab_cm);
+        }
+        if (!(want && near_cm < 12.0f)) want_ms = 0; else if (!want_ms) want_ms = now ? now : 1;
+        if (!two_on && want_ms && now - want_ms >= 300) {
+            two_on = 1; two_ms = now; two_item = equipped_item(); two_steer = big_gun(two_item); two_need_ref = 1; two_grab_cm = near_cm;
+            vr_log("vr: gun held with both hands (left hand %.0f cm from the gun's hold, item %d weapon %d: %s)\n", near_cm, two_item, plp->wpnr_no,
+                   two_steer ? "big gun - the left hand aims it too" : "the left hand only holds on, the right aims");
+        }
+    }
+    if (two_on && (!want || (two_steer && d > 0.80f))) {   /* vr199: on the small guns the hand stays on whatever the controller does */ two_on = 0; vr_log("vr: gun back to one hand (%s, hands %.0f cm apart)\n", want ? "hands too far" : "left grip let go", d * 100); }
+    if (!two_on || !two_steer || d < 0.05f) return;
+    for (int i = 0; i < 3; i++) t[i] /= d;
+    /* vr202: at the grab the line between the hands is kept in the right controller's frame (vr196..201 turned the barrel
+       onto that line at once: the gun jumped 5..10 degrees, up when the hands were level); from then on the gun turns as
+       that line turns - the left hand lifting or lowering it - and the right hand's roll stays */
+    if (two_need_ref) {
+        for (int j = 0; j < 3; j++) two_t0[j] = ra[0 * 3 + j] * t[0] + ra[1 * 3 + j] * t[1] + ra[2 * 3 + j] * t[2];
+        two_need_ref = 0;
+        vr_log("vr: both hands - the gun kept as it was at the grab, then turned by the left hand\n");
+    }
+    for (int i = 0; i < 3; i++) b[i] = ra[i * 3 + 0] * two_t0[0] + ra[i * 3 + 1] * two_t0[1] + ra[i * 3 + 2] * two_t0[2];
+    (void)v; (void)sg; (void)R;
+    d = sqrtf(b[0] * b[0] + b[1] * b[1] + b[2] * b[2]);
+    if (d < 1e-4f) return;
+    for (int i = 0; i < 3; i++) b[i] /= d;
+    c = b[0] * t[0] + b[1] * t[1] + b[2] * t[2];
+    if (c < -0.9f) return;   /* the left hand behind the gun */
+    k[0] = b[1] * t[2] - b[2] * t[1]; k[1] = b[2] * t[0] - b[0] * t[2]; k[2] = b[0] * t[1] - b[1] * t[0];
+    {   /* q = I + [k]x + [k]x^2 / (1 + c): the shortest turn from b to t */
+        float K[9] = { 0, -k[2], k[1], k[2], 0, -k[0], -k[1], k[0], 0 }, f = 1.0f / (1.0f + c);
+        for (int i = 0; i < 3; i++)
+            for (int j = 0; j < 3; j++) {
+                float kk = K[i * 3 + 0] * K[0 * 3 + j] + K[i * 3 + 1] * K[1 * 3 + j] + K[i * 3 + 2] * K[2 * 3 + j];
+                q[i * 3 + j] = (i == j ? 1.0f : 0.0f) + K[i * 3 + j] + kk * f;
+            }
+    }
+    for (int i = 0; i < 3; i++)
+        for (int j = 0; j < 3; j++) m[i * 3 + j] = q[i * 3 + 0] * ra[0 * 3 + j] + q[i * 3 + 1] * ra[1 * 3 + j] + q[i * 3 + 2] * ra[2 * 3 + j];
+    memcpy(ra, m, sizeof(m));
+    memcpy(two_q, q, sizeof(q));
+    memcpy(two_t, t, sizeof(t));
+}
+static void aim_rows(float r[9], const VrPose* p)
+{
+    float m[9];
+    quat_to_rows(r, p);
+    if (!two_on || !two_steer) return;
+    for (int i = 0; i < 3; i++)
+        for (int j = 0; j < 3; j++) m[i * 3 + j] = two_q[i * 3 + 0] * r[0 * 3 + j] + two_q[i * 3 + 1] * r[1 * 3 + j] + two_q[i * 3 + 2] * r[2 * 3 + j];
+    memcpy(r, m, sizeof(m));
+}
 static int barrel_ok[2];
 static int barrel_dir(int side, float d[3])
 {
@@ -1693,6 +2019,11 @@ static void sight_add(const float* H, int side, int wno)
     NJS_LINE line;
     NJS_POINT3 apos;
     ATR_WORK* ahtp;
+    if (wno == 13) {   /* vr220: the sniper rifle (the scope weapon, WpnTab flag 0x20) - no laser (vr222: weapon 20 back to a laser) */
+        static unsigned seen;
+        if (!(seen & (1u << (wno & 31)))) { seen |= 1u << (wno & 31); vr_log("vr: no laser on weapon %d (item %d)\n", wno, equipped_item()); }
+        return;
+    }
     if (!barrel_dir(side, d)) return;
     o[0] = muzzle_w[side][0]; o[1] = muzzle_w[side][1]; o[2] = muzzle_w[side][2];
     (void)z; (void)H;   /* from the muzzle (vr_hand) */
@@ -1709,6 +2040,7 @@ static void sight_add(const float* H, int side, int wno)
         if (t > 0 && t < dist) dist = t;
     }
     for (int k = 0; k < 3; k++) p[k] = o[k] + d[k] * dist;
+    if (wno == 11) { mk_add(VRMK_RING, p, 0); return; }   /* vr223: the shotgun - RE4's round reticle, no laser nor dot */
     if (g_vr_sight & 1) mk_add(VRMK_DOT, p, 0);
     if (g_vr_sight & 2) {   /* the beam from the muzzle; a muzzle point behind the hand (the mirrored left gun) is put as far in front of it */
         float v[3] = { o[0] - hand_pos[side][0], o[1] - hand_pos[side][1], o[2] - hand_pos[side][2] };
@@ -1734,16 +2066,13 @@ static void grip_save(void)
 }
 static void grip_load(void)
 {
-    char pth[512];
-    FILE* f;
-    int n = 0;
+    /* vr213: fixed - the pose the owner's game learned and he confirmed (save/vr_grip.txt of vr212); no longer learned
+       or read from the file, so every player gets the same */
+    static const float fixed[9] = { 0.003280f, 0.999603f, 0.014959f, 0.029681f, 0.014863f, -0.999220f, -0.999326f, 0.003752f, -0.029635f };
     grip_loaded = 1;
-    grip_path(pth, sizeof(pth));
-    if (!(f = fopen(pth, "r"))) return;
-    while (n < 9 && fscanf(f, "%f", &grip_ref[n]) == 1) n++;
-    fclose(f);
-    grip_ok = n == 9;
-    if (grip_ok) vr_log("vr: hand pose loaded (%s)\n", pth);
+    memcpy(grip_ref, fixed, sizeof(grip_ref));
+    grip_ok = 1;
+    vr_log("vr: hand pose fixed (built in)\n");
 }
 
 void vr_hand(BH_PWORK* p)
@@ -1780,6 +2109,7 @@ void vr_hand(BH_PWORK* p)
     ya = (float)(short)p->ay * (3.14159265f / 32768.0f);
     pa = (float)(short)p->wax * (3.14159265f / 32768.0f);
     ctl = xr_input(&in) && xr_head_pose(&h);
+    if (p->mlwP->obj_num > 13) two_learn(p, wn);   /* vr198: before the hands are moved */
     if (ctl) { make_Wg(Wg); xform(Wg, h.px, h.py, h.pz, E); }
     for (int side = 0; side < 2; side++) {
         int node = side ? 13 : 9;
@@ -1830,8 +2160,47 @@ void vr_hand(BH_PWORK* p)
         }
         if (side == 0) { memcpy(Rright, R, sizeof(Rright)); right_ok = 1; }
         quat_to_rows(ra, hp);
+        if (side == 0) two_hand_update(&in, ra, R);   /* vr196 */
+        if (side == 0 && g_vr_recoil && shake_ms) {   /* vr205: the rifle's climb and sway, one-handed */
+            float e = shake_decay(), a, b, ca, sa, cb, sb, tmp[9];
+            if (e < 0.01f || (two_on && two_steer) || p->wpnr_no != RIFLE_WPN) { shake_ms = 0; shake_p = shake_y = 0; }
+            else {
+                a = shake_p * e * (3.14159265f / 180.0f); b = shake_y * e * (3.14159265f / 180.0f);
+                ca = cosf(a); sa = sinf(a); cb = cosf(b); sb = sinf(b);
+                for (int i = 0; i < 3; i++) {   /* ra = ra * Rx(a) (up, as the kick) */
+                    tmp[i * 3 + 0] = ra[i * 3 + 0];
+                    tmp[i * 3 + 1] = ra[i * 3 + 1] * ca + ra[i * 3 + 2] * sa;
+                    tmp[i * 3 + 2] = -ra[i * 3 + 1] * sa + ra[i * 3 + 2] * ca;
+                }
+                for (int i = 0; i < 3; i++) {   /* ra = tmp * Ry(b) (to a side) */
+                    ra[i * 3 + 0] = tmp[i * 3 + 0] * cb - tmp[i * 3 + 2] * sb;
+                    ra[i * 3 + 1] = tmp[i * 3 + 1];
+                    ra[i * 3 + 2] = tmp[i * 3 + 0] * sb + tmp[i * 3 + 2] * cb;
+                }
+            }
+        }
         if (g_vr_recoil && recoil_ms[side]) {   /* the kick of a shot: up about the controller's x axis, back along it */
-            float t = (SDL_GetTicks() - recoil_ms[side]) / 1000.0f, e = t < 0.02f ? t / 0.02f : expf(-(t - 0.02f) / recoil_tau[side]);
+            float t, e;
+            {   /* vr226: the kick's clock runs with the hand's frames, at most 1/30 s a frame - a stalled frame (the last
+                   shot of the vr225 log: one frame, then the next 0.4 s later) no longer eats the whole kick */
+                static uint64_t seen[2], prev[2];
+                static float kt[2];
+                uint64_t now = SDL_GetTicks();
+                if (seen[side] != recoil_ms[side]) { seen[side] = recoil_ms[side]; kt[side] = 0; prev[side] = now; }
+                else { float dt = (now - prev[side]) / 1000.0f; kt[side] += dt > 1.0f / 30.0f ? 1.0f / 30.0f : dt; prev[side] = now; }
+                t = kt[side];
+                e = t < 0.02f ? (t > 0 ? t / 0.02f : 0.5f) : expf(-(t - 0.02f) / recoil_tau[side]);   /* its first frame half up */
+            }
+            {   /* vr224 log: how much of each kick the drawn hand got (its peak), and in how many frames */
+                static uint64_t shot_of[2];
+                static float peak[2];
+                static int frames[2], nlog;
+                if (shot_of[side] != recoil_ms[side]) { shot_of[side] = recoil_ms[side]; peak[side] = 0; frames[side] = 0; }
+                frames[side]++;
+                if (t <= 0.4f && recoil_deg[side] * e > peak[side]) peak[side] = recoil_deg[side] * e;
+                if (t > 0.4f && nlog++ < 300)
+                    vr_log("vr: kick shown on the %s hand: peak %.1f of %.1f deg, over %d frames\n", side ? "left" : "right", peak[side], recoil_deg[side], frames[side]);
+            }
             if (t > 0.4f) recoil_ms[side] = 0;
             else {
                 float a = recoil_deg[side] * (3.14159265f / 180.0f) * e, c = cosf(a), sn = sinf(a), tmp[9];
@@ -1879,6 +2248,13 @@ void vr_hand(BH_PWORK* p)
             if (barrel_ok[side]) {
                 float sg = (d[0] * f[0] + d[1] * f[1] + d[2] * f[2]) < 0 ? -1.0f : 1.0f;
                 for (int k = 0; k < 3; k++) d[k] = d[k] / l * sg;
+                if (side == 0 && !dual_equipped() && two_bl_ok[wn]) {   /* vr203: the weapon's own barrel, as the game draws it aimed */
+                    const float* bl = two_bl[wn];
+                    float e[3], el;
+                    for (int k = 0; k < 3; k++) e[k] = H[0 * 4 + k] * bl[0] + H[1 * 4 + k] * bl[1] + H[2 * 4 + k] * bl[2];
+                    el = sqrtf(e[0] * e[0] + e[1] * e[1] + e[2] * e[2]);
+                    if (el > 1e-6f) for (int k = 0; k < 3; k++) d[k] = e[k] / el;
+                }
                 if (g_vr_barrel_pitch) {   /* turned towards up */
                     float a = g_vr_barrel_pitch / 10.0f * (3.14159265f / 180.0f), u[3] = { -d[0] * d[1], 1.0f - d[1] * d[1], -d[2] * d[1] }, ul;
                     ul = sqrtf(u[0] * u[0] + u[1] * u[1] + u[2] * u[2]);
@@ -1886,6 +2262,71 @@ void vr_hand(BH_PWORK* p)
                 }
                 for (int k = 0; k < 3; k++) muzzle_w[side][k] = H[0 * 4 + k] * m->x + H[1 * 4 + k] * m->y + H[2 * 4 + k] * m->z + H[12 + k];
             }
+        }
+        if (side == 1) {   /* vr201: how near the left hand (on its controller) is to the gun's hold - the game's left hand
+                              in its aim pose, or the right hand's node before the gun was aimed with */
+            float G0[16], sc = g_vr_scale / 10.0f, dx, dy, dz;
+            const float* h9 = p->mlwP->owP[9].mtx;
+            const float* tp = h9 + 12;
+            if (two_rel_ok[wn] && (two_rel_near[wn] || big_gun(equipped_item()))) { m4_mul(G0, h9, two_rel[wn]); tp = G0 + 12; }
+            dx = P[0] - tp[0]; dy = P[1] - tp[1]; dz = P[2] - tp[2];
+            two_near_cm = sqrtf(dx * dx + dy * dy + dz * dz) / (sc > 0 ? sc : 1) * 100.0f;
+            if (barrel_ok[0]) {   /* vr208: or anywhere along the gun, from the hand to the muzzle (the grenade launcher's hold
+                                     is 31 cm out: before its aim pose was learned only the right hand counted - it never took) */
+                float a[3] = { h9[12], h9[13], h9[14] }, ab[3], ap[3], t, l2, q[3], dd;
+                for (int k = 0; k < 3; k++) { ab[k] = muzzle_w[0][k] - a[k]; ap[k] = P[k] - a[k]; }
+                l2 = ab[0] * ab[0] + ab[1] * ab[1] + ab[2] * ab[2];
+                t = l2 > 1e-9f ? (ap[0] * ab[0] + ap[1] * ab[1] + ap[2] * ab[2]) / l2 : 0;
+                t = t < 0 ? 0 : t > 1 ? 1 : t;
+                for (int k = 0; k < 3; k++) q[k] = P[k] - (a[k] + ab[k] * t);
+                dd = sqrtf(q[0] * q[0] + q[1] * q[1] + q[2] * q[2]) / (sc > 0 ? sc : 1) * 100.0f;
+                if (dd < two_near_cm) two_near_cm = dd;
+            }
+            {   /* vr208 log: the left grip pressed and the gun not taken - how far the hand was */
+                static int was_held, logged;
+                VrInput li;
+                int held = xr_input(&li) && li.lgrip > 0.5f;
+                if (held && !was_held) logged = 0;
+                if (held && !two_on && !logged && SDL_GetTicks() - two_ms > 1000) {
+                    static uint64_t since;
+                    if (!since) since = SDL_GetTicks();
+                    if (SDL_GetTicks() - since > 600) {
+                        logged = 1; since = 0;
+                        vr_log("vr: left grip held, gun not taken: the hand %.0f cm from the gun (needs 12), weapon %d\n", two_near_cm, p->wpnr_no);
+                    }
+                }
+                was_held = held;
+            }
+        }
+        {   /* vr213: a weapon with no fixed hold - the left hand kept where it took the gun (relative to the right hand's node) */
+            static int grab_ok;
+            float inv9[16];
+            if (side == 1 && two_on && !two_rel_ok[wn] && !grab_ok && m4_inv(inv9, p->mlwP->owP[9].mtx)) {
+                m4_mul(grab_rel, inv9, H);
+                grab_ok = 1;
+                vr_log("vr: weapon %d has no fixed hold - the left hand stays where it took it\n", wn);
+            }
+            if (!two_on) grab_ok = 0;
+            grab_on = grab_ok;
+        }
+        if (side == 1 && two_on && !two_rel_ok[wn] && grab_on) {
+            float G[16], w = two_w();
+            m4_mul(G, p->mlwP->owP[9].mtx, grab_rel);
+            for (int k = 0; k < 16; k++) H[k] = H[k] * (1 - w) + G[k] * w;
+            P[0] = H[12]; P[1] = H[13]; P[2] = H[14];
+        } else
+        if (side == 1 && two_on && two_rel_ok[wn] && (two_rel_near[wn] || two_steer)) {   /* vr198: the left hand on the gun, as the game's aim pose has it (vr202: always on the big guns) */
+            float G[16], w = two_w();
+            m4_mul(G, p->mlwP->owP[9].mtx, two_rel[wn]);
+            for (int k = 0; k < 16; k++) H[k] = H[k] * (1 - w) + G[k] * w;
+            P[0] = H[12]; P[1] = H[13]; P[2] = H[14];
+            if (!two_left_logged) { two_left_logged = 1; vr_log("vr: left hand put on weapon %d\n", wn); }
+        } else if (side == 1) {
+            if (two_on && !two_left_logged) {
+                two_left_logged = 1;
+                vr_log("vr: left hand not put on weapon %d (%s)\n", wn, two_rel_ok[wn] ? "one-handed in the game's aim" : "no aim pose seen yet for it");
+            }
+            if (!two_on) two_left_logged = 0;
         }
         memcpy(hand_pos[side], P, sizeof(P));
         if (side == 1 && mag_held) {   /* vr87: the ammo box in the left hand, from the holster to the gun */
@@ -1901,7 +2342,10 @@ void vr_hand(BH_PWORK* p)
         hand_ok[side] = 1;
         hand_log(side, 0, wn);
         if (side == 0) vr_slash(p, hp, H);
-        if (g_vr_sight && aiming && !knife_equipped() && (side == 0 || dual_equipped())) sight_add(H, side, p->wpnr_no);
+        if (g_vr_sight && aiming && !knife_equipped() && (side == 0 || dual_equipped())) {
+            VrInput gin;   /* vr174: only while the right grip (aim) is held - letting go of the knife passes through the aim stance */
+            if (xr_input(&gin) && gin.rgrip > 0.5f) sight_add(H, side, p->wpnr_no);
+        }
     }
 }
 
@@ -1910,7 +2354,7 @@ void vr_hand(BH_PWORK* p)
    hand that fired it (the game's own muzzle point gx, on the hand node, which follows the
    controller) and goes where that controller points. Everything else about the shot (damage,
    walls, enemies, effects) is the game's. */
-static unsigned diag_shots;   /* the player's shots (vr_gun_ray), for the trigger log */
+static unsigned diag_shots;
 int vr_gun_ray(GA_WORK* gap)
 {
     static int last = -1;
@@ -1938,7 +2382,7 @@ int vr_gun_ray(GA_WORK* gap)
     if (xr_input(&in) && (side ? in.aiml_valid : in.aim_valid) && hand_ok[side]) {
         const VrPose* hp = side ? &in.aiml : &in.aim;
         float bd[3];
-        quat_to_rows(r, hp);
+        if (side) quat_to_rows(r, hp); else aim_rows(r, hp);
         f[0] = -r[2]; f[1] = -r[5]; f[2] = -r[8];   /* -z of the controller */
         d.x = c * f[0] + s * f[2]; d.y = f[1]; d.z = -s * f[0] + c * f[2];
         int along = barrel_dir(side, bd);
@@ -1951,6 +2395,27 @@ int vr_gun_ray(GA_WORK* gap)
             if (g_vr_precise_hits && !(WpnTab[gap->wpn_no].flg & 0x80000000)) { gap->r = 0.3f; gap->rn = 0; gap->rmax = 0; }   /* a thin bullet (not the shotgun's spread) */
             gap->vx = d.x / l * gap->l; gap->vy = d.y / l * gap->l; gap->vz = d.z / l * gap->l;
             st = 0;
+            {   /* vr210 log (the owner: shots drawn to the zombies): how near the line passes each zombie - a hit counted for one
+                   it passed well clear of is the game's help, not the aim */
+                static int nlog;
+                float ro[3] = { o.x, o.y, o.z }, rd[3] = { d.x / l, d.y / l, d.z / l }, sc = g_vr_scale / 10.0f, best = 1e9f;
+                int bi = -1;
+                for (int i = 0; i < sys->ewk_n && nlog < 400; i++) {
+                    BH_PWORK* e = &ene[i];
+                    const NJS_CAPSULE* cp = &e->watr;
+                    if (!(e->flg & 0x1) || !(e->flg & 0x20) || (e->flg & 0x2)) continue;
+                    for (int k = 0; k <= 8; k++) {
+                        float f = k / 8.0f, cx = cp->c1.x + (cp->c2.x - cp->c1.x) * f - ro[0], cy = cp->c1.y + (cp->c2.y - cp->c1.y) * f - ro[1],
+                              cz = cp->c1.z + (cp->c2.z - cp->c1.z) * f - ro[2];
+                        float t = cx * rd[0] + cy * rd[1] + cz * rd[2], q = cx * cx + cy * cy + cz * cz - t * t, dd;
+                        if (t <= 0) continue;
+                        dd = sqrtf(q > 0 ? q : 0) - cp->r;
+                        if (dd < best) { best = dd; bi = i; }
+                    }
+                }
+                if (bi >= 0 && nlog++ < 400)
+                    vr_log("vr: shot line passes zombie %d %.0f cm %s its body\n", bi, fabsf(best) / (sc > 0 ? sc : 1) * 100.0f, best <= 0 ? "inside" : "clear of");
+            }
         }
     }
     if (st * 2 + side != last) {
@@ -1974,8 +2439,9 @@ int vr_fly_dir(NJS_POINT3* v, int* ax, int* ay, int wno)
     float r[9], d[3], bd[3], l, sp, c = cosf(vr_yaw), s = sinf(vr_yaw);
     if (!v || !plp || !vr_on() || !g_vr_hand_aim) return 0;
     diag_shots++;
+    if (wno >= 15 && wno <= 17) shot_feedback(0, wno);   /* vr208: the grenade launcher's kick */
     if (!xr_input(&in) || !in.aim_valid || !hand_ok[0]) return 0;
-    quat_to_rows(r, &in.aim);
+    aim_rows(r, &in.aim);
     d[0] = c * -r[2] + s * -r[8]; d[1] = -r[5]; d[2] = -s * -r[2] + c * -r[8];   /* -z of the controller */
     if (barrel_dir(0, bd)) memcpy(d, bd, sizeof(d));
     l = sqrtf(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
@@ -2007,8 +2473,7 @@ int vr_move_stick(float* f, float* r)
 int vr_run_held(void) { VrInput in; return xr_input(&in) && (in.ltrig > 0.5f || sprint_on); }
 
 int vr_pad_select(void) { VrInput in; return xr_input(&in) && (in.buttons & VRB_MENU); }        /* vr133: left menu button: Select */
-int vr_pad_start(void) { VrInput in; return xr_input(&in) && in.ltrig > 0.5f && (in.buttons & VRB_Y); }   /* vr133: LT + Y: Start */
-int vr_quick_knife(void) { VrInput in; return xr_input(&in) && in.lgrip > 0.5f && !mag_held && !grip_latch && !(g_vr_manual_reload && near_holster() && box_ammo() > 0); }   /* vr94: the holster only takes the grip when there is ammo to take */             /* left grip: quick knife */
+int vr_quick_knife(void) { VrInput in; return xr_input(&in) && (in.buttons & VRB_X); }   /* vr196: X held (the left grip holds the gun with both hands) */   /* vr94: the holster only takes the grip when there is ammo to take */             /* left grip: quick knife */
 
 /* tps_after_draw(): the frame is drawn with `cam`; hand its camera to the renderer */
 void vr_after_draw(void)
@@ -2094,9 +2559,9 @@ void vr_diag_frame(void)
             vr_log("vr-diag: trigger: weapon %d rounds %d box %d (slot %s, equipped slot %d item %d) mag_out %d mag_held %d empty-flag %d mode %d/%d/%d playing %d message %d\n",
                    plp->wpnr_no, g ? (int)(*g & 0xFFFF) : -1, box_ammo(), g ? "gun" : "none/endless", swork.pip ? (int)swork.pip[0] : -1, swork.pip && swork.pip[0] ? (int)((swork.pip[swork.pip[0]] >> 16) & 0x7FF) : -1, mag_out, mag_held, (sys->gm_flg & 0x40000) != 0,
                    plp->mode0, plp->mode1, plp->mode2, vr_playing(), (sys->st_flg & 0x200) != 0);
-            shots0 = diag_shots; wait = 20;
+            shots0 = diag_shots; wait = 90;   /* vr210: 90 frames (the grenade launcher fires late in its motion) */
         }
-        if (wait > 0 && --wait == 0) vr_log("vr-diag: trigger result: %u shot(s) in 20 frames\n", diag_shots - shots0);
+        if (wait > 0 && --wait == 0) vr_log("vr-diag: trigger result: %u shot(s) in 90 frames\n", diag_shots - shots0);
         trig_was = t;
     }
     {   /* vr107 diagnosis: the inventory watch - each slot whose item or count changed since the last
@@ -2158,4 +2623,85 @@ int vr_block_autoreload(void)
         if (SDL_GetTicks() > last + 1000) { last = SDL_GetTicks(); vr_log("vr-diag: empty gun: the game's own reload blocked (box ammo %d) - B and the holster\n", box_ammo()); }
     }
     return 1;
+}
+
+/* vr210: effsub1.c bhEff013 - the bow gun's bolt turned towards the nearest enemy in flight (bhSearchNearEnemy, then a
+   steer each frame): the owner's "shots drawn to the zombie". In VR it flies straight from the barrel. */
+int vr_no_homing(void) { return vr_on(); }
+
+/* vr210 log: effsub1.c bhEff130 (grenades) once it hit: how far it went sideways of the way it was fired (ay) - the
+   game moves it straight with gravity only; this checks no turn shows */
+void vr_grenade_end(int ay, float sx, float sz, float ex, float ez, int type)
+{
+    static float lx = 1e9f, lz;
+    static int nlog;
+    float dx = ex - sx, dz = ez - sz, d = sqrtf(dx * dx + dz * dz), a = (short)ay * (3.14159265f / 32768.0f), fx = -sinf(a), fz = -cosf(a), sc = g_vr_scale / 10.0f;
+    float side, along;
+    if (!vr_on() || (sx == lx && sz == lz) || nlog >= 100 || d < 1.0f) return;
+    lx = sx; lz = sz; nlog++;
+    side = dx * fz - dz * fx; along = dx * fx + dz * fz;
+    vr_log("vr: grenade (type %d) flew %.0f cm, %.0f cm to the side of its firing line (%.1f deg)\n", type, along / (sc > 0 ? sc : 1) * 100.0f,
+           side / (sc > 0 ? sc : 1) * 100.0f, atan2f(side, along) * (180.0f / 3.14159265f));
+}
+
+/* vr214: player.c, after vr_fly_dir: the bolt / grenade leaves the muzzle of the gun in the VR hand - where the sight's
+   line starts - not the point the game took from the hand node before the hands were put this frame (the bolt was seen
+   leaving off the sight, a little to the left) */
+void vr_fly_from(float* p, int wno)
+{
+    static unsigned seen;
+    float sc = g_vr_scale / 10.0f, dx, dy, dz;
+    if (!p || !vr_on() || !barrel_ok[0]) return;
+    dx = muzzle_w[0][0] - p[0]; dy = muzzle_w[0][1] - p[1]; dz = muzzle_w[0][2] - p[2];
+    if (wno >= 0 && wno < 32 && !(seen & (1u << wno))) {
+        seen |= 1u << wno;
+        vr_log("vr: weapon %d shell/bolt put at the muzzle: the game's start was %.1f cm off it\n", wno, sqrtf(dx * dx + dy * dy + dz * dz) / (sc > 0 ? sc : 1) * 100.0f);
+    }
+    p[0] = muzzle_w[0][0]; p[1] = muzzle_w[0][1]; p[2] = muzzle_w[0][2];
+}
+
+/* vr215: en01.c bhEne01_SetBlood - a shot in the head (joint 11, whose damage is the head's count) bleeds from the head,
+   as the body does from where it is hit; the game put that blood at the chest (object 9, 2.5 up) */
+int vr_head_joint(int djnt) { return vr_on() && djnt == 11; }
+
+/* vr216: en01.c bhEne01_DamageCheck - the head's burst (its effect and its sound, 4869) runs only for a weapon whose damage
+   table allows it (flag 0x10): not the handguns. A critical (vr215: a head shot that kills) lets it run - the damage is
+   the shot's own, the burst only shows it */
+unsigned char vr_crit_mark[64];
+int vr_crit_take(BH_PWORK* epw)
+{
+    int ix = (int)(epw - ene);
+    if (!vr_on() || ix < 0 || ix >= 64 || !vr_crit_mark[ix]) return 0;
+    vr_crit_mark[ix] = 0;
+    vr_log("vr: critical - zombie %d's head burst (the game's effect and sound)\n", ix);
+    return 1;
+}
+
+/* vr216: the head's blood where the shot hit it: the hit point (dpx..) in the head joint's frame (vr215 put it at the
+   joint's origin - the neck) */
+void vr_head_ofs(BH_PWORK* epp, BH_PWORK* epw, NJS_POINT3* o)
+{
+    float inv[16];
+    const float* m = epp->mlwP->owP[11].mtx;
+    o->x = o->y = o->z = 0;
+    if (!m4_inv(inv, m)) return;
+    o->x = inv[0] * epw->dpx + inv[4] * epw->dpy + inv[8] * epw->dpz + inv[12];
+    o->y = inv[1] * epw->dpx + inv[5] * epw->dpy + inv[9] * epw->dpz + inv[13];
+    o->z = inv[2] * epw->dpx + inv[6] * epw->dpy + inv[10] * epw->dpz + inv[14];
+}
+
+/* vr220: playpch2.c bhCPM2_act_scp (the sniper rifle's scope): the game's own zoom (held: 65 -> 20 degrees, cam.ppers)
+   on the right stick - forward zooms in, back out; each scope starts out, as the game's */
+int vr_scope_zoom(void)
+{
+    static int zoomed;
+    static uint64_t last;
+    VrInput in;
+    uint64_t now = SDL_GetTicks();
+    if (now - last > 500) { zoomed = 0; vr_log("vr: scope on (zoom: right stick forward / back)\n"); }
+    last = now;
+    if (!vr_on() || !xr_input(&in)) return 0;
+    if (in.ry > 0.7f && !zoomed) { zoomed = 1; vr_log("vr: scope zoom in\n"); }
+    else if (in.ry < -0.7f && zoomed) { zoomed = 0; vr_log("vr: scope zoom out\n"); }
+    return zoomed;
 }

@@ -22,6 +22,7 @@
 
 extern SDL_Window* g_window;
 
+int g_extras_unlocked;
 const char* const settings_pages[SP_COUNT] = { "VR", "DISPLAY", "GAMEPLAY", "CONTROLS", "THIRD PERSON", "AUDIO", "CO-OP", "EXTRAS" };
 
 /* ---------------------------------------------------------------- appliers (main thread) */
@@ -112,7 +113,7 @@ static const char* const sources[] = { "Auto", "Keyboard/mouse only", "Gamepad o
 static const char* const extras[] = { "Off", "Up to 1 per room", "Up to 2 per room", "Up to 3 per room" };
 
 /* vr116: the VR comfort page - the few VR options to set before playing (the rest stay in recvx.ini) */
-extern int g_vr_turn, g_vr_sight, g_vr_comfort, g_vr_res;
+extern int g_vr_turn, g_vr_sight, g_vr_comfort, g_vr_res, g_vr_dyn_res;
 static const int vr_turns[] = { 0, 15, 30, 45, 60, 90 };
 static int vr_turn_get(void) { int b = 0; for (int i = 0; i < (int)SDL_arraysize(vr_turns); i++) if (abs(vr_turns[i] - g_vr_turn) < abs(vr_turns[b] - g_vr_turn)) b = i; return b; }
 static void vr_turn_set(int v) { if (v >= 0 && v < (int)SDL_arraysize(vr_turns)) g_vr_turn = vr_turns[v]; }
@@ -137,6 +138,8 @@ const Setting g_settings[] = {
       .help = "Laser: a faint red beam from the gun to where the shot hits. Dot: a small ring there. Off: no sight." },
     { SP_VR, "Resolution", V(g_vr_res), 50, 200, 10, .fmt = "%d%%", .group = "PICTURE",
       .help = "Each eye's resolution, in percent of what the headset recommends. Higher is sharper and heavier for the GPU." },
+    { SP_VR, "Dynamic resolution", V(g_vr_dyn_res), 0, 1, 1,   /* vr177 */
+      .help = "Lowers the resolution by itself in heavy places and raises it back after. Off: the resolution stays fixed." },
 
     { SP_DISPLAY, "Fullscreen", V(g_config.fullscreen), 0, 1, 1, .help = "Also F11.", .apply = settings_apply_window, .group = "WINDOW" },
     { SP_DISPLAY, "Window size", NULL, 0, 5, 1, .get = size_get, .set = size_set, .name = size_name, .locked = fullscreen_on, .apply = settings_apply_window },

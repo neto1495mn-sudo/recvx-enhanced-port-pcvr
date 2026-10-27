@@ -11,6 +11,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+int vr_on_stairs(void);
 int pad_quick_knife(void);
 int pc_quick_knife_on(void);   /* the option (host.c) */
 int vr_on(void);               /* (vr_glue.c) */
@@ -138,6 +139,10 @@ unsigned int knife_pad(unsigned int pad)
     held = pc_quick_knife_on() && g_cheat.noclip != 2 && pad_quick_knife();
     if (held) trace();
     if (held && state == 2) state = 1;
+    if (held && !state && vr_on() && vr_on_stairs()) {   /* vr186: not on stairs - the knife drawn there took her off the stair walk and through the wall */
+        static int lf;
+        if (++lf % 60 == 1) host_log("knife: not drawn on the stairs (mode %d/%d)\n", plp->mode1, plp->mode2);
+    } else
     if (held && !state && (at_rest() || (vr_on() && in_play()))) {   /* VR: at once (the weapon is always raised there) */
         n = (sys->gm_flg & 0x8000000) ? 11 : 9;   /* [1] the separate slot (lighter), [2..] the grid */
         for (i = 1, knife_slot = 0; i <= n && !knife_slot; i++) if (ID(iv[i]) == KNIFE) knife_slot = i;
@@ -159,8 +164,14 @@ unsigned int knife_pad(unsigned int pad)
     if (state == 2) since_release++;
     /* after the swing: the game lowers the knife first. In VR the weapon is always raised (never
        at rest), so the weapon before comes back 20 frames after the release */
+    /* vr187: never while the knife's wall bounce (mode 72) runs - its motions (103/108/113) are the knife's; the gun
+       given back in it had none of them and the game crashed in its motion code (vr186 crash: SetMtnFastHokan from
+       bhControlPlayer, right after "released in mode 1/72") - the bounce ends first (the game's own end) */
+    if (state == 2 && plp->mode1 == 1 && plp->mode2 == 72) {
+        if (since_release == 1 || since_release % 60 == 0) host_log("knife: waiting for the wall bounce to end before giving the weapon back (%d frames)\n", since_release);
+    } else
     if (state == 2 && (at_rest() || (vr_on() && in_play() && since_release >= 1))) give_back();
     if (!state && vr_on()) vr_sync_slot();
-    if (state == 1 && in_play()) pad |= 0x10;   /* readied: fire slashes */
+    if (state == 1 && in_play() && !(vr_on() && vr_on_stairs())) pad |= 0x10;   /* readied: fire slashes (vr186: not on stairs) */
     return pad;
 }

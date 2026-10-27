@@ -1,6 +1,6 @@
 /* User settings: <save_dir>/recvx.ini, "key = value" lines. */
 #include "xr.h"
-extern int g_vr_scale, g_vr_eye_height, g_vr_fov, g_vr_turn, g_vr_hand_aim, g_vr_fx_fix, g_vr_gun_min, g_vr_hand_offset, g_vr_slash_speed, g_vr_hit_tilt, g_vr_danger_fx, g_vr_eye_shape, g_vr_screen_angle, g_vr_left_mirror, g_vr_dmg_head, g_vr_dmg_body, g_vr_dmg_arm, g_vr_dmg_leg, g_vr_recoil, g_vr_haptics, g_vr_hud_dist, g_vr_hud_angle, g_vr_sight, g_vr_sight_size, g_vr_holster, g_vr_hud_y, g_vr_roomscale, g_vr_manual_reload, g_vr_prompts, g_vr_dmg_body_max, g_vr_wake_shots, g_vr_precise_hits, g_vr_barrel_pitch, g_vr_hud_dist, g_vr_hud_angle, g_vr_aim_walk, g_vr_cam_steady, g_vr_move_direct, g_vr_heart_sound, g_vr_close_push, g_vr_bite_push, g_vr_comfort, g_update_check, g_tex_hd_per_frame, g_launcher, g_launcher_lang;
+extern int g_vr_scale, g_vr_eye_height, g_vr_fov, g_vr_turn, g_vr_hand_aim, g_vr_fx_fix, g_vr_gun_min, g_vr_hand_offset, g_vr_slash_speed, g_vr_hit_tilt, g_vr_danger_fx, g_vr_eye_shape, g_vr_screen_angle, g_vr_left_mirror, g_vr_dmg_head, g_vr_dmg_body, g_vr_dmg_arm, g_vr_dmg_leg, g_vr_recoil, g_vr_haptics, g_vr_hud_dist, g_vr_hud_angle, g_vr_sight, g_vr_sight_size, g_vr_holster, g_vr_hud_y, g_vr_roomscale, g_vr_manual_reload, g_vr_prompts, g_vr_dmg_body_max, g_vr_wake_shots, g_vr_precise_hits, g_vr_barrel_pitch, g_vr_hud_dist, g_vr_hud_angle, g_vr_aim_walk, g_vr_cam_steady, g_vr_move_direct, g_vr_heart_sound, g_vr_close_push, g_vr_bite_push, g_vr_comfort, g_update_check, g_tex_hd_per_frame, g_tex_loaders, g_tex_upload, g_vr_dyn_res, g_launcher, g_launcher_lang;
 extern int g_tex_hd, g_tex_hd_log, g_tex_hd_mb, g_tex_hd_max, g_fast_doors, g_vr_debug_log, g_vr_door_fade, g_vr_shadows, g_vr_debug_cores, g_vr_interpolate, g_vr_interp_body;   /* gs/texreplace.c */
 static int g_vr_cfg_ver;   /* ini vr_cfg_ver: the VR settings' version, to move older saved values to new defaults */   /* pc/glue/vr_glue.c */
 #include "../ps2_platform.h"
@@ -98,6 +98,9 @@ static const struct { const char* key; int* val; int lo, hi; } keys[] = {
     { "update_check", &g_update_check, 0, 1 },
     { "launcher_lang", &g_launcher_lang, 0, 2 },     /* vr134: the launcher's language (0 English, 1 Portuguese, 2 Spanish) */
     { "launcher", &g_launcher, 0, 1 },                /* vr120: the launcher window at start (host.c, overlay.cpp) */        /* vr119: at start, ask GitHub whether a newer VR release is out (host/update.c) */
+    { "vr_dyn_res", &g_vr_dyn_res, 0, 1 },            /* vr162: dynamic resolution in heavy places */
+    { "tex_loaders", &g_tex_loaders, 4, 6 },          /* vr160: threads reading the HD files */
+    { "tex_upload_thread", &g_tex_upload, 0, 2 },     /* vr160: HD upload on a thread of its own: 0 by the card, 1 on, 2 off */
     { "tex_hd_per_frame", &g_tex_hd_per_frame, 1, 4 }, /* vr119: HD textures converted (mipmaps) per frame - fewer: lighter, longer stutter */            /* vr116: dark edges while walking with the stick / turning: 0 off, 1 weak, 2 medium, 3 strong */       /* vr115: each bite pushes the camera back this many cm; 0 = off */     /* vr112: the camera keeps an enemy's body this many cm from the eyes; 0 = off */
     { "vr_eye_shape", &g_vr_eye_shape, 0, 1 },
     { "vr_screen_angle", &g_vr_screen_angle, 20, 120 },
@@ -180,7 +183,7 @@ void config_load(void)
     int v;
     FILE* f;
     path(p, sizeof(p));
-    if (!(f = pc_fopen(p, "r"))) { g_vr_cfg_ver = 25; default_name(); player_id(); return; }
+    if (!(f = pc_fopen(p, "r"))) { g_vr_cfg_ver = 26; default_name(); player_id(); return; }
     while (fgets(line, sizeof(line), f))
         if (sscanf(line, " coop_join = %127s", g_coop.join) == 1) continue;
         else if (sscanf(line, " coop_player_id = %127s", val) == 1) { if (!unhex(val, g_coop.pid, 16)) memset(g_coop.pid, 0, 16); continue; }
@@ -194,10 +197,11 @@ void config_load(void)
                 if (!strcmp(k, keys[i].key) && v >= keys[i].lo && v <= keys[i].hi) *keys[i].val = v;
     fclose(f);
     if (g_vr_cfg_ver < 25) {   /* VR defaults changed in vr25: damage by part and the text panel (an older file saved the old ones) */
-        g_vr_dmg_head = 125; g_vr_dmg_body = 75; g_vr_dmg_body_max = 100; g_vr_dmg_arm = 50; g_vr_dmg_leg = 50;
+        g_vr_dmg_head = 115; g_vr_dmg_body = 75; g_vr_dmg_body_max = 100; g_vr_dmg_arm = 50; g_vr_dmg_leg = 50;
         g_vr_hud_dist = 200; g_vr_hud_angle = 42;
     }
-    g_vr_cfg_ver = 25;
+    if (g_vr_cfg_ver < 26 && g_vr_dmg_head == 125) g_vr_dmg_head = 115;   /* vr217: the head's damage 115% (was 125: the old default moves) */
+    g_vr_cfg_ver = 26;
     g_coop.chr = appear_canon(g_coop.chr);   /* an event double no longer listed: its listed twin (actors.c) */
     default_name();
     player_id();

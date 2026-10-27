@@ -15,6 +15,7 @@ struct Pss {
     uint8_t* abuf; size_t alen, acap;       /* audio payload not yet converted */
     int have_hdr, type, rate, channels, interleave;
     size_t hdr_skip;                        /* bytes of SShd/SSbd header still to drop */
+    int video_id;                           /* vr189: the video stream's id (0xE0 on the original disc; 0xE1 in some re-made ones) */
 };
 
 Pss* pss_create(const PssSink* sink)
@@ -44,18 +45,36 @@ static void audio_payload(Pss* p, const uint8_t* d, size_t n)
     append(&p->abuf, &p->alen, &p->acap, d, n);
     if (!p->have_hdr) {
         if (p->alen < 40) return;
-        if (memcmp(p->abuf, "SShd", 4) || memcmp(p->abuf + 8 + le32(p->abuf + 4), "SSbd", 4)) {
-            static int warned;
-            if (!warned++) fprintf(stderr, "pss: unknown audio header\n");
-            p->alen = 0;
-            return;
-        }
+        if (memcmp(p->abuf, "SShd", 4) || le32(p->abuf + 4) > p->alen - 12 || memcmp(p->abuf + 8 + le32(p->abuf + 4), "SSbd", 4)) {   /* (vr189: a length past the bytes read is no header) */
+            /* vr189: no SShd/SSbd header - movies re-made for a dubbed disc (MV_002..004 of the BR one) start
+               without it, partway into the sound. The original's format is taken (16-bit PCM, 48000 Hz, 2
+               channels, 512-byte blocks: as MV_001's header) and the block start found from the sound itself:
+               the offset where each block's last sample runs on into the next block of the same channel */
+            enum { NEED = 65536 };
+            int best_off = 0;
+            double best = 1e30;
+            if (p->alen < NEED) return;
+            for (int off = 0; off < 1024; off += 2) {
+                double tot = 0; int n = 0;
+                for (size_t b = off; b + 1024 + 2 <= p->alen; b += 1024) {
+                    int16_t l_end = (int16_t)(p->abuf[b + 510] | (p->abuf[b + 511] << 8));
+                    int16_t l_next = (int16_t)(p->abuf[b + 1024] | (p->abuf[b + 1025] << 8));
+                    tot += abs(l_end - l_next); n++;
+                }
+                if (n && tot / n < best) { best = tot / n; best_off = off; }
+            }
+            fprintf(stderr, "pss: no audio header - taken as 16-bit PCM 48000 Hz stereo, 512-byte blocks, starting %d bytes in (block-edge step %.0f)\n", best_off, best);
+            p->type = 1; p->rate = 48000; p->channels = 2; p->interleave = 512;
+            p->hdr_skip = (size_t)best_off;
+            p->have_hdr = 1;
+        } else {
         p->type = (int)le32(p->abuf + 8);
         p->rate = (int)le32(p->abuf + 12);
         p->channels = (int)le32(p->abuf + 16);
         p->interleave = (int)le32(p->abuf + 20);
         p->hdr_skip = 8 + le32(p->abuf + 4) + 8;
         p->have_hdr = 1;
+        }
         if (p->type != 1 || p->channels < 1 || p->channels > 2 || p->interleave <= 0 || p->interleave % 2) {
             fprintf(stderr, "pss: unsupported audio (type %d, %d ch, interleave %d)\n", p->type, p->channels, p->interleave);
             p->channels = 0;
@@ -103,11 +122,15 @@ int pss_feed(Pss* p, const uint8_t* data, size_t n)
             need = 6 + ((size_t)p->buf[pos + 4] << 8 | p->buf[pos + 5]);
         } else { pos += 3; continue; }                           /* stray start code */
         if (pos + need > p->len) break;
-        if (id == 0xE0 || id == 0xBD) {
+        if ((id & 0xF0) == 0xE0 && !p->video_id) {   /* vr189: the first video stream seen */
+            p->video_id = id;
+            if (id != 0xE0) fprintf(stderr, "pss: video in stream %02X\n", id);
+        }
+        if (id == p->video_id || id == 0xBD) {
             const uint8_t* pk = p->buf + pos;
             size_t hdr = 9 + pk[8];
             if ((pk[6] & 0xC0) == 0x80 && hdr <= need) {
-                if (id == 0xE0) { if (p->sink.video) p->sink.video(p->sink.user, pk + hdr, need - hdr); }
+                if (id == p->video_id) { if (p->sink.video) p->sink.video(p->sink.user, pk + hdr, need - hdr); }
                 else if (need >= hdr + 4) audio_payload(p, pk + hdr + 4, need - hdr - 4);
             }
         }

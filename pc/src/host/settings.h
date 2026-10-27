@@ -12,6 +12,7 @@ extern "C" {
 
 enum { SP_VR, SP_DISPLAY, SP_GAMEPLAY, SP_CONTROLS, SP_TPS, SP_AUDIO, SP_COOP, SP_EXTRAS, SP_COUNT };   /* in menu order */
 extern const char* const settings_pages[SP_COUNT];
+extern int g_extras_unlocked;   /* vr218: the EXTRAS page (cheats) shows only once unlocked (options_glue.c); for this run only */
 
 enum {
     SET_RESTART = 1,      /* takes effect at the next start */

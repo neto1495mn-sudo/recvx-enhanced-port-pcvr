@@ -155,7 +155,6 @@ static void build_report(unsigned char* r)
         }
     }
 
-    { extern int vr_pad_start(void); if (input_enabled && vr_pad_start()) b |= PAD_START; }   /* VR: left menu button */
     { extern int vr_pad_select(void); if (input_enabled && vr_pad_select()) b |= PAD_SELECT; }   /* VR: LT + Y */
     {   /* VR: outside play (title and main menu, menus, screens before the game) the Touch
            controllers are a plain pad: A Cross, B Circle, X Square, Y Triangle, the left stick the
@@ -167,7 +166,7 @@ static void build_report(unsigned char* r)
             if (in.buttons & VRB_A) b |= PAD_CROSS;
             if (in.buttons & VRB_B) b |= PAD_CIRCLE;
             if (in.buttons & VRB_X) b |= PAD_SQUARE;
-            if ((in.buttons & VRB_Y) && in.ltrig <= 0.5f) b |= PAD_TRIANGLE;
+            if (in.buttons & VRB_Y) b |= PAD_TRIANGLE;
             if (in.ly > 0.5f) b |= PAD_UP;
             if (in.ly < -0.5f) b |= PAD_DOWN;
             if (in.lx < -0.5f) b |= PAD_LEFT;
