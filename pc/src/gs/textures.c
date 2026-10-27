@@ -35,6 +35,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef __ANDROID__
+#include <SDL3/SDL.h>
+#endif
 
 static int trace = -1;
 #define TRACE(...) do { if (trace < 0) trace = getenv("RECVX_TRACE_NTEX") != NULL; if (trace) fprintf(stderr, __VA_ARGS__); } while (0)
@@ -406,7 +409,15 @@ int ntex_lookup(uint64_t tex0, uint64_t texa, unsigned int* out_tex, int* out_w,
         if (!e) e = o;
     }
     e->hd = 0;
+#ifdef __ANDROID__
+    {
+        uint64_t and_t0 = SDL_GetTicksNS();
+        e->tex = decode(d, tex0, texa, &e->w, &e->h, &e->hd);
+        g_and_stall.ntex_ns += SDL_GetTicksNS() - and_t0; g_and_stall.ntex_n++;
+    }
+#else
     e->tex = decode(d, tex0, texa, &e->w, &e->h, &e->hd);
+#endif
     if (!e->tex) return 0;
     e->used = 1; e->id = a->id; e->key = key; e->texa = texa; e->pal = pal; e->last = use_clock;
     if (!e->hd) ntex_bytes += (uint64_t)e->w * e->h * 4;

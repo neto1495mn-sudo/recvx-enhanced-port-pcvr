@@ -56,6 +56,9 @@ enum { FIRST_NONE, FIRST_COVER, FIRST_READ };
 static struct { int how, x0, y0, x1, y1; } first[MAX_RT];   /* COVER: area overwritten (physical pixels, x0..x1-1) */
 static uint64_t frame_no;
 static uint32_t stat_prims, stat_flushes, stat_reloads, stat_decodes, stat_decode_px;
+#ifdef __ANDROID__
+AndStall g_and_stall;
+#endif
 uint64_t gs_frame_count(void) { extern uint64_t stream_game_frames(void); return stream_game_frames(); }
 
 /* ---------------- texture cache ---------------- */
@@ -318,6 +321,7 @@ static GLuint compile(const char* vs, const char* fs)
 #ifdef __ANDROID__
     static char ebuf[2][32768];
     const char* src[2] = { es_source(vs, 0, ebuf[0], sizeof(ebuf[0])), es_source(fs, 1, ebuf[1], sizeof(ebuf[1])) };
+    uint64_t and_t0 = SDL_GetTicksNS();
 #else
     const char* src[2] = { vs, fs };
 #endif
@@ -337,6 +341,13 @@ static GLuint compile(const char* vs, const char* fs)
         if (!ok) { char log[2048]; glGetProgramInfoLog(p, sizeof(log), NULL, log); host_fatal("link: %s", log); }
     }
     glDeleteShader(s[0]); glDeleteShader(s[1]);
+#ifdef __ANDROID__
+    {
+        uint64_t d = SDL_GetTicksNS() - and_t0;
+        g_and_stall.compile_ns += d; g_and_stall.compile_n++;
+        host_log("android: shader compile %.1f ms\n", d / 1e6);
+    }
+#endif
     return p;
 }
 
@@ -447,6 +458,9 @@ static RenderTarget* rt_find(uint32_t fbp, uint32_t fbw)
 static void rt_load_from_mem(RenderTarget* rt)
 {
     rt->has_box = 0;   /* mirrors GS memory again */
+#ifdef __ANDROID__
+    uint64_t and_t0 = SDL_GetTicksNS();
+#endif
     ntex_before_access(0, 511);
     int w = rt->vw - 2 * g_margin_x, h = rt->vh;
     float* fx = malloc((size_t)w * h * 16);
@@ -478,6 +492,9 @@ static void rt_load_from_mem(RenderTarget* rt)
     }
     glDeleteTextures(1, &tmp);
     free(fx);
+#ifdef __ANDROID__
+    g_and_stall.reload_ns += SDL_GetTicksNS() - and_t0; g_and_stall.reload_n++;
+#endif
 }
 
 static RenderTarget* rt_get(uint32_t fbp, uint32_t fbw, uint32_t psm)
@@ -784,6 +801,9 @@ static GLuint tex_get(uint64_t tex0, uint64_t texa, int* out_w, int* out_h, floa
     }
     {
         uint32_t* px = malloc(w * h * 4);
+#ifdef __ANDROID__
+        uint64_t and_t0 = SDL_GetTicksNS();
+#endif
         stat_decodes++; stat_decode_px += w * h;
         gs_decode_texture(tex0, texa, w, h, px);
         {
@@ -801,6 +821,9 @@ static GLuint tex_get(uint64_t tex0, uint64_t texa, int* out_w, int* out_h, floa
         glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, (GLsizei)w, (GLsizei)h, 0, GL_RGBA, GL_UNSIGNED_BYTE, px);
         free(px);
+#ifdef __ANDROID__
+        g_and_stall.tex_ns += SDL_GetTicksNS() - and_t0; g_and_stall.tex_n++;
+#endif
     }
 filled:
     e->used = 1; e->tex0_key = key; e->texa = texa; e->clut_hash = ch; e->page0 = page0; e->page1 = page1;
@@ -1977,6 +2000,7 @@ void gs_rt_to_mem(uint32_t bp, uint32_t bw, uint32_t psm, uint32_t x, uint32_t y
     {
         static int n;
         uint32_t t3 = SDL_GetTicks();
+        g_and_stall.store_ns += (uint64_t)(t3 - t0) * 1000000u; g_and_stall.store_n++;
         if (t3 - t0 >= 2 || n < 20) {
             n++;
             host_log("android: StoreImage %ux%u (read %dx%d) flush %ums glReadPixels %ums copy %ums total %ums\n",

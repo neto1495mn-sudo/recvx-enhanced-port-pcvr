@@ -15,6 +15,7 @@
 #include <SDL3/SDL.h>
 #include <math.h>
 #include <stdio.h>
+#include <string.h>
 
 uint64_t gs_frame_count(void);
 
@@ -74,6 +75,8 @@ void render_loop(void)
                shows as 0 frames (the game stuck) or frames with no button reaching it */
             static uint64_t hb_t;
             static unsigned hb_frames, hb_loops;
+            extern volatile uint64_t g_and_cd_ns;
+            extern volatile unsigned g_and_cd_reads, g_and_cd_sectors;
             void host_log(const char*, ...);
             hb_loops++;
             if (f) hb_frames++;
@@ -83,6 +86,9 @@ void render_loop(void)
                 host_log("android: last second %u game frames, %u loops; buttons %x sticks %.1f %.1f / %.1f %.1f triggers %.1f %.1f grips %.1f %.1f%s\n",
                          hb_frames, hb_loops, have ? in.buttons : 0, have ? in.lx : 0, have ? in.ly : 0, have ? in.rx : 0, have ? in.ry : 0,
                          have ? in.ltrig : 0, have ? in.rtrig : 0, have ? in.lgrip : 0, have ? in.rgrip : 0, have ? "" : " (no controller input)");
+                if (g_and_cd_reads)
+                    host_log("android: last second disc %u reads, %u KB, %.1f ms\n", g_and_cd_reads, g_and_cd_sectors * 2, g_and_cd_ns / 1e6);
+                g_and_cd_ns = 0; g_and_cd_reads = g_and_cd_sectors = 0;
                 hb_t = now; hb_frames = hb_loops = 0;
             }
         }
@@ -90,9 +96,24 @@ void render_loop(void)
         if (f) {
             prof_push(PROF_EXEC);
             uint64_t tx0 = SDL_GetTicksNS();
+#ifdef __ANDROID__
+            memset(&g_and_stall, 0, sizeof(g_and_stall));
+#endif
             gs_frame_begin();
             stream_exec(f);
             prof_pop();
+#ifdef __ANDROID__
+            {   /* a slow frame's drawing by cause: GS textures, native textures, RT reloads from GS memory (CPU),
+                   shader compiles, StoreImage; "other" is the draws themselves */
+                void host_log(const char*, ...);
+                const AndStall* s = &g_and_stall;
+                uint64_t tx = SDL_GetTicksNS() - tx0, known = s->tex_ns + s->ntex_ns + s->reload_ns + s->compile_ns + s->store_ns;
+                if (tx >= 20000000)
+                    host_log("android: slow frame %.1f ms: tex %.1f ms/%u, ntex %.1f ms/%u, reload %.1f ms/%u, compile %.1f ms/%u, storeimage %.1f ms/%u, other %.1f ms\n",
+                             tx / 1e6, s->tex_ns / 1e6, s->tex_n, s->ntex_ns / 1e6, s->ntex_n, s->reload_ns / 1e6, s->reload_n,
+                             s->compile_ns / 1e6, s->compile_n, s->store_ns / 1e6, s->store_n, (tx > known ? tx - known : 0) / 1e6);
+            }
+#endif
             if (xr_active()) {   /* vr74 diagnosis (vr_debug_log): a game frame's drawing that takes long holds the next headset frame */
                 extern int g_vr_debug_log; void host_log(const char*, ...);
                 static unsigned nslow;

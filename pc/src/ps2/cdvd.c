@@ -28,12 +28,30 @@ int cdvd_open_image(const char* path)
     return 1;
 }
 
+#ifdef __ANDROID__
+/* Android (Quest) diagnosis: the disc reads' time and size (game thread), read once a second by render.c */
+volatile uint64_t g_and_cd_ns;
+volatile unsigned g_and_cd_reads, g_and_cd_sectors;
+#endif
+
 int cdvd_read_sectors(uint32_t lsn, uint32_t count, void* dst)
 {
+#ifdef __ANDROID__
+    uint64_t t0 = SDL_GetTicksNS(), t1;
+    int r;
+#endif
     if (!iso) return 0;
     if (fseeko(iso, (off_t)lsn * SECTOR, SEEK_SET) != 0) return 0;
     { extern void pc_tex_invalidate(const void*, unsigned int); pc_tex_invalidate(dst, count * SECTOR); }   /* native textures */
+#ifndef __ANDROID__
     return (int)(fread(dst, SECTOR, count, iso) == count ? count : 0);
+#else
+    r = (int)(fread(dst, SECTOR, count, iso) == count ? count : 0);
+    t1 = SDL_GetTicksNS();
+    g_and_cd_ns += t1 - t0; g_and_cd_reads++; g_and_cd_sectors += count;
+    if (t1 - t0 >= 8000000) host_log("android: slow disc read lsn %u, %u sectors: %.1f ms\n", lsn, count, (t1 - t0) / 1e6);
+    return r;
+#endif
 }
 
 static uint32_t le32(const uint8_t* p) { return p[0] | (p[1] << 8) | (p[2] << 16) | ((uint32_t)p[3] << 24); }
