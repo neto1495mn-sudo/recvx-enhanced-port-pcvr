@@ -40,24 +40,38 @@ When a newer version is out, the game says so when it starts (see "Update check"
 
 ### What's new in 1.4
 
-- **Hold the gun with both hands**: bring your left hand to the gun and squeeze the left grip. Pistols:
-  the left hand just holds on (pull it about 10 cm away to let go). Big guns (assault rifle, shotgun,
-  grenade launcher...): the left hand aims the gun with you.
-- **Every gun fires along its own barrel**: the shot, the laser, grenades and crossbow bolts leave the
-  muzzle where the sight starts (the grenade launcher no longer fires low).
-- **No more aim help**: crossbow bolts no longer curve towards the nearest enemy; they always drop a
-  little, the same way every time.
-- **Recoil per gun**, stronger with one hand than with two; the assault rifle climbs and sways when
-  fired with one hand.
+**Guns and aiming**
+- **Hold the gun with both hands**: bring your left hand to the gun and squeeze the left grip.
+  Pistols and revolvers: the left hand just holds on (pull it about 10 cm away to let go). Big guns
+  (assault rifle, shotgun, grenade launcher...): the left hand aims the gun with you. Grabbing the gun
+  no longer twists it, and the hands blend in smoothly.
+- **Aim fixed**: every gun fires along its own barrel. The shot, the laser, grenades and crossbow bolts
+  leave the muzzle where the sight starts. Guns no longer aim low with one hand or bend when you aim
+  down or at something close, and the grenade launcher no longer fires low or crooked.
+- **No more aim help**: crossbow bolts no longer curve towards the nearest enemy and no longer leave a
+  little to the left; they always drop a little, the same way every time.
+- **Recoil per gun**, stronger with one hand than with two: handgun, shotgun and grenade launcher kick
+  hard one-handed; the assault rifle climbs and sways when fired with one hand.
 - **Shotgun**: a thin round reticle ( + ) instead of the laser. **Sniper rifle**: no laser; zoom with
-  the right stick (forward / back) in the scope.
-- **Head shots**: blood from the head; a head shot that kills a common zombie bursts its head.
-  Head damage is now 115%.
-- **Controls**: quick knife on **X** (hold), map on the **right stick click**.
-- **Knife**: one hit per swing; no longer goes through walls on stairs; fixed a freeze and a crash.
-- Movies that cannot be decoded (some dubbed discs) are skipped instead of freezing the game.
-- HD textures: the equipped weapon and the inventory letters show right.
+  the right stick (forward / back) in the scope, as in the game.
+- **Head shots**: blood from the exact spot you hit; a head shot that kills a common zombie bursts its
+  head. Head damage is now 115%.
+
+**Knife and controls**
+- **Quick knife on X** (hold); **map on the right stick click**; left trigger + Y no longer does Start
+  (Y is always Y; the menu button is Select).
+- **Knife**: one hit per swing (a swing used to hit up to 4 times), a hit on a wall ends the swing, no
+  longer goes through walls on stairs; fixed a freeze where Claire kept walking in place.
+
+**HD textures and picture**
+- **HD textures load in the background**: the files are read on several threads and sent to the video
+  card on a thread of its own, so entering a room no longer stutters.
+- HD textures: the equipped weapon no longer shows the wrong (golden) picture and the inventory
+  letters no longer show through the items.
 - Fixed resolution by default (dynamic resolution is an option in the launcher).
+
+**Other fixes**
+- Movies that cannot be decoded (some dubbed discs) are skipped instead of freezing the game.
 
 ### What's new in 1.3.1
 
@@ -237,20 +251,17 @@ Settings in `save\recvx.ini`:
 | `tex_hd_mb` | Video memory for HD textures, in MB (default 600; less if the game stutters, more on a big GPU) |
 | `tex_hd_max` | Largest texture size kept, e.g. 1024 or 2048 (bigger ones are reduced: less memory, smoother) |
 
-**HD textures and stutter.** With a big pack the game can stutter for about half a second when
-you enter a room or something new appears. It is not your GPU: the pack's images are read from the
-disk, and the ones without mipmaps (the smaller copies VR needs so that far textures do not
-shimmer) are converted while you play, a few per frame. Each conversion takes a few milliseconds of
-a frame the headset wants in 11. What helps:
+**HD textures in the background.** The pack's images are read on several threads while you play
+and sent to the video card on a thread of its own, so entering a room no longer stutters; a texture
+may show the game's own picture for a moment before the HD one appears. The sending thread is on by
+default on NVIDIA and AMD cards (launcher OPTIONS → "Upload in the background": Automatic / On / Off;
+`tex_upload_thread` in `save\recvx.ini`). If the game still stutters:
 
 | Setting | Effect |
 |---|---|
-| `tex_hd_per_frame` (1–4, default 2) | Textures converted per frame. Fewer: lighter stutter that lasts longer, the room gets sharp a bit later. |
-| `tex_hd_max` (e.g. 1024) | Bigger images are reduced to this size: less to read and convert. |
+| `tex_hd_max` (e.g. 1024) | Bigger images are reduced to this size: less to read and send. |
 | `tex_hd_mb` | Video memory for HD textures; less if the stutter comes back while playing. |
 | `tex_hd = 0` | No HD textures: to check whether a stutter comes from them. |
-
-Loading and converting the textures in the background (no stutter at all) is planned.
 
 To check it worked, start with `--log` and look in `recvx.log` for a line like
 `tex: 6568 replacement textures found`. A texture you do not like can be kept as the game's
