@@ -1536,7 +1536,7 @@ unsigned vr_tps_keys(void)
     }
     if (in.buttons & VRB_A) k |= 32;     /* TPS_K_ACTION */
     if (in.buttons & VRB_Y) k |= 64;   /* TPS_K_STATUS (vr155: LT + Y is no longer Start) */
-    if (in.buttons & VRB_RSTICK) k |= 128;   /* TPS_K_MAP (vr197: the right stick's click - X is the quick knife since vr196) */
+    if ((in.buttons & VRB_RSTICK) || (in.buttons & VRB_X)) k |= 128;   /* TPS_K_MAP: the right stick's click (vr197), and X again (vr228: the knife is back on the left grip) */
     if (in.rgrip > 0.5f && !vr_on_stairs()) k |= 256;       /* TPS_K_AIM (vr186: not on stairs - raising a weapon there takes her out of the stair walk, off its path, through the wall) */
     else if (in.rgrip > 0.5f) { static uint64_t lm; uint64_t t = SDL_GetTicksNS() / 1000000; if (t > lm + 1000) { lm = t; vr_log("vr: aim held on the stairs - not passed to the game (mode %d/%d)\n", plp->mode1, plp->mode2); } }
     if (in.rtrig > 0.5f && !(vr_playing() && knife_equipped() && g_vr_slash_speed > 0)) k |= 512;   /* TPS_K_FIRE (the knife cuts by swinging) */
@@ -1790,7 +1790,8 @@ static float barrel_w[2][3], muzzle_w[2][3];
    two_q is that turn, in the tracking space; aim_rows() gives the right controller's rows with it. */
 static int two_on;
 static int two_steer, two_item;
-static float two_near_cm = 1e9f, two_grab_cm;   /* two_grab_cm (vr212): how near it was when taken */
+static float two_near_cm = 1e9f, two_grab_cm;
+static int left_near_gun;   /* vr228: the left hand within 12 cm of the gun (last frame) */   /* two_grab_cm (vr212): how near it was when taken */
 static float two_t0[3];       /* vr202: the line between the hands at the grab, in the right controller's frame */
 static int two_need_ref;   /* vr201: last frame, the left hand (on its controller) from where it would hold the gun, cm */   /* vr199: the left hand turns the gun only on the big two-handed guns; on the rest it just holds on */
 static int equipped_item(void) { S_WORK* st = &swork; return st->pip && *st->pip ? (int)((st->pip[*st->pip] >> 16) & 0xFF) : 0; }
@@ -2282,6 +2283,7 @@ void vr_hand(BH_PWORK* p)
                 dd = sqrtf(q[0] * q[0] + q[1] * q[1] + q[2] * q[2]) / (sc > 0 ? sc : 1) * 100.0f;
                 if (dd < two_near_cm) two_near_cm = dd;
             }
+            left_near_gun = two_near_cm < 12.0f;   /* vr228: the left grip here takes the gun, not the knife */
             {   /* vr208 log: the left grip pressed and the gun not taken - how far the hand was */
                 static int was_held, logged;
                 VrInput li;
@@ -2473,7 +2475,17 @@ int vr_move_stick(float* f, float* r)
 int vr_run_held(void) { VrInput in; return xr_input(&in) && (in.ltrig > 0.5f || sprint_on); }
 
 int vr_pad_select(void) { VrInput in; return xr_input(&in) && (in.buttons & VRB_MENU); }        /* vr133: left menu button: Select */
-int vr_quick_knife(void) { VrInput in; return xr_input(&in) && (in.buttons & VRB_X); }   /* vr196: X held (the left grip holds the gun with both hands) */   /* vr94: the holster only takes the grip when there is ammo to take */             /* left grip: quick knife */
+/* vr228: the quick knife back on the left grip (vr196..227: X) - but not when that grip is for something else: the left
+   hand at the gun (both hands on it), holding the ammo box, or at the belt with ammo to take */
+int vr_quick_knife(void)
+{
+    VrInput in;
+    if (!xr_input(&in) || in.lgrip <= 0.5f || mag_held || grip_latch || two_on) return 0;
+    if (g_vr_manual_reload && near_holster() && box_ammo() > 0) return 0;
+    if (!knife_equipped() && left_near_gun) return 0;   /* (once the knife is out it stays while the grip is held) */
+    if (!knife_equipped() && in.rgrip > 0.5f) return 0;   /* (vr228: not while aiming the gun - the right grip held) */
+    return 1;
+}
 
 /* tps_after_draw(): the frame is drawn with `cam`; hand its camera to the renderer */
 void vr_after_draw(void)

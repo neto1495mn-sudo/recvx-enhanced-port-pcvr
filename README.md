@@ -26,7 +26,7 @@ decompilation by AshfordFamily. All credit for the PC port goes to them.
 
 ### How to play in VR
 
-1. Download `RE-Code-Veronica-X-PC-Port-VR-v1.4-windows.zip` from the [Releases](https://github.com/neto1495mn-sudo/recvx-enhanced-port-pcvr/releases)
+1. Download `RE-Code-Veronica-X-PC-Port-VR-v1.4.1-windows.zip` from the [Releases](https://github.com/neto1495mn-sudo/recvx-enhanced-port-pcvr/releases)
    page and unpack it anywhere.
 2. Start your OpenXR runtime (tested only on a Quest 2 through Virtual Desktop / VDXR).
 3. Run `recvx_vr.exe` (or `PLAY_VR.bat`). On the first start, pick your own `.iso` of the game (PS2, NTSC-U,
@@ -37,6 +37,12 @@ decompilation by AshfordFamily. All credit for the PC port goes to them.
    (see "The VR page" below).
 
 When a newer version is out, the game says so when it starts (see "Update check" below).
+
+### What's new in 1.4.1
+
+- **Quick knife back on the left grip**: squeeze it with a free left hand. It does not come out when the
+  left hand is on the gun, holding an ammo box, at the belt to take a box, or while you aim.
+- **X opens the map** again (the right stick click still does too).
 
 ### What's new in 1.4
 
@@ -179,12 +185,12 @@ on the PC offers it). Set `update_check = 0` in
 | Left grip, with the left hand at the gun | Hold the gun with both hands |
 | Right trigger | Fire (with twin guns: the right gun) |
 | Left trigger, while aiming twin guns | Fire the left gun |
-| X (hold) | Knife (cut by swinging it) |
+| Left grip (hold), free left hand | Knife (cut by swinging it) |
 | Left grip at the belt | Take an ammo box |
 | A | Action: open doors, pick up items, examine, confirm |
 | B | Cancel / back; with a gun in hand: drop the magazine |
 | Y | Inventory (status screen) |
-| Right stick click | Map |
+| X or right stick click | Map |
 | Right stick forward / back, in the sniper scope | Zoom in / out |
 | Left menu button (three lines) | Select |
 | Long press of the headset's system button | Recentre the view |
@@ -212,7 +218,7 @@ With an empty gun, or to top it up with the magazine in, you can skip step 1.
   the trigger. The red laser shows where the shot will hit.
 - **Twin guns** (the dual pistols): hold the right grip, then each trigger fires its own gun.
   A quick pull during the last shot is kept and fired as soon as the game allows it.
-- **Knife**: hold **X** to hold it and swing it like a real knife, edge first.
+- **Knife**: hold the **left grip** to hold it and swing it like a real knife, edge first.
   A slow move does not cut.
 - **Doors, cutscenes and menus** are shown on a big screen in front of you at eye height. Use the
   stick and A/B as on a gamepad there. The 3D comes back by itself when you can play again.
@@ -299,7 +305,7 @@ own: write its file name (one per line) in `textures\ignore.txt`.
   the rounds left, gone when there are none) and you put it in the gun with your left hand.
 
 **Knife**
-- X draws the knife; you cut by swinging, only with the edge leading, with a real swing
+- The left grip draws the knife; you cut by swinging, only with the edge leading, with a real swing
   (`vr_slash_speed`, cm/s).
 
 **Combat feel**
