@@ -1603,6 +1603,8 @@ static RenderTarget *and_defer_src, *and_defer_dst;
 static unsigned and_defer_n, and_defer_no[9];
 /* draws ended by a state change, per cause (0 executed frame, 1 replays): logged by and_flush_why_log */
 static unsigned and_flush_why[2][14], and_flush_epoch_only[2];
+static uintptr_t and_fl_ra[2][24];
+static unsigned and_fl_n[2][24];
 void and_flush_why_log(void)
 {
     static const char* const nm[14] = { "buffer full", "points/lines/triangles", "PRIM bits", "texture (TEX0)", "texture upload in between (epoch)",
@@ -1617,6 +1619,23 @@ void and_flush_why_log(void)
             if (and_flush_why[r][k]) o += SDL_snprintf(b + o, sizeof(b) - (size_t)o, "%s%s %u", o ? ", " : "", nm[k], and_flush_why[r][k]);
         host_log("android: draws ended by a state change last second (%s): %u - %s; epoch with all else the same %u\n",
                  r ? "the eyes' replays" : "game frames", tot, o ? b : "none", and_flush_epoch_only[r]);
+        {   /* the draws ended, by the function that asked for it */
+            extern const char* and_symbol(uint32_t);
+            char c[900];
+            int q = 0;
+            unsigned t2 = 0;
+            for (int k = 0; k < 24 && and_fl_ra[r][k]; k++) t2 += and_fl_n[r][k];
+            for (int pass = 0; pass < 8; pass++) {   /* the 8 largest */
+                int best = -1;
+                for (int k = 0; k < 24 && and_fl_ra[r][k]; k++) if (and_fl_n[r][k] && (best < 0 || and_fl_n[r][k] > and_fl_n[r][best])) best = k;
+                if (best < 0) break;
+                { const char* nm = and_symbol((uint32_t)and_fl_ra[r][best] & ~1u);
+                  q += SDL_snprintf(c + q, sizeof(c) - (size_t)q, "%s%s %u", q ? ", " : "", nm ? nm : "?", and_fl_n[r][best]); }
+                and_fl_n[r][best] = 0;
+            }
+            host_log("android: draws ended last second (%s): %u, by %s\n", r ? "the eyes' replays" : "game frames", t2, q ? c : "none");
+            memset(and_fl_ra[r], 0, sizeof(and_fl_ra[r])); memset(and_fl_n[r], 0, sizeof(and_fl_n[r]));
+        }
         memset(and_flush_why[r], 0, sizeof(and_flush_why[r])); and_flush_epoch_only[r] = 0;
     }
 }
@@ -1688,6 +1707,12 @@ static void gs_flush_(void);
 void gs_flush(void)   /* Android diagnosis: the flushes' wall time */
 {
     uint64_t t0;
+    if (batch_valid && vcount) {   /* who ends the draws (the state-change count above sees only batch_for's) */
+        uintptr_t ra = (uintptr_t)__builtin_return_address(0);
+        int r = gs_replaying ? 1 : 0, k;
+        for (k = 0; k < 24 && and_fl_ra[r][k] && and_fl_ra[r][k] != ra; k++) {}
+        if (k < 24) { and_fl_ra[r][k] = ra; and_fl_n[r][k]++; }
+    }
     if (!g_and_time_frame) { gs_flush_(); g_and_sub = 0; return; }
     t0 = SDL_GetTicksNS();
     gs_flush_();
