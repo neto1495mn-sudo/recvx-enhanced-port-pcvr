@@ -347,6 +347,9 @@ int main(int argc, char** argv)
     }
 #endif
     host_log("recvx-enhanced-recomp " RECVX_VERSION "\n");
+#ifdef __ANDROID__
+    host_log("android: built " __DATE__ " " __TIME__ " (the version above is from the last cmake configure)\n");
+#endif
     if (profile_path[0]) { extern void prof_open_csv(const char*); prof_open_csv(profile_path); }
 #ifndef _WIN32
     if (getenv("RECVX_WATCHDOG")) { signal(SIGALRM, watchdog); alarm((unsigned)atoi(getenv("RECVX_WATCHDOG"))); }

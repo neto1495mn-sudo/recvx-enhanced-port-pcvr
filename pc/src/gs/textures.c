@@ -74,6 +74,53 @@ static Pending pending[MAX_PENDING];
 static int npending;
 static int executing;             /* our own GS writes: not real uploads */
 
+#ifdef __ANDROID__
+/* Android (Quest): the slots and queued uploads found without scanning the arrays (ntex_bind/ntex_lookup scanning 256
+   slots and the queue at every texture switch were ~35% of a game frame's execution): slot by TBP, and per 8 KB page how
+   many slots / queued uploads cover it (most accesses and uploads touch none) */
+static uint16_t alias_at[0x4000];   /* TBP -> slot index + 1 (0: none) */
+static uint16_t al_cnt[512], pd_cnt[512];
+static unsigned st_bind, st_pend_sum, st_pend_max, st_before, st_before_scan, st_exec, st_lookup, st_note, st_note_scan;
+static void al_pages(const Alias* a, int d) { for (uint32_t p = a->page0; p <= a->page1 && p < 512; p++) al_cnt[p] += d; }
+static void pd_pages(const Pending* q, int d) { for (uint32_t p = q->page0; p <= q->page1 && p < 512; p++) pd_cnt[p] += d; }
+static void idx_rebuild(void)
+{
+    memset(alias_at, 0, sizeof(alias_at)); memset(al_cnt, 0, sizeof(al_cnt)); memset(pd_cnt, 0, sizeof(pd_cnt));
+    for (int i = 0; i < MAX_ALIAS; i++) if (alias[i].used) { alias_at[alias[i].tbp & 0x3FFF] = (uint16_t)(i + 1); al_pages(&alias[i], 1); }
+    for (int i = 0; i < npending; i++) pd_pages(&pending[i], 1);
+}
+/* android_prof.c: once a second */
+void ntex_stats_log(void)
+{
+    void host_log(const char*, ...);
+    host_log("android: native textures last second: %u binds (queued uploads avg %.1f max %u), %u executed, %u lookups; "
+             "access checks %u (%u scanned the queue), upload checks %u (%u scanned the slots)\n",
+             st_bind, st_bind ? (double)st_pend_sum / st_bind : 0.0, st_pend_max, st_exec, st_lookup, st_before, st_before_scan, st_note, st_note_scan);
+    st_bind = st_pend_sum = st_pend_max = st_before = st_before_scan = st_exec = st_lookup = st_note = st_note_scan = 0;
+}
+#endif
+static Alias* alias_find(uint32_t tbp)
+{
+#ifdef __ANDROID__
+    uint16_t k = alias_at[tbp & 0x3FFF];
+    return k ? &alias[k - 1] : NULL;
+#else
+    for (int i = 0; i < MAX_ALIAS; i++) if (alias[i].used && alias[i].tbp == tbp) return &alias[i];
+    return NULL;
+#endif
+}
+static void alias_store(Alias* a, Alias v)
+{
+#ifdef __ANDROID__
+    if (a->used) { al_pages(a, -1); if (alias_at[a->tbp & 0x3FFF] == (uint16_t)(a - alias + 1)) alias_at[a->tbp & 0x3FFF] = 0; }
+#endif
+    *a = v;
+#ifdef __ANDROID__
+    if (a->used) { al_pages(a, 1); alias_at[a->tbp & 0x3FFF] = (uint16_t)(a - alias + 1); }
+#endif
+}
+static void alias_unuse(Alias* a) { Alias v = *a; v.used = 0; alias_store(a, v); }
+
 _Static_assert(sizeof(alias) + sizeof(pending) + sizeof(int) <= NTEX_STATE_SIZE, "NTEX_STATE_SIZE");
 
 #define NTEX_BYTES_MAX (256u << 20)
@@ -178,6 +225,9 @@ void ntex_define_capture(uint32_t id, unsigned int gl_tex, int w, int h)
 
 /* run ops [a, b) of a definition on the current GS memory, transfers rebased from the
    definition's addresses to tbp/cbp */
+#ifdef __ANDROID__
+__attribute__((noinline))   /* (own names in the sampling profiler) */
+#endif
 static void run_ops(const Def* d, int a, int b, uint32_t tbp, uint32_t cbp)
 {
     GsState save = gs;
@@ -204,6 +254,9 @@ static int overlaps(uint32_t a0, uint32_t a1, uint32_t b0, uint32_t b1) { return
 
 /* execute pending upload i and, before it, every earlier one overlapping it or one of
    those (so GS memory gets the writes in their original order); they leave the queue */
+#ifdef __ANDROID__
+__attribute__((noinline))
+#endif
 static void execute_pending(int i)
 {
     uint8_t mark[MAX_PENDING] = { 0 };
@@ -215,10 +268,16 @@ static void execute_pending(int i)
             for (int j = 0; j < k; j++)
                 if (!mark[j] && overlaps(pending[j].page0, pending[j].page1, pending[k].page0, pending[k].page1)) mark[j] = 1;
     for (int k = 0; k < npending; k++) {
+#ifdef __ANDROID__
+        if (mark[k]) pd_pages(&pending[k], -1);
+#endif
         if (mark[k]) run[nrun++] = pending[k];
         else pending[m++] = pending[k];
     }
     npending = m;
+#ifdef __ANDROID__
+    st_exec += nrun;
+#endif
     for (int k = 0; k < nrun; k++) {
         const Pending* p = &run[k];
         const Def* d = def_find(p->id);
@@ -232,6 +291,16 @@ static void execute_pending(int i)
 void ntex_before_access(uint32_t page0, uint32_t page1)
 {
     if (executing || gs_memp != gs_mem || gs_replaying) return;   /* a replay writes no GS memory */
+#ifdef __ANDROID__
+    st_before++;
+    if (!npending) return;
+    if (page0 <= page1) {   /* (a reversed range: the full scan, as overlaps() reads it) */
+        uint32_t e = page1 < 512 ? page1 : 511, p;
+        for (p = page0; p <= e && !pd_cnt[p]; p++) {}
+        if (p > e) return;   /* no queued upload on these pages */
+    }
+    st_before_scan++;
+#endif
     for (int i = 0; i < npending; i++)
         if (overlaps(pending[i].page0, pending[i].page1, page0, page1)) { execute_pending(i); i = -1; }
 }
@@ -244,11 +313,15 @@ void ntex_bind(uint32_t id, uint32_t tbp, uint32_t cbp)
     if (!d) return;
     gs_flush();   /* batched draws resolve their texture when flushed: before the slot changes */
     if (gs_replaying) {   /* textures come from the executed frame: the slot only, no GS memory writes */
-        for (int i = 0; i < MAX_ALIAS; i++) if (alias[i].used && alias[i].tbp == tbp) { a = &alias[i]; break; }
+        a = alias_find(tbp);
         for (int i = 0; !a && i < MAX_ALIAS; i++) if (!alias[i].used) a = &alias[i];
-        if (a) *a = (Alias){ id, tbp, cbp, page0, page0 + d->image_pages - 1, ++bind_clock, 1 };
+        if (a) alias_store(a, (Alias){ id, tbp, cbp, page0, page0 + d->image_pages - 1, ++bind_clock, 1 });
         return;
     }
+#ifdef __ANDROID__
+    st_bind++; st_pend_sum += (unsigned)npending;
+    if ((unsigned)npending > st_pend_max) st_pend_max = (unsigned)npending;
+#endif
     page1 = page0 + d->image_pages - 1;
     if (page1 > 511) page1 = 511;
     if (d->clut_end) {   /* the CLUT: written now, after anything queued under it */
@@ -260,29 +333,47 @@ void ntex_bind(uint32_t id, uint32_t tbp, uint32_t cbp)
         if (pending[i].tbp == tbp && pending[i].page1 <= page1) {
             int later = 0;   /* unless something queued after it overlaps it */
             for (int j = i + 1; j < npending; j++) if (overlaps(pending[j].page0, pending[j].page1, pending[i].page0, pending[i].page1)) later = 1;
-            if (!later) { memmove(&pending[i], &pending[i + 1], (size_t)(npending - i - 1) * sizeof(Pending)); npending--; i--; }
+            if (!later) {
+#ifdef __ANDROID__
+                pd_pages(&pending[i], -1);
+#endif
+                memmove(&pending[i], &pending[i + 1], (size_t)(npending - i - 1) * sizeof(Pending)); npending--; i--;
+            }
         }
     if (npending == MAX_PENDING) execute_pending(0);
     pending[npending++] = (Pending){ id, tbp, page0, page1 };
-    for (int i = 0; i < MAX_ALIAS; i++) if (alias[i].used && alias[i].tbp == tbp) { a = &alias[i]; break; }
+#ifdef __ANDROID__
+    pd_pages(&pending[npending - 1], 1);
+#endif
+    a = alias_find(tbp);
     for (int i = 0; !a && i < MAX_ALIAS; i++) if (!alias[i].used) a = &alias[i];
     if (!a) {   /* full: the least recently bound slot is resolved through GS memory */
         a = &alias[0];
         for (int i = 1; i < MAX_ALIAS; i++) if (alias[i].bound < a->bound) a = &alias[i];
         ntex_before_access(a->page0, a->page1);
     }
-    *a = (Alias){ id, tbp, cbp, page0, page1, ++bind_clock, 1 };
+    alias_store(a, (Alias){ id, tbp, cbp, page0, page1, ++bind_clock, 1 });
     TRACE("ntex: bind %u tbp %u cbp %u (def tbp %u cbp %u pages %u, %d queued)\n", id, tbp, cbp, d->tbp, d->cbp, d->image_pages, npending);
 }
 
 void ntex_note_upload(const uint64_t* pages)
 {
     if (executing) return;
+#ifdef __ANDROID__
+    st_note++;
+    {   /* an upload over no slot's pages: nothing to unbind */
+        int hit = 0;
+        for (int w = 0; w < 8 && !hit; w++)
+            for (uint64_t m = pages[w]; m && !hit; m &= m - 1) hit = al_cnt[w * 64 + __builtin_ctzll(m)] != 0;
+        if (!hit) return;
+    }
+    st_note_scan++;
+#endif
     for (int i = 0; i < MAX_ALIAS; i++) {
         Alias* a = &alias[i];
         if (!a->used) continue;
         for (uint32_t p = a->page0; p <= a->page1 && p < 512; p++)
-            if (pages[p >> 6] & (1ull << (p & 63))) { a->used = 0; TRACE("ntex: unbind tbp %u (upload over page %u)\n", a->tbp, p); break; }
+            if (pages[p >> 6] & (1ull << (p & 63))) { alias_unuse(a); TRACE("ntex: unbind tbp %u (upload over page %u)\n", a->tbp, p); break; }
     }
 }
 
@@ -297,7 +388,7 @@ static void def_drop(Def* d)
 {
     uint32_t id = d->id;
     for (int i = 0; i < npending; i++) if (pending[i].id == id) { execute_pending(i); i = -1; }
-    for (int i = 0; i < MAX_ALIAS; i++) if (alias[i].used && alias[i].id == id) alias[i].used = 0;
+    for (int i = 0; i < MAX_ALIAS; i++) if (alias[i].used && alias[i].id == id) alias_unuse(&alias[i]);
     if (d->capture) gs_tex_delete(d->capture);
     for (int i = 0; i < MAX_NTEX; i++)
         if (ntex[i].used && ntex[i].id == id) { if (!ntex[i].hd) { gs_tex_delete(ntex[i].tex); ntex_bytes -= (uint64_t)ntex[i].w * ntex[i].h * 4; } ntex[i].used = 0; }
@@ -319,6 +410,9 @@ void ntex_state_restore(const void* in)
     memcpy(alias, s, sizeof(alias)); s += sizeof(alias);
     memcpy(pending, s, sizeof(pending)); s += sizeof(pending);
     memcpy(&npending, s, sizeof(npending));
+#ifdef __ANDROID__
+    idx_rebuild();
+#endif
 }
 
 static uint32_t palette_hash(uint64_t tex0, uint64_t texa)
@@ -384,7 +478,10 @@ int ntex_lookup(uint64_t tex0, uint64_t texa, unsigned int* out_tex, int* out_w,
     const Def* d;
     uint64_t key = tex0 & 0x1FFFFFFFFFFFFFull & ~(0x3FFFull << 37);   /* TBP0..CSA without CBP (the palette is hashed); CLD excluded */
     NTex* e = NULL;
-    for (int i = 0; i < MAX_ALIAS; i++) if (alias[i].used && alias[i].tbp == tbp) { a = &alias[i]; break; }
+#ifdef __ANDROID__
+    st_lookup++;
+#endif
+    a = alias_find(tbp);
     if (!a || !(d = def_find(a->id))) return 0;   /* (a replay can see a slot whose definition is gone; its image is in GS memory) */
     if (d->capture) {   /* rendered pixels: sampled as CT32 (what StoreImage + upload give) */
         if (psm != PSMCT32 && psm != PSMCT24) { TRACE("ntex: capture %u sampled as psm %u\n", a->id, psm); return 0; }
