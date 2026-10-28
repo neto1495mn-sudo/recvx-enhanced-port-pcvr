@@ -21,6 +21,10 @@
 #include "../../decomp/include/ps2/veronica/prog/ps2_NaView.h"
 #include "../../decomp/include/ps2/veronica/prog/ps2_NaDraw2D.h"
 #include "../src/gs/native.h"
+#ifdef __ANDROID__
+#include "../src/host/android_prof.h"
+void host_log(const char* fmt, ...);
+#endif
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -170,12 +174,18 @@ uint32_t pc_native_prim(unsigned int prim, const unsigned int* dp, int n, int cl
 {
     NativeVertex v[64];
     int fst = (prim >> 8) & 1;
+#ifdef __ANDROID__
+    float and_z[64], and_sz[64];   /* the split diagnosis below: each corner's view z and GS depth */
+#endif
     if (n > 64) n = 64;
     *last_sz = 0.0f;
     for (int i = 0; i < n; i++, dp += 12) {
         const float* f0 = (const float*)dp; const float* f2 = (const float*)(dp + 8);
         NativeVertex* o = &v[i];
         float x = f2[0], y = f2[1], z = f2[2], q = f0[2], sz;
+#ifdef __ANDROID__
+        and_z[i] = z;
+#endif
         if (clip_3d_on) {
             sz = -Ps2_zbuff_b * q - Ps2_zbuff_a;
             o->w = z;
@@ -192,6 +202,9 @@ uint32_t pc_native_prim(unsigned int prim, const unsigned int* dp, int n, int cl
             y = (float)(int)(y * 16.0f) / 16.0f;
         }
         *last_sz = sz < 0.0f ? 0.0f : sz > 65534.0f ? 65534.0f : sz;
+#ifdef __ANDROID__
+        and_sz[i] = sz;
+#endif
         o->x = x * o->w; o->y = y * o->w;
         if (fst) { o->s = (float)(dp[0] & 0x3FFF) / 16.0f; o->t = (float)(dp[1] & 0x3FFF) / 16.0f; }   /* UV is 10.4 fixed point */
         else { o->s = q != 0.0f ? f0[0] / q : 0.0f; o->t = q != 0.0f ? f0[1] / q : 0.0f; }
@@ -222,6 +235,21 @@ uint32_t pc_native_prim(unsigned int prim, const unsigned int* dp, int n, int cl
         for (int i = 0; i < n; i++) { if (v[i].cull & 0x40) fx++; else other++; }
         if (fx && other) {
             extern int vr_on(void);
+#ifdef __ANDROID__
+            {   /* Android (Quest) diagnosis: green streaks / invisible parts (vr_debug_cores) - polygons collapsed here;
+                   which corners are out of the world (view z >= -1.0001 or GS depth <= 100) */
+                static unsigned nl;
+                g_and_fx_split++;
+                if (nl < 40) {
+                    char b[512];
+                    int k = 0;
+                    nl++;
+                    for (int i = 0; i < n && i < 8 && k < (int)sizeof(b) - 48; i++)
+                        k += snprintf(b + k, sizeof(b) - k, " [%c z %.3f depth %.1f]", (v[i].cull & 0x40) ? 'W' : '-', and_z[i], and_sz[i]);
+                    host_log("android: effect polygon split (%d corners, prim %x):%s\n", n, prim, b);
+                }
+            }
+#endif
             if (vr_on()) for (int i = 1; i < n; i++) { v[i].x = v[0].x; v[i].y = v[0].y; }   /* (no area: not drawn) */
             for (int i = 0; i < n; i++) v[i].cull |= 0x40;
         }

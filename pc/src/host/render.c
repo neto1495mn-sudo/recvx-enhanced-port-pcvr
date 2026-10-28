@@ -48,6 +48,8 @@ double g_vr_frame_ref, g_vr_frame_period = 1001.0 / 30000.0 * 1e9;
 
 #ifdef __ANDROID__
 #include "xr.h"
+#include "android_prof.h"
+static unsigned hb_slow_logged;   /* slow frame lines this second (at most 5: android_prof.c has the summary) */
 /* Android (Quest) diagnosis: once a second, the headset images presented and the loops that skipped the present - a
    partial frame (download sync point) or an in-between image dropped because the next frame was waiting */
 static unsigned hb_presents, hb_skip_partial, hb_skip_queued, hb_forced;
@@ -93,6 +95,8 @@ void render_loop(void)
                 host_log("android: last second %u presents (%u forced: next frame waiting), skipped %u partial, %u queued\n",
                          hb_presents, hb_forced, hb_skip_partial, hb_skip_queued);
                 hb_presents = hb_skip_partial = hb_skip_queued = hb_forced = 0;
+                hb_slow_logged = 0;
+                and_prof_report();
                 host_log("android: last second %u game frames, %u loops; buttons %x sticks %.1f %.1f / %.1f %.1f triggers %.1f %.1f grips %.1f %.1f%s\n",
                          hb_frames, hb_loops, have ? in.buttons : 0, have ? in.lx : 0, have ? in.ly : 0, have ? in.rx : 0, have ? in.ry : 0,
                          have ? in.ltrig : 0, have ? in.rtrig : 0, have ? in.lgrip : 0, have ? in.rgrip : 0, have ? "" : " (no controller input)");
@@ -107,21 +111,32 @@ void render_loop(void)
             prof_push(PROF_EXEC);
             uint64_t tx0 = SDL_GetTicksNS();
 #ifdef __ANDROID__
+            unsigned and_d0 = g_and_stall.draws, and_p0 = g_and_stall.prims;
+            uint64_t and_c0 = and_thread_cpu_ns();
             memset(&g_and_stall, 0, sizeof(g_and_stall));
+            g_and_stall.draws = and_d0; g_and_stall.prims = and_p0;
+            and_gpu_begin(AND_EXEC);
 #endif
             gs_frame_begin();
             stream_exec(f);
             prof_pop();
 #ifdef __ANDROID__
+            and_gpu_end(AND_EXEC);
             {   /* a slow frame's drawing by cause: GS textures, native textures, RT reloads from GS memory (CPU),
                    shader compiles, StoreImage; "other" is the draws themselves */
                 void host_log(const char*, ...);
                 const AndStall* s = &g_and_stall;
-                uint64_t tx = SDL_GetTicksNS() - tx0, known = s->tex_ns + s->ntex_ns + s->reload_ns + s->compile_ns + s->store_ns;
-                if (tx >= 20000000)
-                    host_log("android: slow frame %.1f ms: tex %.1f ms/%u, ntex %.1f ms/%u, reload %.1f ms/%u, compile %.1f ms/%u, storeimage %.1f ms/%u, other %.1f ms\n",
-                             tx / 1e6, s->tex_ns / 1e6, s->tex_n, s->ntex_ns / 1e6, s->ntex_n, s->reload_ns / 1e6, s->reload_n,
+                uint64_t tx = SDL_GetTicksNS() - tx0, cpu = and_thread_cpu_ns() - and_c0,
+                         known = s->tex_ns + s->ntex_ns + s->reload_ns + s->compile_ns + s->store_ns;
+                and_render_add(AND_EXEC, tx, cpu, s->draws - and_d0, s->prims - and_p0);
+                if (tx >= 20000000 && hb_slow_logged < 5) {
+                    hb_slow_logged++;
+                    host_log("android: slow frame %.1f ms (cpu %.1f ms, %u draws, %u prims): tex %.1f ms/%u, ntex %.1f ms/%u, reload %.1f ms/%u (cpu loop %.1f), "
+                             "compile %.1f ms/%u, storeimage %.1f ms/%u, other %.1f ms\n",
+                             tx / 1e6, cpu / 1e6, s->draws - and_d0, s->prims - and_p0, s->tex_ns / 1e6, s->tex_n, s->ntex_ns / 1e6, s->ntex_n,
+                             s->reload_ns / 1e6, s->reload_n, s->reload_cpu_ns / 1e6,
                              s->compile_ns / 1e6, s->compile_n, s->store_ns / 1e6, s->store_n, (tx > known ? tx - known : 0) / 1e6);
+                }
             }
 #endif
             if (xr_active()) {   /* vr74 diagnosis (vr_debug_log): a game frame's drawing that takes long holds the next headset frame */
@@ -202,10 +217,17 @@ void render_loop(void)
                 float x, y;
                 int fl = stream_point_at(interp ? prev : NULL, cur, t, &x, &y);
                 overlay_point(fl, x, y);            }
+#ifdef __ANDROID__
+            uint64_t and_pt0 = SDL_GetTicksNS(), and_pc0 = and_thread_cpu_ns();
+            unsigned and_pd0 = g_and_stall.draws, and_pp0 = g_and_stall.prims;
+            and_gpu_begin(AND_PRESENT);
+#endif
             swap = gs_present(cur, t);
 #ifdef __ANDROID__
+            and_gpu_end(AND_PRESENT);
             hb_presents++;
             hb_last_present = SDL_GetTicksNS();
+            and_render_add(AND_PRESENT, hb_last_present - and_pt0, and_thread_cpu_ns() - and_pc0, g_and_stall.draws - and_pd0, g_and_stall.prims - and_pp0);
 #endif
             shown++;
             if (trace) fprintf(trace, "%llu %.3f %llu %llu\n", (unsigned long long)gs_frame_count(), t, (unsigned long long)(now / 1000),

@@ -101,6 +101,7 @@ void gs_replay_check(const struct Frame* cur);   /* RECVX_REPLAY_CHECK */
 #ifdef __ANDROID__
 /* Android (Quest) diagnosis: the render thread's time in one executed frame by cause (ns, count); reset by
    render.c before stream_exec, logged when the frame is slow */
-typedef struct { uint64_t tex_ns, ntex_ns, reload_ns, compile_ns, store_ns; unsigned tex_n, ntex_n, reload_n, compile_n, store_n; } AndStall;
+typedef struct { uint64_t tex_ns, ntex_ns, reload_ns, reload_cpu_ns, compile_ns, store_ns; unsigned tex_n, ntex_n, reload_n, compile_n, store_n;
+                 unsigned draws, prims; } AndStall;   /* reload_cpu_ns: of reload_ns, the CPU loop reading GS memory; draws/prims: never reset by render.c */
 extern AndStall g_and_stall;
 #endif

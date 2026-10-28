@@ -477,6 +477,13 @@ static void rt_load_from_mem(RenderTarget* rt)
                 o[0] = (c & 0xFF) / 255.0f; o[1] = ((c >> 8) & 0xFF) / 255.0f; o[2] = ((c >> 16) & 0xFF) / 255.0f; o[3] = (c >> 24) / 128.0f;
             }
         }
+#ifdef __ANDROID__
+    g_and_stall.reload_cpu_ns += SDL_GetTicksNS() - and_t0;
+    {
+        static int nl;
+        if (nl++ < 20) host_log("android: reload from GS memory %dx%d psm %u fbp %u: CPU loop %.1f ms\n", w, h, rt->psm, rt->fbp, (SDL_GetTicksNS() - and_t0) / 1e6);
+    }
+#endif
     glGenTextures(1, &tmp);
     glBindTexture(GL_TEXTURE_2D, tmp);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, w, h, 0, GL_RGBA, GL_FLOAT, fx);
@@ -1291,6 +1298,9 @@ void gs_flush(void)
     uint64_t test;
     if (!batch_valid || vcount == 0) { vcount = 0; nsruns = 0; return; }
     stat_flushes++;
+#ifdef __ANDROID__
+    g_and_stall.draws++;
+#endif
 
     fbp = st->ctx.frame & 0x1FF; fbw = (st->ctx.frame >> 16) & 0x3F; fpsm = (st->ctx.frame >> 24) & 0x3F;
     fbmsk = (uint32_t)(st->ctx.frame >> 32);
@@ -1558,6 +1568,9 @@ static void batch_for(int type, const GsVertex* v, int count, const GsContext* c
     DrawState st;
     batch_native.valid = 0;
     stat_prims++;
+#ifdef __ANDROID__
+    g_and_stall.prims++;
+#endif
     GLenum mode = (type == 0) ? GL_POINTS : (type == 1) ? GL_LINES : GL_TRIANGLES;
     memset(&st, 0, sizeof(st));
     st.prim = prim & 0x7F8; st.ctx = *c; st.texa = gs.texa; st.fogcol = gs.fogcol; st.pabe = gs.pabe; st.colclamp = gs.colclamp;
@@ -1693,7 +1706,10 @@ static void gl_triangles(unsigned int prim, const GlVertex* g, int n, int sfirst
         int k;
         if (i == 0 && batch_native.valid && batch_native.serial == gs_reg_serial && batch_native.epoch == gs_tex_epoch &&
             batch_native.prim == (prim & 0x7F8) && vcount + 6 <= MAX_VERTS) {
-            stat_prims++; batch_full_cover = 0;   /* what batch_for does for a primitive of the same state */
+            stat_prims++; batch_full_cover = 0;
+#ifdef __ANDROID__
+            g_and_stall.prims++;
+#endif   /* what batch_for does for a primitive of the same state */
         } else {
             batch_for(3, none, 3, c, (uint64_t)(prim & 0x7F8) | 3);
             batch_native.valid = 1; batch_native.serial = gs_reg_serial; batch_native.epoch = gs_tex_epoch; batch_native.prim = prim & 0x7F8;

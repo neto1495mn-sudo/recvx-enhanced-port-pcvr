@@ -20,6 +20,9 @@
  */
 #include "gs.h"
 #include "stream.h"
+#ifdef __ANDROID__
+#include "../host/android_prof.h"
+#endif
 #include "native.h"
 #include "textures.h"
 #include "../host/prof.h"
@@ -317,6 +320,10 @@ void stream_disp(uint32_t fbp, uint32_t fbw, uint32_t psm) { push_ev(EV_DISP, 0,
 static void submit(int partial)
 {
     Frame* f = recording();
+#ifdef __ANDROID__
+    static uint64_t last_wall, last_cpu;   /* Android diagnosis (android_prof.c): the game thread's frame, CPU and wait */
+    uint64_t w0 = SDL_GetTicksNS();
+#endif
     f->partial = partial;
     rec = NULL;
     prof_push(PROF_QUEUE);
@@ -326,6 +333,13 @@ static void submit(int partial)
     SDL_BroadcastCondition(cond);
     SDL_UnlockMutex(mtx);
     prof_pop();
+#ifdef __ANDROID__
+    if (!partial) {
+        uint64_t w1 = SDL_GetTicksNS(), c1 = and_thread_cpu_ns();
+        if (last_wall) and_game_frame(w1 - last_wall, c1 - last_cpu, w1 - w0);
+        last_wall = w1; last_cpu = c1;
+    }
+#endif
 }
 
 static float point[3];
