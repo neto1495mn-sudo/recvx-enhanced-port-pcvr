@@ -58,6 +58,8 @@ static uint64_t frame_no;
 static uint32_t stat_prims, stat_flushes, stat_reloads, stat_decodes, stat_decode_px;
 #ifdef __ANDROID__
 AndStall g_and_stall;
+typedef void* (GLAPIENTRY *PFN_and_map)(GLenum target, GLintptr offset, GLsizeiptr length, GLbitfield access);   /* GLES 3: glMapBufferRange */
+typedef GLboolean (GLAPIENTRY *PFN_and_unmap)(GLenum target);
 #endif
 uint64_t gs_frame_count(void) { extern uint64_t stream_game_frames(void); return stream_game_frames(); }
 
@@ -1522,6 +1524,42 @@ void gs_flush(void)
             vbo_next = 0;
         }
         vbo_first = vbo_next;
+#ifdef __ANDROID__
+        /* Android (Quest, Adreno): glBufferSubData into the buffer the GPU is still drawing from waited for it - the
+           log measured 17-20 ms of every game frame in these uploads (300+ ms with the native 3D off). The range is
+           mapped unsynchronized instead: it is new space in the ring (never reused before the orphan above), so the
+           GPU is not using it. glBufferSubData stays as the fallback. */
+        static PFN_and_map and_map;
+        static PFN_and_unmap and_unmap;
+        static int and_map_state;   /* 0 not tried, 1 mapping, -1 glBufferSubData */
+        uint8_t* and_dst = NULL;
+        if (!and_map_state) {
+            and_map = (PFN_and_map)SDL_GL_GetProcAddress("glMapBufferRange");
+            and_unmap = (PFN_and_unmap)SDL_GL_GetProcAddress("glUnmapBuffer");
+            and_map_state = and_map && and_unmap ? 1 : -1;
+            host_log("android: vertex uploads by %s\n", and_map_state > 0 ? "unsynchronized buffer mapping" : "glBufferSubData (no glMapBufferRange)");
+        }
+        if (and_map_state > 0 && vcount > 0) {
+            and_dst = (uint8_t*)and_map(GL_ARRAY_BUFFER, (GLintptr)vbo_first * (GLintptr)sizeof(GlVertex), (GLsizeiptr)(vcount * sizeof(GlVertex)),
+                                        0x0002 /* GL_MAP_WRITE_BIT */ | 0x0004 /* GL_MAP_INVALIDATE_RANGE_BIT */ | 0x0020 /* GL_MAP_UNSYNCHRONIZED_BIT */);
+            if (!and_dst) {
+                static int nf;
+                if (nf++ < 5) host_log("android: glMapBufferRange failed (GL error %x) - this upload by glBufferSubData\n", glGetError());
+            }
+        }
+        if (and_dst) {
+            if (!nsruns) memcpy(and_dst, vbuf, (size_t)vcount * sizeof(GlVertex));
+            else for (int r = 0, at = 0; r <= nsruns; r++) {   /* the parts between the static runs (the gaps are not drawn from here) */
+                int end = r < nsruns ? sruns[r].start : vcount;
+                if (end > at) memcpy(and_dst + (size_t)at * sizeof(GlVertex), vbuf + at, (size_t)(end - at) * sizeof(GlVertex));
+                if (r < nsruns) at = sruns[r].start + sruns[r].count;
+            }
+            if (!and_unmap(GL_ARRAY_BUFFER)) {   /* (the store was lost: rare, the batch is drawn with whatever is there) */
+                static int nu;
+                if (nu++ < 5) host_log("android: glUnmapBuffer reported the data lost\n");
+            }
+        } else
+#endif
         if (!nsruns) glBufferSubData(GL_ARRAY_BUFFER, (GLintptr)vbo_first * (GLintptr)sizeof(GlVertex), (GLsizeiptr)(vcount * sizeof(GlVertex)), vbuf);
         else for (int r = 0, at = 0; r <= nsruns; r++) {   /* the parts between the static runs */
             int end = r < nsruns ? sruns[r].start : vcount;
