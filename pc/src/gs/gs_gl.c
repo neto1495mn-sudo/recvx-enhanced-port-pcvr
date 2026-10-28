@@ -60,6 +60,46 @@ static uint32_t stat_prims, stat_flushes, stat_reloads, stat_decodes, stat_decod
 AndStall g_and_stall;
 typedef void* (GLAPIENTRY *PFN_and_map)(GLenum target, GLintptr offset, GLsizeiptr length, GLbitfield access);   /* GLES 3: glMapBufferRange */
 typedef GLboolean (GLAPIENTRY *PFN_and_unmap)(GLenum target);
+/* Android (Quest): the vertex stream in a buffer mapped once for good (GL_EXT_buffer_storage, persistent + coherent) -
+   the uploads are plain copies, no driver call (glBufferSubData and per-batch mapping both waited in the driver:
+   20-110 ms a game frame in the log). The ring is used in quarters; entering one waits for the fence left when the
+   GPU's draws from it were last issued (a full turn earlier: tens of frames). */
+static uint8_t* and_pmap;
+#define AND_QV (VBO_VERTS / 4)
+static void* and_fence[4];
+static void* (GLAPIENTRY *and_fencesync)(GLenum, GLbitfield);
+static GLenum (GLAPIENTRY *and_clientwait)(void*, GLbitfield, uint64_t);
+static void (GLAPIENTRY *and_deletesync)(void*);
+static unsigned and_waits; static uint64_t and_wait_ns;   /* (the ring's waits: logged when one is long) */
+static void and_persistent_init(void);
+volatile int g_and_fps_headset, g_and_fps_game;   /* render.c, once a second: images to the headset, game frames */
+/* Android (Quest): the frame rates in the picture (the owner follows them in the headset) - two numbers drawn with
+   scissored clears (no shader, no font): images the headset got per second, game frames per second. Green: full
+   rate, yellow: some lost, red: slow. x, y: lower left in the bound framebuffer; h: its height (the size) */
+static void and_fps_draw(int x, int y, int h)
+{
+    static const uint16_t font[10] = {   /* 3x5, rows top to bottom, 3 bits each (bit 2 = left) */
+        0x7B6F, 0x2C97, 0x73E7, 0x73CF, 0x5BC9, 0x79CF, 0x79EF, 0x7249, 0x7BEF, 0x7BCF };
+    int px = h / 170 > 2 ? h / 170 : 2, cx = x;
+    char buf[16];
+    int n = snprintf(buf, sizeof(buf), "%d %d", g_and_fps_headset, g_and_fps_game);
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    glEnable(GL_SCISSOR_TEST);
+    glScissor(x - px, y - px, n * 4 * px + px, 7 * px);
+    glClearColor(0, 0, 0, 1);
+    glClear(GL_COLOR_BUFFER_BIT);
+    for (int i = 0, field = 0; i < n; i++, cx += 4 * px) {
+        int v = field ? g_and_fps_game : g_and_fps_headset;
+        int good = field ? v >= 28 : v >= 65, ok = field ? v >= 20 : v >= 45;
+        if (buf[i] == ' ') { field = 1; continue; }
+        if (buf[i] < '0' || buf[i] > '9') continue;
+        glClearColor(good ? 0.2f : 1.0f, good || ok ? 1.0f : 0.25f, 0.2f, 1);
+        for (int r = 0; r < 5; r++)
+            for (int c = 0; c < 3; c++)
+                if (font[buf[i] - '0'] >> (14 - r * 3 - c) & 1) { glScissor(cx + c * px, y + (4 - r) * px, px, px); glClear(GL_COLOR_BUFFER_BIT); }
+    }
+    glDisable(GL_SCISSOR_TEST);
+}
 #endif
 uint64_t gs_frame_count(void) { extern uint64_t stream_game_frames(void); return stream_game_frames(); }
 
@@ -355,6 +395,47 @@ static GLuint compile(const char* vs, const char* fs)
 
 static void* gl_getproc(const char* name) { return (void*)SDL_GL_GetProcAddress(name); }
 
+#ifdef __ANDROID__
+static void and_persistent_init(void)   /* the vertex stream's buffer replaced by a persistent mapped one (see and_pmap) */
+{
+    typedef void (GLAPIENTRY *PFN_storage)(GLenum, GLsizeiptr, const void*, GLbitfield);
+    PFN_storage storage = (PFN_storage)SDL_GL_GetProcAddress("glBufferStorageEXT");
+    PFN_and_map map = (PFN_and_map)SDL_GL_GetProcAddress("glMapBufferRange");
+    const char* ext = (const char*)glGetString(0x1F03 /* GL_EXTENSIONS */);
+    const GLbitfield fl = 0x0002 /* MAP_WRITE */ | 0x0040 /* MAP_PERSISTENT */ | 0x0080 /* MAP_COHERENT */;
+    void (GLAPIENTRY *delbuf)(GLsizei, const GLuint*) = (void (GLAPIENTRY *)(GLsizei, const GLuint*))SDL_GL_GetProcAddress("glDeleteBuffers");
+    GLuint b = 0;
+    and_fencesync = (void* (GLAPIENTRY *)(GLenum, GLbitfield))SDL_GL_GetProcAddress("glFenceSync");
+    and_clientwait = (GLenum (GLAPIENTRY *)(void*, GLbitfield, uint64_t))SDL_GL_GetProcAddress("glClientWaitSync");
+    and_deletesync = (void (GLAPIENTRY *)(void*))SDL_GL_GetProcAddress("glDeleteSync");
+    if (!storage || !map || !and_fencesync || !and_clientwait || !and_deletesync || !ext || !strstr(ext, "GL_EXT_buffer_storage")) {
+        host_log("android: vertex ring: no persistent mapping (GL_EXT_buffer_storage missing) - per-batch uploads\n");
+        return;
+    }
+    while (glGetError()) {}
+    glGenBuffers(1, &b);
+    glBindVertexArray(vao);
+    glBindBuffer(GL_ARRAY_BUFFER, b);
+    storage(GL_ARRAY_BUFFER, VBO_VERTS * sizeof(GlVertex), NULL, fl);
+    and_pmap = (uint8_t*)map(GL_ARRAY_BUFFER, 0, VBO_VERTS * sizeof(GlVertex), fl);
+    if (!and_pmap) {
+        host_log("android: vertex ring: persistent mapping failed (GL error %x) - per-batch uploads\n", glGetError());
+        glBindBuffer(GL_ARRAY_BUFFER, vbo);
+        if (delbuf) delbuf(1, &b);
+        return;
+    }
+    glEnableVertexAttribArray(0); glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, sizeof(GlVertex), (void*)offsetof(GlVertex, x));
+    glEnableVertexAttribArray(1); glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(GlVertex), (void*)offsetof(GlVertex, s));
+    glEnableVertexAttribArray(2); glVertexAttribPointer(2, 4, GL_FLOAT, GL_FALSE, sizeof(GlVertex), (void*)offsetof(GlVertex, r));
+    glEnableVertexAttribArray(3); glVertexAttribPointer(3, 1, GL_FLOAT, GL_FALSE, sizeof(GlVertex), (void*)offsetof(GlVertex, fog));
+    glEnableVertexAttribArray(4); glVertexAttribPointer(4, 2, GL_FLOAT, GL_FALSE, sizeof(GlVertex), (void*)offsetof(GlVertex, clip));
+    glEnableVertexAttribArray(5); glVertexAttribPointer(5, 1, GL_FLOAT, GL_FALSE, sizeof(GlVertex), (void*)offsetof(GlVertex, vr));
+    if (delbuf) delbuf(1, &vbo);   /* (the old stream buffer's 32 MB) */
+    vbo = b;   /* (every later bind of the stream's buffer binds this one) */
+    host_log("android: vertex ring: persistent mapped buffer, %u MB\n", (unsigned)(VBO_VERTS * sizeof(GlVertex) >> 20));
+}
+#endif
+
 void gs_renderer_init(void)
 {
     if (!gl_load(gl_getproc)) host_fatal("OpenGL 3.3 entry points missing");
@@ -393,6 +474,9 @@ void gs_renderer_init(void)
         glEnableVertexAttribArray(5); glVertexAttribPointer(5, 1, GL_FLOAT, GL_FALSE, sizeof(GlVertex), (void*)offsetof(GlVertex, vr));
     }
     glBindVertexArray(vao);
+#ifdef __ANDROID__
+    and_persistent_init();
+#endif
 
     g_scale = gs_wanted_scale();
 }
@@ -1519,6 +1603,40 @@ void gs_flush(void)
 #endif
     {
         static int vbo_next;
+#ifdef __ANDROID__
+        if (and_pmap) {
+            int q0 = vbo_next / AND_QV, q1 = (vbo_next + vcount - 1) / AND_QV;
+            if (vbo_next + vcount > VBO_VERTS || q1 != q0) {   /* into the next quarter, from its start */
+                int nq = (q0 + 1) % 4;
+                if (and_fence[q0]) and_deletesync(and_fence[q0]);
+                and_fence[q0] = and_fencesync(0x9117 /* GL_SYNC_GPU_COMMANDS_COMPLETE */, 0);   /* the draws from q0 issued so far */
+                if (and_fence[nq]) {
+                    uint64_t w0 = SDL_GetTicksNS();
+                    GLenum r = and_clientwait(and_fence[nq], 0x0001 /* GL_SYNC_FLUSH_COMMANDS_BIT */, 2000000000ull);
+                    and_waits++; and_wait_ns += SDL_GetTicksNS() - w0;
+                    if (SDL_GetTicksNS() - w0 > 5000000) {
+                        static int nw;
+                        if (nw++ < 20) host_log("android: vertex ring: waited %.1f ms for the GPU (quarter %d, wait %u)\n", (SDL_GetTicksNS() - w0) / 1e6, nq, and_waits);
+                    }
+                    if (r == 0x911D /* GL_WAIT_FAILED */ || r == 0x911B /* GL_TIMEOUT_EXPIRED */) {
+                        static int nl;
+                        if (nl++ < 5) host_log("android: vertex ring: waiting for the GPU %s\n", r == 0x911B ? "timed out (2 s)" : "failed");
+                    }
+                    and_deletesync(and_fence[nq]); and_fence[nq] = NULL;
+                }
+                vbo_next = nq * AND_QV;
+            }
+            vbo_first = vbo_next;
+            if (!nsruns) memcpy(and_pmap + (size_t)vbo_first * sizeof(GlVertex), vbuf, (size_t)vcount * sizeof(GlVertex));
+            else for (int r = 0, at = 0; r <= nsruns; r++) {   /* the parts between the static runs */
+                int end = r < nsruns ? sruns[r].start : vcount;
+                if (end > at) memcpy(and_pmap + (size_t)(vbo_first + at) * sizeof(GlVertex), vbuf + at, (size_t)(end - at) * sizeof(GlVertex));
+                if (r < nsruns) at = sruns[r].start + sruns[r].count;
+            }
+            vbo_next += vcount;
+            goto and_uploaded;
+        }
+#endif
         if (vbo_next + vcount > VBO_VERTS) {
             glBufferData(GL_ARRAY_BUFFER, VBO_VERTS * sizeof(GlVertex), NULL, GL_STREAM_DRAW);   /* orphan */
             vbo_next = 0;
@@ -1570,6 +1688,7 @@ void gs_flush(void)
         vbo_next += vcount;
     }
 #ifdef __ANDROID__
+and_uploaded:
     g_and_stall.upload_ns += SDL_GetTicksNS() - and_u0;
 #endif
     afail = (test >> 12) & 3;
@@ -3200,6 +3319,11 @@ static int present_vr_stereo_(const struct Frame* cur, float t)
             glBindFramebuffer(GL_FRAMEBUFFER, vr_fbo);
             glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
             VR_TM(2, draw_area_to(rt->tex, rt->vw, rt->vh, w, h); draw_lasers(v, M, E, w, h, rt); draw_box(v, M, E, w, h, rt); draw_markers(v, M, E, w, h); draw_vignette(E, w, h); hold_keep_and_dim(e, w, h, vr_fbo));
+#ifdef __ANDROID__
+            glBindFramebuffer(GL_FRAMEBUFFER, vr_fbo);
+            glViewport(0, 0, w, h);
+            and_fps_draw(w * 40 / 100 + (e ? -w / 80 : w / 80), h * 30 / 100, h);   /* below the middle; per eye a little inwards (seen ~1.5 m away) */
+#endif
             if (e == 0) {   /* vr127: the window mirrors the left eye (a copy on the GPU), filling it, the middle kept */
                 uint64_t tm0 = SDL_GetTicksNS();
                 int ww = 0, wh = 0;
@@ -3337,6 +3461,13 @@ static uint64_t gs_present_vr(const struct Frame* cur, float t)
             int vx, vy, vw, vh;
             float dw;
             display_rect(ww, wh, &vx, &vy, &vw, &vh, &dw);
+#ifdef __ANDROID__
+            if (vw > 0 && vh > 0) {   /* the frame rates in the game picture's top left corner (the window is the quad) */
+                glBindFramebuffer(GL_FRAMEBUFFER, 0);
+                glViewport(0, 0, ww, wh);
+                and_fps_draw(vx + vw / 30, wh - vy - vh / 10, vh);
+            }
+#endif
             if (vw > 0 && vh > 0) xr_frame_end_quad_rect(vx, wh - vy - vh, vw, vh);
             else xr_frame_end_quad(ww, wh);
         }

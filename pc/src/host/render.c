@@ -94,6 +94,7 @@ void render_loop(void)
                 int have = xr_input(&in);
                 host_log("android: last second %u presents (%u forced: next frame waiting), skipped %u partial, %u queued\n",
                          hb_presents, hb_forced, hb_skip_partial, hb_skip_queued);
+                { extern volatile int g_and_fps_headset, g_and_fps_game; g_and_fps_headset = (int)hb_presents; g_and_fps_game = (int)hb_frames; }   /* (gs_gl.c draws them) */
                 hb_presents = hb_skip_partial = hb_skip_queued = hb_forced = 0;
                 hb_slow_logged = 0;
                 and_prof_report();
