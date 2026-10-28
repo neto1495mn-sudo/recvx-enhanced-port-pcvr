@@ -3570,6 +3570,12 @@ static int present_vr_stereo_(const struct Frame* cur, float t)
             glViewport(0, 0, w, h);
             and_fps_draw(w * 40 / 100 + (e ? -w / 80 : w / 80), h * 30 / 100, h);   /* below the middle; per eye a little inwards (seen ~1.5 m away) */
 #endif
+#ifdef __ANDROID__
+            /* Android (Quest): no mirror - the window is never swapped in VR (gs_present_vr's end), and the clear and
+               the scaled copy were GPU work in every headset image (the runtime holds the images at half rate when the
+               GPU is late: 7-10 ms an image measured) */
+            if (0)
+#endif
             if (e == 0) {   /* vr127: the window mirrors the left eye (a copy on the GPU), filling it, the middle kept */
                 uint64_t tm0 = SDL_GetTicksNS();
                 int ww = 0, wh = 0;

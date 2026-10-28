@@ -87,9 +87,10 @@ static void gpu_poll(int k)
 
 void and_gpu_begin(int k)
 {
-    if (gpu_ok < 0) {   /* on again: the headset waits log showed the runtime holding the images at half rate with the render
-                           thread idle - the GPU time per image decides it (results read when available, never waited for) */
-        gpu_init();
+    if (gpu_ok < 0) {   /* off: measured once (headset image 7-10 ms on the GPU, a game frame's drawing 3-4 ms) - with them on the
+                           headset got ~3-4 fewer images a second; RECVX_GPU_TIMERS=1 (env.txt) turns them on */
+        if (SDL_getenv("RECVX_GPU_TIMERS")) gpu_init();
+        else { gpu_ok = 0; host_log("android: GPU timer queries off\n"); }
     }
     if (!gpu_ok || q_active[k] >= 0) return;
     gpu_poll(k);
@@ -161,6 +162,9 @@ void and_prof_report(void)
         unsigned n = game.n ? game.n : 1;
         { void and_glcache_stats(unsigned*, unsigned*); unsigned sk, pa; and_glcache_stats(&sk, &pa);
           host_log("android: GL state calls last second: %u skipped as repeated, %u passed to the driver\n", sk, pa); }
+        { void and_glcache_passes(unsigned*, unsigned*, double*); unsigned sw[3], bn[3]; double bp[3]; and_glcache_passes(sw, bn, bp);
+          host_log("android: GPU passes last second: target switches game frames %u, headset images %u, other %u; blits game frames %u (%.1f Mpixels), "
+                   "headset images %u (%.1f Mpixels), other %u (%.1f Mpixels)\n", sw[1], sw[2], sw[0], bn[1], bp[1] / 1e6, bn[2], bp[2] / 1e6, bn[0], bp[0] / 1e6); }
         { void ntex_stats_log(void); ntex_stats_log(); }
         { void gs_upload_fmt_bytes(unsigned*); unsigned ub[5]; gs_upload_fmt_bytes(ub);
           host_log("android: texture uploads last second in whole blocks: CT32 %u KB (content changed %u KB), CT16 %u KB, T8 %u KB, T4 %u KB\n",

@@ -8,6 +8,7 @@
 #include "../render/gl_loader.h"
 #include <SDL3/SDL.h>
 #include <string.h>
+#include <math.h>
 
 void host_log(const char* fmt, ...);
 
@@ -38,7 +39,16 @@ static PFN_glBindFramebuffer r_BindFramebuffer; static PFN_glDeleteFramebuffers 
 static PFN_glBindVertexArray r_BindVertexArray; static PFN_glBindBuffer r_BindBuffer; static PFN_glViewport r_Viewport; static PFN_glScissor r_Scissor;
 static PFN_glDepthFunc r_DepthFunc; static PFN_glDepthMask r_DepthMask; static PFN_glColorMask r_ColorMask; static PFN_glBlendFuncSeparate r_BlendFuncSeparate;
 static PFN_glBlendEquationSeparate r_BlendEquationSeparate; static PFN_glBlendColor r_BlendColor; static PFN_glClearColor r_ClearColor;
-static PFN_glPixelStorei r_PixelStorei;
+static PFN_glPixelStorei r_PixelStorei; static PFN_glBlitFramebuffer r_BlitFramebuffer;
+/* GPU passes (on the Quest's tiled GPU each target switch stores and loads a whole target): per phase (0 other, 1 game
+   frames, 2 headset images) the draw-target switches passed to the driver, the blits and their pixels */
+extern volatile int g_and_phase;
+static unsigned fb_sw[3], blit_n[3];
+static double blit_px[3];
+void and_glcache_passes(unsigned* sw, unsigned* bn, double* bpx)
+{
+    for (int k = 0; k < 3; k++) { sw[k] = fb_sw[k]; bn[k] = blit_n[k]; bpx[k] = blit_px[k]; fb_sw[k] = blit_n[k] = 0; blit_px[k] = 0; }
+}
 
 void and_glcache_reset(void)
 {
@@ -119,8 +129,14 @@ static void GLAPIENTRY c_BindFramebuffer(GLenum target, GLuint f)
         if (target == 0x8D40 /* FRAMEBUFFER */) { if (s.dfb == (int64_t)f && s.rfb == (int64_t)f) SKIP(); s.dfb = s.rfb = f; }
         else if (target == 0x8CA9 /* DRAW */) { if (s.dfb == (int64_t)f) SKIP(); s.dfb = f; }
         else if (target == 0x8CA8 /* READ */) { if (s.rfb == (int64_t)f) SKIP(); s.rfb = f; }
+        if (target != 0x8CA8) fb_sw[(unsigned)g_and_phase < 3 ? g_and_phase : 0]++;
     }
     PASS(); r_BindFramebuffer(target, f);
+}
+static void GLAPIENTRY c_BlitFramebuffer(GLint x0, GLint y0, GLint x1, GLint y1, GLint dx0, GLint dy0, GLint dx1, GLint dy1, GLbitfield m, GLenum f)
+{
+    if (mine()) { int k = (unsigned)g_and_phase < 3 ? g_and_phase : 0; blit_n[k]++; blit_px[k] += fabs((double)(dx1 - dx0) * (double)(dy1 - dy0)); }
+    r_BlitFramebuffer(x0, y0, x1, y1, dx0, dy0, dx1, dy1, m, f);
 }
 static void GLAPIENTRY c_DeleteFramebuffers(GLsizei n, const GLuint* f)
 {
@@ -188,7 +204,7 @@ void and_glcache_install(void)
     WRAP(Enable); WRAP(Disable); WRAP(ActiveTexture); WRAP(BindTexture); WRAP(TexParameteri); WRAP(GenTextures); WRAP(DeleteTextures);
     WRAP(BindFramebuffer); WRAP(DeleteFramebuffers); WRAP(UseProgram); WRAP(BindVertexArray); WRAP(BindBuffer); WRAP(Viewport);
     WRAP(Scissor); WRAP(DepthFunc); WRAP(DepthMask); WRAP(ColorMask); WRAP(BlendFuncSeparate); WRAP(BlendEquationSeparate);
-    WRAP(BlendColor); WRAP(ClearColor); WRAP(PixelStorei);
+    WRAP(BlendColor); WRAP(ClearColor); WRAP(PixelStorei); WRAP(BlitFramebuffer);
     and_glcache_reset();
     host_log("android: GL state cache on (repeated state calls not passed to the driver)\n");
 }
