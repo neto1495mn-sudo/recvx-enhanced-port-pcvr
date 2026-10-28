@@ -153,9 +153,15 @@ void render_loop(void)
             { extern int g_and_time_frame; static unsigned nexec; g_and_time_frame = (nexec++ % 30) == 0; }   /* (gs_gl.c: 1 in 30 timed part by part) */
             and_gpu_begin(AND_EXEC);
 #endif
+#ifdef __ANDROID__
+            { extern volatile int g_and_phase; g_and_phase = 1; }
+#endif
             gs_frame_begin();
             stream_exec(f);
             prof_pop();
+#ifdef __ANDROID__
+            { extern volatile int g_and_phase; g_and_phase = 0; }
+#endif
 #ifdef __ANDROID__
             and_gpu_end(AND_EXEC);
             {   /* a slow frame's drawing by cause: GS textures, native textures, RT reloads from GS memory (CPU),
@@ -272,8 +278,12 @@ void render_loop(void)
             { extern void and_glcache_reset(void); and_glcache_reset(); }
             and_gpu_begin(AND_PRESENT);
 #endif
+#ifdef __ANDROID__
+            { extern volatile int g_and_phase; g_and_phase = 2; }
+#endif
             swap = gs_present(cur, t);
 #ifdef __ANDROID__
+            { extern volatile int g_and_phase; g_and_phase = 0; }
             and_gpu_end(AND_PRESENT);
             hb_presents++;
             hb_last_present = SDL_GetTicksNS();

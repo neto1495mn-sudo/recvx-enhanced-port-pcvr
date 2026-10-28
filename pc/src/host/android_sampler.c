@@ -27,6 +27,8 @@ void host_log(const char* fmt, ...);
 #define NT 2          /* threads: 0 render, 1 game */
 #define CAP 65536
 static uint32_t* buf[NT];      /* malloc'd: not in the library's data (the PS2 address window) */
+static uint8_t* pbuf[NT];      /* per sample: the render thread's phase (g_and_phase) */
+volatile int g_and_phase;      /* render.c: 1 executing a game frame, 2 a headset image, 0 the rest */
 static uint32_t* cbuf[NT];     /* per sample: the first return address into librecvx.so on the stack (who called the driver) */
 static volatile unsigned cnt[NT];
 static __thread int my_slot = -1;
@@ -50,6 +52,7 @@ static void on_sample(int sig, siginfo_t* si, void* ctx)
         }
         cbuf[s][i] = c;
     }
+    pbuf[s][i] = (uint8_t)g_and_phase;
     cnt[s] = i + 1;
 }
 
@@ -70,6 +73,7 @@ void and_sampler_thread(int slot)
     }
     if (!buf[slot] && !(buf[slot] = malloc(CAP * sizeof(uint32_t)))) return;
     if (!cbuf[slot] && !(cbuf[slot] = malloc(CAP * sizeof(uint32_t)))) return;
+    if (!pbuf[slot] && !(pbuf[slot] = malloc(CAP))) return;
     my_slot = slot;
     sigemptyset(&set);
     sigaddset(&set, SIGPROF);
@@ -229,10 +233,11 @@ void and_sampler_report(void)
     static uint64_t last;
     static uint32_t* copy;
     static uint32_t* ccopy;
+    static uint8_t* pcopy;
     static Bin* bins;
     uint64_t now = SDL_GetTicksNS();
     if (!installed) return;
-    if (!copy && (!(copy = malloc(CAP * sizeof(uint32_t))) || !(ccopy = malloc(CAP * sizeof(uint32_t))) || !(bins = malloc(1024 * sizeof(Bin))))) { installed = 0; return; }
+    if (!copy && (!(copy = malloc(CAP * sizeof(uint32_t))) || !(ccopy = malloc(CAP * sizeof(uint32_t))) || !(pcopy = malloc(CAP)) || !(bins = malloc(1024 * sizeof(Bin))))) { installed = 0; return; }
     if (!last) { last = now; return; }
     if (now - last < 20000000000ull) return;
     last = now;
@@ -245,11 +250,18 @@ void and_sampler_report(void)
         int k = 0;
         memcpy(copy, buf[t], n * sizeof(uint32_t));
         memcpy(ccopy, cbuf[t], n * sizeof(uint32_t));
+        memcpy(pcopy, pbuf[t], n);
         cnt[t] = 0;
         if (!n) continue;
+        for (int ph = 0; ph < (t ? 1 : 3); ph++) {   /* render thread: all, then the game frames' execution, then the headset images */
+        unsigned nph = 0;
+        nb = 0;
         for (unsigned i = 0; i < n; i++) {
             int idx;
-            const char* nm = name_of(copy[i], &idx);
+            const char* nm;
+            if (ph && pcopy[i] != ph) continue;
+            nph++;
+            nm = name_of(copy[i], &idx);
             if (idx < 0 && ccopy[i]) {   /* outside our code: "driver function <- our function that called it" */
                 static char combos[384][128];
                 static int ncombo;
@@ -269,11 +281,14 @@ void and_sampler_report(void)
             if (b == nb) { if (nb == 1024) continue; bins[nb].name = nm; bins[nb].n = 0; nb++; }
             bins[b].n++;
         }
+        if (!nph) continue;
         qsort(bins, nb, sizeof(Bin), by_n);
-        host_log("android: profile %s thread, %u ms of CPU in 20 s (%.0f%% of a core):\n", t ? "game" : "render", n, n / 200.0);
-        for (unsigned b = 0; b < nb && b < 30; b++) {
-            k += snprintf(line + k, sizeof(line) - k, " %4.1f%% %s;", 100.0 * bins[b].n / n, bins[b].name);
-            if (b % 5 == 4 || b + 1 == nb || b == 29) { host_log("android:  %s\n", line); k = 0; }
+        if (!ph) host_log("android: profile %s thread, %u ms of CPU in 20 s (%.0f%% of a core):\n", t ? "game" : "render", n, n / 200.0);
+        else host_log("android: profile render thread, %s: %u ms (%.0f%% of its samples):\n", ph == 1 ? "executing game frames" : "headset images", nph, 100.0 * nph / n);
+        for (unsigned b = 0; b < nb && b < (ph ? 20u : 30u); b++) {
+            k += snprintf(line + k, sizeof(line) - k, " %4.1f%% %s;", 100.0 * bins[b].n / nph, bins[b].name);
+            if (b % 5 == 4 || b + 1 == nb || b == (ph ? 19u : 29u)) { host_log("android:  %s\n", line); k = 0; }
+        }
         }
     }
 }
