@@ -160,9 +160,11 @@ void and_gq_stage(int s)
         genq = (PFN_GenQ)SDL_GL_GetProcAddress("glGenQueries"); beginq = (PFN_BeginQ)SDL_GL_GetProcAddress("glBeginQuery");
         endq = (PFN_EndQ)SDL_GL_GetProcAddress("glEndQuery"); getq = (PFN_GetQOuiv)SDL_GL_GetProcAddress("glGetQueryObjectuiv");
         getiv = (PFN_GetIv)SDL_GL_GetProcAddress("glGetIntegerv");
-        gq_ok = genq && beginq && endq && getq && getiv && ext && SDL_strstr(ext, "GL_EXT_disjoint_timer_query") && gpu_ok <= 0;
+        /* (measured once - eye replay 3-4 ms, eye image ~0.85 ms, restores ~0, game frame 3-4 ms - and it cost ~8 headset
+           images a second: off; RECVX_GPU_STAGES=1 in env.txt turns it on) */
+        gq_ok = SDL_getenv("RECVX_GPU_STAGES") && genq && beginq && endq && getq && getiv && ext && SDL_strstr(ext, "GL_EXT_disjoint_timer_query") && gpu_ok <= 0;
         if (gq_ok) for (int k = 0; k < GQ_N; k++) genq(GQ_RING, gq[k]);
-        host_log("android: GPU time by stage %s\n", gq_ok ? "on" : "not available");
+        host_log("android: GPU time by stage %s\n", gq_ok ? "on" : "off");
     }
     if (!gq_ok) return;
     if (gq_cur >= 0) { endq(GL_TIME_ELAPSED_EXT); gq_pend[gq_cur][gq_curi] = 1; gq_cur = -1; }

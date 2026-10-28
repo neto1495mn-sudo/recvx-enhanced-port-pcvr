@@ -37,6 +37,10 @@ static int   g_margin_x = 0;        /* extra GS pixels on each side (widescreen)
 static int psm_is16(uint32_t psm) { return psm == PSMCT16 || psm == PSMCT16S || psm == PSMZ16 || psm == PSMZ16S; }
 
 #define MAX_RT 16
+#ifdef __ANDROID__
+static void and_foveate(GLuint tex);   /* (foveated render targets, below) */
+static int and_fov_next;
+#endif
 typedef struct {
     int used;
     uint32_t fbp, fbw, psm;
@@ -557,6 +561,17 @@ static void attach_depth(GLuint fbo, GLuint dt)
     for (i = 0; i < natt && att[i].fbo != fbo; i++) {}
     if (i < natt && att[i].dt == dt) return;
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, dt, 0);
+#ifdef __ANDROID__
+    {   /* foveated colour with a plain depth texture: checked the first times (logged if the driver refuses it) */
+        static int nchk;
+        if (nchk < 30) {
+            GLenum st = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+            nchk++;
+            if (st != 0x8CD5) host_log("android: render target framebuffer incomplete (0x%x) - foveation?\n", (unsigned)st);
+            else if (nchk == 30) host_log("android: render target framebuffers complete (first 30 depth attachments checked)\n");
+        }
+    }
+#endif
     if (i == natt) { if (natt == 32) { natt = 0; i = 0; } natt++; }
     att[i].fbo = fbo; att[i].dt = dt;
 }
@@ -661,6 +676,9 @@ static RenderTarget* rt_get(uint32_t fbp, uint32_t fbw, uint32_t psm)
     glGenTextures(1, &rt->tex);
     glBindTexture(GL_TEXTURE_2D, rt->tex);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, rt->pw, rt->ph, 0, GL_RGBA, GL_HALF_FLOAT, NULL);
+#ifdef __ANDROID__
+    and_foveate(rt->tex);
+#endif
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
@@ -679,6 +697,31 @@ static RenderTarget* rt_get(uint32_t fbp, uint32_t fbw, uint32_t psm)
 int g_vr_dyn_res = 0;     /* ini vr_dyn_res: 1 on, 0 off (vr176: off by default, fixed resolution) */
 static int vr_dyn_down;   /* (render thread) the step down is on */
 
+#ifdef __ANDROID__
+/* Android (Quest): foveated rendering into the render targets (GL_QCOM_texture_foveated) - the GPU was the limit (the
+   runtime held the headset at half rate: an eye's replay 3-4 ms, a game frame's drawing 3-4 ms on the GPU). Full detail
+   in the middle (the 4:3 picture: |x| < ~0.7), less towards the sides and edges, at least half (the margins seen at the
+   edge of the lenses) */
+#define AND_FOV_BITS 0x8BFB       /* GL_TEXTURE_FOVEATED_FEATURE_BITS_QCOM */
+#define AND_FOV_MIN 0x8BFC        /* GL_TEXTURE_FOVEATED_MIN_PIXEL_DENSITY_QCOM */
+typedef void (GLAPIENTRY *PFN_AndFovParams)(GLuint, GLuint, GLuint, GLfloat, GLfloat, GLfloat, GLfloat, GLfloat);
+static int and_fov = -1;
+static PFN_AndFovParams and_fovp;
+static void and_foveate(GLuint tex)   /* (tex bound to GL_TEXTURE_2D, before it is attached) */
+{
+    if (and_fov < 0) {
+        const char* ext = (const char*)glGetString(0x1F03 /* GL_EXTENSIONS */);
+        and_fovp = (PFN_AndFovParams)SDL_GL_GetProcAddress("glTextureFoveationParametersQCOM");
+        and_fov = ext && SDL_strstr(ext, "GL_QCOM_texture_foveated") && and_fovp;
+        host_log("android: foveated render targets %s\n", and_fov ? "on (GL_QCOM_texture_foveated)" : "not available");
+    }
+    if (!and_fov) return;
+    glTexParameteri(GL_TEXTURE_2D, AND_FOV_BITS, 0x1 /* ENABLE */ | 0x2 /* SCALED_BIN_METHOD */);
+    glTexParameterf(GL_TEXTURE_2D, AND_FOV_MIN, 0.5f);
+    and_fovp(tex, 0, 0, 0.0f, 0.0f, 1.5f, 1.2f, 0.25f);
+}
+/* (and_fov_next: ensure_target's next new target is drawn into - a shadow -, foveate it) */
+#endif
 /* internal resolution: the configured multiplier, or (auto) enough to cover the window */
 float gs_wanted_scale(void)
 {
@@ -716,6 +759,9 @@ void gs_set_scale(float scale)
         glGenTextures(1, &tex);
         glBindTexture(GL_TEXTURE_2D, tex);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, pw, ph, 0, GL_RGBA, GL_HALF_FLOAT, NULL);
+#ifdef __ANDROID__
+        and_foveate(tex);
+#endif
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
@@ -1444,7 +1490,13 @@ static void rt_first_draw(const RenderTarget* rt, const DrawState* st, uint32_t 
 static void shadow_ensure(int i)
 {
     Shadow* sh = &shadow[i];
+#ifdef __ANDROID__
+    and_fov_next = 1;
+#endif
     ensure_target(&sh->tex, &sh->fbo, &sh->pw, &sh->ph, rts[i].pw, rts[i].ph);
+#ifdef __ANDROID__
+    and_fov_next = 0;
+#endif
     glBindFramebuffer(GL_FRAMEBUFFER, sh->fbo);
     glDisable(GL_SCISSOR_TEST);
     glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
@@ -2311,9 +2363,15 @@ static void blit_color(GLuint src_fbo, GLuint dst_fbo, int w, int h)
 static void ensure_target(GLuint* tex, GLuint* fbo, int* cw, int* ch, int w, int h)
 {
     if (*tex && *cw == w && *ch == h) return;
+#ifdef __ANDROID__
+    int fresh = !*tex;
+#endif
     if (!*tex) { glGenTextures(1, tex); glGenFramebuffers(1, fbo); }
     glBindTexture(GL_TEXTURE_2D, *tex);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, w, h, 0, GL_RGBA, GL_HALF_FLOAT, NULL);
+#ifdef __ANDROID__
+    if (and_fov_next && fresh) and_foveate(*tex);   /* (the feature bits are set once a texture) */
+#endif
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
