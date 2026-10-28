@@ -288,6 +288,17 @@ static void execute_pending(int i)
     }
 }
 
+#ifdef __ANDROID__
+/* gs_mem.c: would ntex_before_access(page0, page1) execute queued uploads (they write GS memory: a pending draw must be
+   flushed before) */
+int ntex_pending_on(uint32_t page0, uint32_t page1)
+{
+    if (executing || gs_memp != gs_mem || gs_replaying || !npending) return 0;
+    if (page0 > page1) return 1;
+    for (uint32_t p = page0; p <= page1 && p < 512; p++) if (pd_cnt[p]) return 1;
+    return 0;
+}
+#endif
 void ntex_before_access(uint32_t page0, uint32_t page1)
 {
     if (executing || gs_memp != gs_mem || gs_replaying) return;   /* a replay writes no GS memory */

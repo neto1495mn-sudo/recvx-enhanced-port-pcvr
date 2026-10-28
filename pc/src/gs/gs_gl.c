@@ -1604,6 +1604,7 @@ static unsigned and_defer_n, and_defer_no[9];
 /* draws ended by a state change, per cause (0 executed frame, 1 replays): logged by and_flush_why_log */
 static unsigned and_flush_why[2][14], and_flush_epoch_only[2];
 static uintptr_t and_fl_ra[2][24];
+static unsigned and_epoch_merged;   /* replay draws kept going over an epoch change (batch_for) */
 static unsigned and_fl_n[2][24];
 void and_flush_why_log(void)
 {
@@ -1634,6 +1635,7 @@ void and_flush_why_log(void)
                 and_fl_n[r][best] = 0;
             }
             host_log("android: draws ended last second (%s): %u, by %s\n", r ? "the eyes' replays" : "game frames", t2, q ? c : "none");
+            if (r) { host_log("android: replay draws kept going over a texture upload (same texture): %u\n", and_epoch_merged); and_epoch_merged = 0; }
             memset(and_fl_ra[r], 0, sizeof(and_fl_ra[r])); memset(and_fl_n[r], 0, sizeof(and_fl_n[r]));
         }
         memset(and_flush_why[r], 0, sizeof(and_flush_why[r])); and_flush_epoch_only[r] = 0;
@@ -2225,6 +2227,28 @@ static void batch_for(int type, const GsVertex* v, int count, const GsContext* c
     st.prim = prim & 0x7F8; st.ctx = *c; st.texa = gs.texa; st.fogcol = gs.fogcol; st.pabe = gs.pabe; st.colclamp = gs.colclamp;
     if (!(st.prim & (1 << 4))) { st.ctx.tex0 = 0; st.ctx.tex1 = 0; st.ctx.clamp = 0; }
     st.epoch = gs_tex_epoch;
+#ifdef __ANDROID__
+    /* Android (Quest): in a replay a texture upload in between (only the epoch differs) ends the draw for nothing when the
+       batch's texture resolves to the same one at both epochs and no target reload lies between (the log: ~30 draws an
+       eye ended so, all else the same): the batch goes on (its epoch stays the first one) */
+    if (gs_replaying && batch_valid && vcount && mode == batch_mode && vcount + 6 <= MAX_VERTS && st.epoch != batch_state.epoch) {
+        DrawState t2 = st;
+        t2.epoch = batch_state.epoch;
+        if (!memcmp(&t2, &batch_state, sizeof(t2))) {
+            int same = 0;
+            if (!(st.prim & (1 << 4))) same = 1;   /* (no texture) */
+            else {
+                const TexMemo* a = memo_slot(st.ctx.tex0, st.texa, batch_state.epoch, 0);
+                const TexMemo* b = memo_slot(st.ctx.tex0, st.texa, st.epoch, 0);
+                if (a && b) same = a->rt >= 0 ? (b->rt == a->rt && b->ox == a->ox && b->oy == a->oy && b->is16 == a->is16 && memo_rt_ok(a))
+                                              : (b->rt < 0 && a->tex && b->tex == a->tex && b->ascale == a->ascale);
+            }
+            for (int i = 0; same && i < nreloads; i++)
+                if (!reloads[i].applied && reloads[i].epoch > batch_state.epoch && reloads[i].epoch <= st.epoch) same = 0;
+            if (same) { and_epoch_merged++; batch_full_cover = 0; return; }
+        }
+    }
+#endif
     if (!batch_valid || memcmp(&st, &batch_state, sizeof(st)) != 0 || mode != batch_mode || vcount + 6 > MAX_VERTS) {
 #ifdef __ANDROID__
         if (batch_valid && vcount) {   /* why a draw ends here (draws are the GL driver's cost: ~37% of a headset image's CPU) */

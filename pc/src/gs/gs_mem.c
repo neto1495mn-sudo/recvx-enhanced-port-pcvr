@@ -790,13 +790,18 @@ void gs_clut_load(uint64_t tex0)
     /* Android (Quest): the same CLUT loaded again from GS memory nobody wrote since (the last load had these
        parameters and nothing else wrote the CLUT buffer since): the buffer already holds it - the game loads a CLUT at
        every texture switch (gs_clut_load ~13% of a game frame's execution) */
-    gs_flush();
+    {   /* (the pending draw flushed only when the CLUT changes - or queued uploads are about to write GS memory: the same CLUT
+           loaded again ended the draw for nothing) */
+        extern int ntex_pending_on(uint32_t, uint32_t);
+        if (ntex_pending_on(cbp / 32, cbp / 32 + 1)) gs_flush();
+    }
     ntex_before_access(cbp / 32, cbp / 32 + 1);
     {
         uint32_t b0 = (cbp * 256u >> 8) & (GS_MEM_SIZE / 256 - 1), nb = entries == 16 ? 2 : 8, g = 0;
         for (uint32_t b = 0; b < nb; b++) g = g * 0x9E3779B1u + blk_wgen[(b0 + b) & (GS_MEM_SIZE / 256 - 1)];
         if (clut_last_ok && gs_memp == gs_mem && clut_last_cbp == cbp && clut_last_cpsm == cpsm && clut_last_csa == csa &&
             clut_last_n == entries && clut_last_g == g) { clut_skipped++; return; }
+        gs_flush();   /* (draws so far use the CLUT as it was) */
         clut_last_ok = gs_memp == gs_mem; clut_last_cbp = cbp; clut_last_cpsm = cpsm; clut_last_csa = csa; clut_last_n = entries; clut_last_g = g;
         clut_loaded++;
     }
