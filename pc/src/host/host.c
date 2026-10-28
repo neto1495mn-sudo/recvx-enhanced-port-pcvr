@@ -288,6 +288,9 @@ static int SDLCALL game_thread(void* ud)
 #if defined(__ANDROID__) && defined(RECVX_HAVE_OPENXR)
     { extern void xr_android_game_thread(void); xr_android_game_thread(); }   /* Android: its role for the runtime (xr.c) */
 #endif
+#ifdef __ANDROID__
+    { void and_sampler_thread(int); and_sampler_thread(1); }   /* android_sampler.c */
+#endif
     exit(recvx_game_main(1, game_argv));
 }
 

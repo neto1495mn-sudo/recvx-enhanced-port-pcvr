@@ -71,6 +71,9 @@ void render_loop(void)
     float fixed_t = SDL_getenv("RECVX_INTERP_T") ? (float)SDL_atof(SDL_getenv("RECVX_INTERP_T")) : 0.0f;   /* test aid: first refresh shows t */
     FILE* trace = SDL_getenv("RECVX_TRACE_PRESENT") ? fopen(SDL_getenv("RECVX_TRACE_PRESENT"), "w") : NULL;   /* test aid */
     prof_thread(PROF_RIDLE);
+#ifdef __ANDROID__
+    { void and_sampler_thread(int); and_sampler_thread(0); }   /* android_sampler.c */
+#endif
     for (;;) {
         Frame* f;
         uint64_t now;
@@ -98,6 +101,7 @@ void render_loop(void)
                 hb_presents = hb_skip_partial = hb_skip_queued = hb_forced = 0;
                 hb_slow_logged = 0;
                 and_prof_report();
+                { void and_sampler_report(void); and_sampler_report(); }
                 host_log("android: last second %u game frames, %u loops; buttons %x sticks %.1f %.1f / %.1f %.1f triggers %.1f %.1f grips %.1f %.1f%s\n",
                          hb_frames, hb_loops, have ? in.buttons : 0, have ? in.lx : 0, have ? in.ly : 0, have ? in.rx : 0, have ? in.ry : 0,
                          have ? in.ltrig : 0, have ? in.rtrig : 0, have ? in.lgrip : 0, have ? in.rgrip : 0, have ? "" : " (no controller input)");

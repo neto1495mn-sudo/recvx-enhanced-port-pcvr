@@ -1884,6 +1884,34 @@ static void native_to_gl(unsigned int prim, const NativeVertex* v, int n, GlVert
             o->clip[0] = q->near_d; o->clip[1] = q->far_d;
             o->vr = (q->cull & 0x80) ? 1.0f : (q->cull & 0x40) ? 2.25f : (q->cull & 0x20) ? 0.0f : 3.0f;   /* (2.25: a native effect - the same path, told apart by vr_debug_cores) */   /* 2: 2D with a GS depth (vr_fx_fix); 3: 2D on the VR panel; 0: screen layers */
             vr_stat_vertex(o);
+#ifdef __ANDROID__
+            {   /* Android (Quest) diagnosis: missing arms, glass, parts of objects (only on the Quest) - vertices that
+                   cannot draw: not finite, w <= 0 for 3D, far outside the GS area; counted per path, a few logged */
+                static unsigned nall[4], nbad[4], nlog;
+                static uint64_t t_last;
+                int k = (q->cull & 0x80) ? 0 : (q->cull & 0x40) ? 1 : (q->cull & 0x20) ? 2 : 3;
+                int bad = !isfinite(o->x) || !isfinite(o->y) || !isfinite(o->z) || !isfinite(o->w) || !isfinite(o->s) || !isfinite(o->t) ||
+                          (k == 0 ? o->w <= 0.0f && o->clip[0] >= 0.0f : 0) ||
+                          (o->w > 0.0f && (fabsf(o->x / o->w) > 20000.0f || fabsf(o->y / o->w) > 20000.0f));
+                static unsigned tick;
+                nall[k]++;
+                if (bad) {
+                    nbad[k]++;
+                    if (nlog < 40) {
+                        nlog++;
+                        host_log("android: bad vertex (%s, prim %x): x %g y %g z %g w %g s %g t %g clip %g %g\n",
+                                 k == 0 ? "3D" : k == 1 ? "effect in the world" : k == 2 ? "screen layer" : "2D", prim, o->x, o->y, o->z, o->w, o->s, o->t, o->clip[0], o->clip[1]);
+                    }
+                }
+                if (!(++tick & 4095) && SDL_GetTicksNS() - t_last > 5000000000ull) {
+                    if (t_last && (nbad[0] | nbad[1] | nbad[2] | nbad[3]))
+                        host_log("android: bad vertices last 5 s: 3D %u of %u, effects %u of %u, screen layers %u of %u, 2D %u of %u\n",
+                                 nbad[0], nall[0], nbad[1], nall[1], nbad[2], nall[2], nbad[3], nall[3]);
+                    t_last = SDL_GetTicksNS();
+                    memset(nall, 0, sizeof(nall)); memset(nbad, 0, sizeof(nbad));
+                }
+            }
+#endif
         }
 }
 
