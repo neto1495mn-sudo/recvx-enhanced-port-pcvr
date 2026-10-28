@@ -53,6 +53,12 @@ static unsigned hb_slow_logged;   /* slow frame lines this second (at most 5: an
 /* Android (Quest) diagnosis: once a second, the headset images presented and the loops that skipped the present - a
    partial frame (download sync point) or an in-between image dropped because the next frame was waiting */
 static unsigned hb_presents, hb_skip_partial, hb_skip_queued, hb_forced;
+/* motion smoothness (the owner: micro stutters, "walks and stops"): per headset image, the game time it shows (frame +
+   t) against when the headset shows it (OpenXR display time); the ideal is the game's 30 frames a second of game time
+   spread evenly. stops: no game time advanced; slow/fast: under 0.6 / over 1.5 of the ideal; gaps: a headset refresh
+   with no new image (the previous one shown again) */
+static unsigned mo_stop, mo_slow, mo_ok, mo_fast, mo_gap, mo_n;
+static double mo_rmin = 1e9, mo_rmax;
 /* the last headset image's time: frames drawn slower than the game's rate (40-55 ms, the message before the lighter)
    always found the next one waiting and skipped every present - the headset got no image and the controllers were
    no longer read (both in xr_frame_begin), the game looked frozen. Over 30 ms without one: shown anyway */
@@ -127,6 +133,10 @@ void render_loop(void)
                         ab_secs = ab_pres = ab_game = 0;
                     }
                 }
+                if (mo_n) host_log("android: motion last second: %u images; game time per image vs display time: %u stopped, %u slow, %u even, %u fast "
+                                   "(ratio %.2f..%.2f); %u headset refreshes skipped before an image\n",
+                                   mo_n, mo_stop, mo_slow, mo_ok, mo_fast, mo_rmin, mo_rmax, mo_gap);
+                mo_n = mo_stop = mo_slow = mo_ok = mo_fast = mo_gap = 0; mo_rmin = 1e9; mo_rmax = 0;
                 hb_presents = hb_skip_partial = hb_skip_queued = hb_forced = 0;
                 hb_slow_logged = 0;
                 and_prof_report();
@@ -288,6 +298,24 @@ void render_loop(void)
             hb_presents++;
             hb_last_present = SDL_GetTicksNS();
             and_render_add(AND_PRESENT, hb_last_present - and_pt0, and_thread_cpu_ns() - and_pc0, g_and_stall.draws - and_pd0, g_and_stall.prims - and_pp0);
+            if (xr_active()) {
+                static int64_t mo_d0;
+                static double mo_g0;
+                int64_t disp = xr_display_time_ns();
+                double g = (double)gs_frame_count() - 1.0 + (interp ? t : 1.0), xp = xr_display_hz() > 1.0 ? 1e9 / xr_display_hz() : 13.9e6;
+                if (mo_d0 && disp > mo_d0 && period > 1e6) {
+                    double dd = (double)(disp - mo_d0), r = (g - mo_g0) / (dd / period);
+                    mo_n++;
+                    if (dd > xp * 1.5) mo_gap++;
+                    if (g - mo_g0 <= 1e-6) mo_stop++;
+                    else if (r < 0.6) mo_slow++;
+                    else if (r > 1.5) mo_fast++;
+                    else mo_ok++;
+                    if (r < mo_rmin) mo_rmin = r;
+                    if (r > mo_rmax) mo_rmax = r;
+                }
+                mo_d0 = disp; mo_g0 = g;
+            }
 #endif
             shown++;
             if (trace) fprintf(trace, "%llu %.3f %llu %llu\n", (unsigned long long)gs_frame_count(), t, (unsigned long long)(now / 1000),
