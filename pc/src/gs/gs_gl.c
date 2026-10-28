@@ -74,7 +74,7 @@ static unsigned and_waits; static uint64_t and_wait_ns;   /* (the ring's waits: 
 static void and_persistent_init(void);
 volatile int g_and_fps_headset, g_and_fps_game;   /* render.c, once a second: images to the headset, game frames */
 int g_and_ab;   /* render.c: A/B test mode - bit 0 no window swap, bit 1 no per-eye glFlush */
-int g_vr_one_replay = 1;   /* the right eye re-issues the left eye's recorded GL calls (gl_record.c); 0: both eyes replay */
+int g_vr_one_replay = 0;   /* off: on the Quest it was not faster (38.7 vs 44 images/s) and grates/glass went missing - the right eye re-issues the left eye's recorded GL calls (gl_record.c); 0: both eyes replay */
 /* Android (Quest): the frame rates in the picture (the owner follows them in the headset) - two numbers drawn with
    scissored clears (no shader, no font): images the headset got per second, game frames per second. Green: full
    rate, yellow: some lost, red: slow. x, y: lower left in the bound framebuffer; h: its height (the size) */
