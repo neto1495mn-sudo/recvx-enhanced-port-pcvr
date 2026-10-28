@@ -295,6 +295,8 @@ static inline void write_tracked(int psm, uint32_t bp, uint32_t bw, uint32_t x, 
 #include <semaphore.h>
 typedef struct { int fmt; const uint8_t* src; uint32_t rrw, dbp, bw, dsax, y0, nr; const uint8_t (*bt32)[8]; const uint8_t (*bt16)[4];
                  uint64_t pages[512 / 64]; int changed; } UpRows;
+static unsigned up_bytes[4];   /* uploaded in whole block rows per format (CT32, CT16, T8, T4), for the log */
+void gs_upload_fmt_bytes(unsigned* out) { for (int k = 0; k < 4; k++) { out[k] = up_bytes[k]; up_bytes[k] = 0; } }
 #define JMARK(j_, a_) do { uint32_t pg_ = ((a_) >> 13) & 511; (j_)->pages[pg_ >> 6] |= 1ull << (pg_ & 63); } while (0)
 static void up_rows(UpRows* j)
 {
@@ -305,8 +307,14 @@ static void up_rows(UpRows* j)
             uint32_t y0 = j->y0 + r * 8;
             for (uint32_t bx = 0; bx < rrw; bx += 8) {
                 uint32_t blk[64], a = addr32(j->bt32, j->dbp, bw, j->dsax + bx, y0);
-                for (uint32_t yy = 0; yy < 8; yy++)
-                    for (uint32_t xx = 0; xx < 8; xx++) memcpy(&blk[columnTable32[yy][xx]], s + ((size_t)yy * rrw + bx + xx) * 4, 4);
+                /* columnTable32: rows 2k and 2k+1 interleaved two pixels at a time from word 16k - eight-byte copies, no
+                   table (checked: (y/2)*16 + (x/2)*4 + (y%2)*2 + x%2 for all 64 entries) */
+                for (uint32_t k = 0; k < 4; k++) {
+                    const uint8_t* ra = s + ((size_t)(2 * k) * rrw + bx) * 4;
+                    const uint8_t* rb = ra + (size_t)rrw * 4;
+                    uint8_t* o = (uint8_t*)&blk[16 * k];
+                    for (uint32_t q = 0; q < 4; q++) { memcpy(o + q * 16, ra + q * 8, 8); memcpy(o + q * 16 + 8, rb + q * 8, 8); }
+                }
                 if (memcmp(gs_memp + a, blk, 256)) { memcpy(gs_memp + a, blk, 256); j->changed = 1; BLK_SET(a, blk); }
                 JMARK(j, a);
             }
@@ -383,6 +391,7 @@ static int up_block_rows(const uint8_t* src, uint32_t bytes, uint32_t* pi, int d
     n = (rrh - gs.xfer_y) / bh;
     if ((bytes - i) / rowbytes < n) n = (bytes - i) / rowbytes;
     if (!n) return 0;
+    up_bytes[fmt] += n * rowbytes;
     {
         UpRows a, b;
         memset(&a, 0, sizeof(a));
