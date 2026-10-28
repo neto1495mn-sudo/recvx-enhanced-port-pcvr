@@ -45,6 +45,23 @@ static PFN_glPixelStorei r_PixelStorei; static PFN_glBlitFramebuffer r_BlitFrame
 extern volatile int g_and_phase;
 static unsigned fb_sw[3], blit_n[3];
 static double blit_px[3];
+/* pass trace (one eye / one game frame now and then): each draw-target switch with its draws, vertices, clears, blits */
+static PFN_glDrawArrays r_DrawArrays; static PFN_glClear r_Clear;
+static int mine(void);
+#define TRN 64
+static struct { GLuint fbo; unsigned draws, verts, clears, blits; } tr[TRN];
+static int tr_n, tr_on;
+void and_pass_trace(int on) { if (on) tr_n = 0; tr_on = on; }
+int and_pass_trace_take(GLuint* fbo, unsigned (*cnt)[4], int max)
+{
+    int n = tr_n < max ? tr_n : max;
+    for (int i = 0; i < n; i++) { fbo[i] = tr[i].fbo; cnt[i][0] = tr[i].draws; cnt[i][1] = tr[i].verts; cnt[i][2] = tr[i].clears; cnt[i][3] = tr[i].blits; }
+    return n;
+}
+static void tr_new(GLuint f) { if (tr_on && mine() && tr_n < TRN) { tr[tr_n].fbo = f; tr[tr_n].draws = tr[tr_n].verts = tr[tr_n].clears = tr[tr_n].blits = 0; tr_n++; } }
+#define TR_CUR (tr_on && tr_n > 0 && mine() ? &tr[tr_n - 1] : NULL)
+static void GLAPIENTRY c_DrawArrays(GLenum m, GLint first, GLsizei n) { if (TR_CUR) { TR_CUR->draws++; TR_CUR->verts += (unsigned)n; } r_DrawArrays(m, first, n); }
+static void GLAPIENTRY c_Clear(GLbitfield b) { if (TR_CUR) TR_CUR->clears++; r_Clear(b); }
 void and_glcache_passes(unsigned* sw, unsigned* bn, double* bpx)
 {
     for (int k = 0; k < 3; k++) { sw[k] = fb_sw[k]; bn[k] = blit_n[k]; bpx[k] = blit_px[k]; fb_sw[k] = blit_n[k] = 0; blit_px[k] = 0; }
@@ -129,12 +146,13 @@ static void GLAPIENTRY c_BindFramebuffer(GLenum target, GLuint f)
         if (target == 0x8D40 /* FRAMEBUFFER */) { if (s.dfb == (int64_t)f && s.rfb == (int64_t)f) SKIP(); s.dfb = s.rfb = f; }
         else if (target == 0x8CA9 /* DRAW */) { if (s.dfb == (int64_t)f) SKIP(); s.dfb = f; }
         else if (target == 0x8CA8 /* READ */) { if (s.rfb == (int64_t)f) SKIP(); s.rfb = f; }
-        if (target != 0x8CA8) fb_sw[(unsigned)g_and_phase < 3 ? g_and_phase : 0]++;
+        if (target != 0x8CA8) { fb_sw[(unsigned)g_and_phase < 3 ? g_and_phase : 0]++; tr_new(f); }
     }
     PASS(); r_BindFramebuffer(target, f);
 }
 static void GLAPIENTRY c_BlitFramebuffer(GLint x0, GLint y0, GLint x1, GLint y1, GLint dx0, GLint dy0, GLint dx1, GLint dy1, GLbitfield m, GLenum f)
 {
+    if (TR_CUR) TR_CUR->blits++;
     if (mine()) { int k = (unsigned)g_and_phase < 3 ? g_and_phase : 0; blit_n[k]++; blit_px[k] += fabs((double)(dx1 - dx0) * (double)(dy1 - dy0)); }
     r_BlitFramebuffer(x0, y0, x1, y1, dx0, dy0, dx1, dy1, m, f);
 }
@@ -204,7 +222,7 @@ void and_glcache_install(void)
     WRAP(Enable); WRAP(Disable); WRAP(ActiveTexture); WRAP(BindTexture); WRAP(TexParameteri); WRAP(GenTextures); WRAP(DeleteTextures);
     WRAP(BindFramebuffer); WRAP(DeleteFramebuffers); WRAP(UseProgram); WRAP(BindVertexArray); WRAP(BindBuffer); WRAP(Viewport);
     WRAP(Scissor); WRAP(DepthFunc); WRAP(DepthMask); WRAP(ColorMask); WRAP(BlendFuncSeparate); WRAP(BlendEquationSeparate);
-    WRAP(BlendColor); WRAP(ClearColor); WRAP(PixelStorei); WRAP(BlitFramebuffer);
+    WRAP(BlendColor); WRAP(ClearColor); WRAP(PixelStorei); WRAP(BlitFramebuffer); WRAP(DrawArrays); WRAP(Clear);
     and_glcache_reset();
     host_log("android: GL state cache on (repeated state calls not passed to the driver)\n");
 }

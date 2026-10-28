@@ -1547,6 +1547,32 @@ void gs_replay_begin(void)
 }
 
 #ifdef __ANDROID__
+static int and_tr_active;   /* an eye's GPU passes are being traced */
+/* the pass trace (gl_cache.c) logged with what each target is */
+void and_pass_trace_log(const char* what)
+{
+    extern int and_pass_trace_take(GLuint*, unsigned (*)[4], int);
+    GLuint fb[64];
+    unsigned c[64][4];
+    char line[2048];
+    int n = and_pass_trace_take(fb, c, 64), o = 0;
+    for (int i = 0; i < n && o < (int)sizeof(line) - 96; i++) {
+        char d[48];
+        int k;
+        d[0] = 0;
+        for (k = 0; k < MAX_RT && !d[0]; k++) {
+            if (rts[k].used && rts[k].fbo == fb[i]) SDL_snprintf(d, sizeof(d), "rt%d fbp %u %dx%d", k, rts[k].fbp, rts[k].pw, rts[k].ph);
+            else if (shadow[k].fbo == fb[i] && shadow[k].tex) SDL_snprintf(d, sizeof(d), "shadow%d %dx%d", k, shadow[k].pw, shadow[k].ph);
+        }
+        if (!d[0]) for (k = 0; k < 2; k++) if (img[k].fbo == fb[i] && img[k].tex) SDL_snprintf(d, sizeof(d), "snapshot%d %dx%d", k, img[k].pw, img[k].ph);
+        if (!d[0]) SDL_snprintf(d, sizeof(d), fb[i] ? "fbo %u" : "window", fb[i]);
+        o += SDL_snprintf(line + o, sizeof(line) - (size_t)o, "%s[%s: %u draws %u verts%s%s]", i ? " " : "", d, c[i][0], c[i][1],
+                          c[i][2] ? " clear" : "", c[i][3] ? " blit" : "");
+    }
+    host_log("android: GPU passes of %s (%d): %s\n", what, n, line);
+}
+#endif
+#ifdef __ANDROID__
 static void gs_flush_(void);
 void gs_flush(void)   /* Android diagnosis: the flushes' wall time */
 {
@@ -3587,6 +3613,8 @@ static int present_vr_stereo_(const struct Frame* cur, float t)
             static RenderTarget rec_rts[MAX_RT];
             static Shadow rec_shadow[MAX_RT];
             static unsigned n_reissue, n_full, n_logged;
+            static unsigned and_tr_n;
+            if (e == 0 && (and_tr_n++ % 400) == 200) { extern void and_pass_trace(int); and_pass_trace(1); and_tr_active = 1; }
             if (e == 1 && and_rec_ok && g_vr_one_replay) {
                 const GLint locs[5] = { u_vr_dst, u_vr_m0, u_vr_m1, u_vr_m2, u_vr_m3 };
                 const float vals[5][4] = { { vr_u.dst[0], vr_u.dst[1], vr_u.dst[2], vr_u.dst[3] }, { vr_u.m[0], vr_u.m[1], vr_u.m[2], vr_u.m[3] },
@@ -3681,6 +3709,7 @@ static int present_vr_stereo_(const struct Frame* cur, float t)
 #endif
 #ifdef __ANDROID__
         { extern void and_gq_stage(int); and_gq_stage(-1); }
+        if (and_tr_active) { extern void and_pass_trace(int); and_pass_trace(0); and_pass_trace_log("an eye (replay + eye image)"); and_tr_active = 0; }
 #endif
         glFlush();   /* vr99: the eye's work to the GPU now, not all at the hand-off (xrEndFrame waits less) */
         xr_eye_release(e);

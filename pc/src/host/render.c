@@ -58,6 +58,7 @@ static unsigned hb_presents, hb_skip_partial, hb_skip_queued, hb_forced;
    spread evenly. stops: no game time advanced; slow/fast: under 0.6 / over 1.5 of the ideal; gaps: a headset refresh
    with no new image (the previous one shown again) */
 static unsigned mo_stop, mo_slow, mo_ok, mo_fast, mo_gap, mo_n;
+static int and_trace_exec;   /* this game frame's GPU passes are traced (gl_cache.c) */
 /* game frame pacing: intervals between game frames as the game thread finished them (sub) and as the render thread
    finished executing them (exe): count, late (> 1.5 periods), bunched (< 0.5 period), max */
 static unsigned pc_n, pc_sub_late, pc_sub_bunch, pc_exe_late, pc_exe_bunch;
@@ -177,11 +178,13 @@ void render_loop(void)
 #endif
 #ifdef __ANDROID__
             { extern void and_gq_stage(int); and_gq_stage(3); }
+            { extern void and_pass_trace(int); static unsigned k; if ((k++ % 300) == 150) { and_pass_trace(1); and_trace_exec = 1; } }
 #endif
             gs_frame_begin();
             stream_exec(f);
 #ifdef __ANDROID__
             { extern void and_gq_stage(int); and_gq_stage(-1); }
+            if (and_trace_exec) { extern void and_pass_trace(int); extern void and_pass_trace_log(const char*); and_pass_trace(0); and_pass_trace_log("a game frame"); and_trace_exec = 0; }
 #endif
             prof_pop();
 #ifdef __ANDROID__
