@@ -86,6 +86,13 @@ void render_loop(void)
            the game frame waiting is executed right after, while the waiter waits for the next one - executed first,
            it (6-17 ms) and the image (7-8 ms) missed the headset's 13.9 ms */
         int and_hold = xr_active() && cur && xr_frame_ready();
+        {   /* ... but a game frame waits at most 16 ms (the log: holding it for every image took the game from 30 to 22-27) */
+            static uint64_t queued_since;
+            uint64_t tn = SDL_GetTicksNS();
+            if (!stream_queued()) queued_since = 0;
+            else if (!queued_since) queued_since = tn;
+            if (and_hold && queued_since && tn - queued_since > 16000000ull) and_hold = 0;
+        }
         f = and_hold ? NULL : stream_pop(!cur ? 20 : pace_until > now ? (int)((pace_until - now) / 1000000) : 0);
 #else
         f = stream_pop(!cur ? 20 : pace_until > now ? (int)((pace_until - now) / 1000000) : 0);   /* the rest: SDL_DelayPrecise */

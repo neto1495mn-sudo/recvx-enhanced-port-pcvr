@@ -3610,7 +3610,11 @@ static uint64_t gs_present_vr(const struct Frame* cur, float t)
     vr_tb[1] = SDL_GetTicksNS() - tb0;   /* vr161 */
     swap = SDL_GetTicksNS();
 #ifdef __ANDROID__
-    if (!(g_and_ab & 1))   /* A/B test (render.c): the window nobody sees on the Quest, swapped or not */
+    /* Android (Quest): the window is not seen in the headset - not swapped (the cinema screen is copied from its back
+       buffer before this). With xrWaitFrame on its own thread the swap was the render thread's wait: 1.5-4.7 ms on
+       average, 13-32 ms peaks */
+    (void)g_and_ab;
+    if (0)
 #endif
     SDL_GL_SwapWindow(g_window);
     swap = SDL_GetTicksNS() - swap;
