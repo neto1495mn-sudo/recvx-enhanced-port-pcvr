@@ -81,7 +81,15 @@ void render_loop(void)
         /* nothing to show yet: wait for the game; otherwise take what has arrived, waiting for
            it until the next refresh is due (a frame arriving meanwhile is executed at once) */
         now = SDL_GetTicksNS();
+#ifdef __ANDROID__
+        /* Android (Quest): the headset wants an image now (its xrWaitFrame returned on the waiter thread, xr.c): that first,
+           the game frame waiting is executed right after, while the waiter waits for the next one - executed first,
+           it (6-17 ms) and the image (7-8 ms) missed the headset's 13.9 ms */
+        int and_hold = xr_active() && cur && xr_frame_ready();
+        f = and_hold ? NULL : stream_pop(!cur ? 20 : pace_until > now ? (int)((pace_until - now) / 1000000) : 0);
+#else
         f = stream_pop(!cur ? 20 : pace_until > now ? (int)((pace_until - now) / 1000000) : 0);   /* the rest: SDL_DelayPrecise */
+#endif
 #ifdef __ANDROID__
         {   /* Android (Quest) diagnosis: once a second, the game frames that arrived and the controller buttons - a stop
                shows as 0 frames (the game stuck) or frames with no button reaching it */
@@ -196,6 +204,12 @@ void render_loop(void)
             cur = f;
         }
         if (!cur) continue;
+#ifdef __ANDROID__
+        if (xr_active() && !and_hold && !xr_frame_ready()) {   /* the headset does not want an image yet: game frames meanwhile */
+            if (!stream_queued()) xr_frame_wait_ready(2);
+            continue;
+        }
+#endif
         now = SDL_GetTicksNS();
         if (pace_until > now) {   /* the refresh is not due yet: a frame that arrived is executed, its
                                      image waits for the refresh like any other (shown at once, it cut
@@ -217,7 +231,11 @@ void render_loop(void)
             else t = (float)((double)(now - arrived) / period);
             /* the next game frame is already waiting (the game runs below its rate): an
                in-between image of this one would only delay it (a whole replay of the scene) */
+#ifdef __ANDROID__
+            if (t < 1.0f && fixed_t <= 0.0f && stream_queued() && !and_hold) {   /* (the headset waiting: its image first) */
+#else
             if (t < 1.0f && fixed_t <= 0.0f && stream_queued()) {
+#endif
 #ifdef __ANDROID__
                 if (xr_active() && SDL_GetTicksNS() - hb_last_present > 30000000ull) { hb_forced++; t = 1.0f; }   /* the frame itself, no replay */
                 else

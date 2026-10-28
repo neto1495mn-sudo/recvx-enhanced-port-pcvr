@@ -629,6 +629,78 @@ double xr_display_hz(void) { return xr_active() ? hz : 0.0; }
 int64_t xr_display_time_ns(void) { return xr_active() ? (int64_t)fs.predictedDisplayTime : 0; }
 void xr_recenter(void) { need_center = 1; }
 
+#ifdef __ANDROID__
+/* Android (Quest): xrWaitFrame on a thread of its own. The log: the render thread waited 9-16 ms in it each headset
+   image while the next game frame sat in the queue; executed after the wait, that frame made the next image late
+   (72 - 30 = ~42 images a second). Now the waiter blocks there and the render loop executes game frames until it
+   says the headset wants an image (xr_frame_ready); xrBeginFrame/xrEndFrame stay on the render thread. OpenXR allows
+   xrWaitFrame on another thread; the waiter waits again only after the render thread's xrBeginFrame. */
+static SDL_Thread* w_thread;
+static SDL_Mutex* w_mx;
+static SDL_Condition* w_cv;
+static int w_st;            /* 0 may wait, 1 in xrWaitFrame, 2 a frame state ready, 3 taken (until xrBeginFrame) */
+static int w_res_ok, w_quit;
+static XrFrameState w_fs;
+static int SDLCALL waiter(void* ud)
+{
+    (void)ud;
+    SDL_LockMutex(w_mx);
+    for (;;) {
+        while (!w_quit && !(w_st == 0 && running && sess)) SDL_WaitCondition(w_cv, w_mx);
+        if (w_quit) break;
+        w_st = 1;
+        SDL_UnlockMutex(w_mx);
+        {
+            XrFrameWaitInfo wi = { XR_TYPE_FRAME_WAIT_INFO };
+            XrFrameState f = { XR_TYPE_FRAME_STATE };
+            XrResult r = xrWaitFrame(sess, &wi, &f);
+            SDL_LockMutex(w_mx);
+            w_fs = f; w_res_ok = XR_SUCCEEDED(r); w_st = 2;
+            if (!w_res_ok) { static int nl; if (nl++ < 10) host_log("vr: xrWaitFrame (waiter thread) failed: %d\n", (int)r); }
+            SDL_BroadcastCondition(w_cv);
+        }
+    }
+    SDL_UnlockMutex(w_mx);
+    return 0;
+}
+static void waiter_start(void)
+{
+    if (w_thread) return;
+    w_mx = SDL_CreateMutex(); w_cv = SDL_CreateCondition();
+    w_thread = w_mx && w_cv ? SDL_CreateThread(waiter, "xrwait", NULL) : NULL;
+    host_log("vr: xrWaitFrame %s\n", w_thread ? "on its own thread (game frames executed while the headset is not ready)" : "on the render thread (no waiter thread)");
+}
+/* the session stops: wait for the waiter to leave xrWaitFrame (at most 200 ms) */
+static void waiter_drain(void)
+{
+    uint64_t t0 = SDL_GetTicks();
+    if (!w_thread) return;
+    SDL_LockMutex(w_mx);
+    while (w_st == 1 && SDL_GetTicks() - t0 < 200) SDL_WaitConditionTimeout(w_cv, w_mx, 10);
+    w_st = 0;
+    SDL_UnlockMutex(w_mx);
+}
+/* render loop: the headset wants an image now (or VR is not running: the frame path handles that itself) */
+int xr_frame_ready(void)
+{
+    int r;
+    if (!w_thread || !running || !sess) return 1;
+    SDL_LockMutex(w_mx);
+    r = w_st == 2;
+    if (w_st == 0) SDL_BroadcastCondition(w_cv);
+    SDL_UnlockMutex(w_mx);
+    return r;
+}
+/* render loop: wait up to ms for the headset (returns early when it is ready) */
+void xr_frame_wait_ready(int ms)
+{
+    if (!w_thread || !running) { SDL_Delay((Uint32)ms); return; }
+    SDL_LockMutex(w_mx);
+    if (w_st != 2) SDL_WaitConditionTimeout(w_cv, w_mx, ms);
+    SDL_UnlockMutex(w_mx);
+}
+#endif
+
 static void poll_events(void)
 {
     XrEventDataBuffer ev;
@@ -645,6 +717,10 @@ static void poll_events(void)
                 bi.primaryViewConfigurationType = XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
                 if (xr_ok(xrBeginSession(sess, &bi), "xrBeginSession")) { running = 1; need_center = 1; }
             } else if (state == XR_SESSION_STATE_STOPPING && running) {
+#ifdef __ANDROID__
+                running = 0;
+                waiter_drain();
+#endif
                 xrEndSession(sess);
                 running = 0;
             } else if (state == XR_SESSION_STATE_EXITING || state == XR_SESSION_STATE_LOSS_PENDING) {
@@ -729,9 +805,31 @@ int xr_frame_begin(void)
     poll_events();
     if (!xr_active() || !running) { SDL_SetAtomicInt(&stereo_ready, 0); SDL_Delay(5); return -1; }   /* not visible yet: do not spin */
     fs = (XrFrameState){ XR_TYPE_FRAME_STATE };
+#ifdef __ANDROID__
+    (void)wi;
+    waiter_start();
+    if (w_thread) {
+        int ok;
+        SDL_LockMutex(w_mx);
+        if (w_st == 0) SDL_BroadcastCondition(w_cv);
+        while (w_st != 2 && running) SDL_WaitConditionTimeout(w_cv, w_mx, 50);
+        ok = w_st == 2 && w_res_ok;
+        fs = w_fs;
+        w_st = 3;   /* taken: the waiter waits again after xrBeginFrame */
+        SDL_UnlockMutex(w_mx);
+        if (!ok) { SDL_LockMutex(w_mx); w_st = 0; SDL_BroadcastCondition(w_cv); SDL_UnlockMutex(w_mx); return -1; }
+        {
+            int began = xr_ok(xrBeginFrame(sess, &bi), "xrBeginFrame");
+            SDL_LockMutex(w_mx); w_st = 0; SDL_BroadcastCondition(w_cv); SDL_UnlockMutex(w_mx);
+            if (!began) return -1;
+        }
+    } else
+#endif
+    {
     if (!xr_ok(xrWaitFrame(sess, &wi, &fs), "xrWaitFrame")) return -1;
-    if (fs.predictedDisplayPeriod > 0) hz = 1e9 / (double)fs.predictedDisplayPeriod;
     if (!xr_ok(xrBeginFrame(sess, &bi), "xrBeginFrame")) return -1;
+    }
+    if (fs.predictedDisplayPeriod > 0) hz = 1e9 / (double)fs.predictedDisplayPeriod;
     in_frame = 1;
     SDL_SetAtomicInt(&stereo_ready, g_vr_stereo && (state == XR_SESSION_STATE_VISIBLE || state == XR_SESSION_STATE_FOCUSED));
     if (!fs.shouldRender) return 0;
@@ -928,6 +1026,17 @@ void xr_shutdown(void)
     if (view_space) xrDestroySpace(view_space);
     if (local_space) xrDestroySpace(local_space);
     view_space = local_space = XR_NULL_HANDLE;
+#ifdef __ANDROID__
+    if (w_thread) {
+        int keep = running;
+        running = 0;
+        waiter_drain();
+        SDL_LockMutex(w_mx); w_quit = 1; SDL_BroadcastCondition(w_cv); SDL_UnlockMutex(w_mx);
+        SDL_WaitThread(w_thread, NULL);
+        w_thread = NULL; w_quit = 0; w_st = 0;
+        running = keep;
+    }
+#endif
     if (sess) { if (running) xrEndSession(sess); xrDestroySession(sess); }
     sess = XR_NULL_HANDLE;
     running = 0;
