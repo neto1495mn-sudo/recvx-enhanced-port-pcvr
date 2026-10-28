@@ -14,6 +14,9 @@
 #include "xr.h"
 #include <SDL3/SDL.h>
 #include <math.h>
+#ifdef __ANDROID__
+#include <time.h>
+#endif
 #include <stdio.h>
 #include <string.h>
 
@@ -58,7 +61,10 @@ static unsigned hb_presents, hb_skip_partial, hb_skip_queued, hb_forced;
    spread evenly. stops: no game time advanced; slow/fast: under 0.6 / over 1.5 of the ideal; gaps: a headset refresh
    with no new image (the previous one shown again) */
 static unsigned mo_stop, mo_slow, mo_ok, mo_fast, mo_gap, mo_n;
-static unsigned mo_nointerp, mo_tclamp, mo_tmid;   /* images: no interpolation (the frame itself), t held at 1, t in between */
+static unsigned mo_nointerp, mo_tclamp, mo_tmid;
+static uint64_t and_s_prev, and_s_cur;   /* submit times of the frames prev/cur (game thread) */
+static double and_d;                     /* display time minus the game time shown (ns) */
+static unsigned and_t_new;               /* images interpolated by display/submit times */   /* images: no interpolation (the frame itself), t held at 1, t in between */
 static int and_trace_exec;   /* this game frame's GPU passes are traced (gl_cache.c) */
 /* game frame pacing: intervals between game frames as the game thread finished them (sub) and as the render thread
    finished executing them (exe): count, late (> 1.5 periods), bunched (< 0.5 period), max */
@@ -147,8 +153,9 @@ void render_loop(void)
                                    "(ratio %.2f..%.2f); %u headset refreshes skipped before an image\n",
                                    mo_n, mo_stop, mo_slow, mo_ok, mo_fast, mo_rmin, mo_rmax, mo_gap);
                 host_log("android: motion images last second: %u without interpolation (the game frame itself), %u interpolated but at t = 1 (the next frame "
-                         "not there yet), %u in between\n", mo_nointerp, mo_tclamp, mo_tmid);
-                mo_nointerp = mo_tclamp = mo_tmid = 0;
+                         "not there yet), %u in between; %u timed by the display and the game's frame times (delay %.1f ms)\n", mo_nointerp, mo_tclamp, mo_tmid,
+                         and_t_new, and_d / 1e6);
+                mo_nointerp = mo_tclamp = mo_tmid = 0; and_t_new = 0;
                 mo_n = mo_stop = mo_slow = mo_ok = mo_fast = mo_gap = 0; mo_rmin = 1e9; mo_rmax = 0;
                 xr_timing_log();
                 if (pc_n) host_log("android: game frame pacing last second: %u frames; from the game thread %u late %u bunched (max %.1f ms), "
@@ -284,6 +291,9 @@ void render_loop(void)
             stream_release(prev);
             prev = cur;
             cur = f;
+#ifdef __ANDROID__
+            { extern uint64_t stream_frame_submit_ns(const Frame*); and_s_prev = and_s_cur; and_s_cur = stream_frame_submit_ns(f); }
+#endif
         }
         if (!cur) continue;
 #ifdef __ANDROID__
@@ -311,6 +321,30 @@ void render_loop(void)
             else if (fixed_t > 0.0f) t = shown ? 1.0f : fixed_t;
             else if ((g_config.vsync || xr_active()) && n > 1.5 && fabs(n - floor(n + 0.5)) < 0.1) t = (float)((shown + 1) / floor(n + 0.5));
             else t = (float)((double)(now - arrived) / period);
+#ifdef __ANDROID__
+            /* Android (Quest), VR: t from when the image is seen (the headset's display time) and when the game made the two
+               frames (the game thread's submit times, 33.4 ms apart to the 0.1 ms) - not from when this thread executed
+               the frame and when it draws the image, which both jitter (the motion log: ~28% of the images repeated the game
+               time, ~30% jumped, even at 72 images a second). The game time shown is the display time minus a delay D:
+               the largest (display time - newest frame's submit time) seen lately, so the newest frame is there in time */
+            if (interp && fixed_t <= 0.0f && xr_active() && and_s_prev && and_s_cur > and_s_prev && and_s_cur - and_s_prev < 100000000ull) {
+                int64_t xd = xr_next_display_time_ns();
+                if (xd > 0) {
+                    struct timespec ts;
+                    double x, m, p = (double)(and_s_cur - and_s_prev);
+                    clock_gettime(CLOCK_MONOTONIC, &ts);
+                    x = (double)xd - ((double)ts.tv_sec * 1e9 + (double)ts.tv_nsec) + (double)SDL_GetTicksNS();   /* (display time, SDL clock) */
+                    m = x - (double)and_s_cur;
+                    if (and_d <= 0.0 || m > and_d + 200e6 || m < and_d - 200e6) and_d = m;   /* (first, or after a long stop) */
+                    else if (m > and_d) and_d += (m - and_d) * 0.1;   /* (up in steps: a jump up shows the game going back) */
+                    else and_d -= (and_d - m) * 0.002;                /* (slowly back down when the frames come sooner) */
+                    t = (float)(1.0 - (and_d - m) / p);
+                    if (t < 0.0f) t = 0.0f;
+                    if (t > 1.0f) t = 1.0f;
+                    and_t_new++;
+                }
+            }
+#endif
             /* the next game frame is already waiting (the game runs below its rate): an
                in-between image of this one would only delay it (a whole replay of the scene) */
 #ifdef __ANDROID__
