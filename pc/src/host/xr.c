@@ -768,6 +768,14 @@ static void poll_events(void)
             }
         } else if (ev.type == XR_TYPE_EVENT_DATA_INSTANCE_LOSS_PENDING) {
             lost = 1;
+#ifdef __ANDROID__
+        } else if (ev.type == XR_TYPE_EVENT_DATA_PERF_SETTINGS_EXT) {   /* the runtime saying CPU/GPU are throttled (heat, load) */
+            const XrEventDataPerfSettingsEXT* pe = (const XrEventDataPerfSettingsEXT*)&ev;
+            static const char* const lv[] = { "normal", "warning", "impaired" };
+            host_log("vr: performance %s %s: %s -> %s\n", pe->domain == XR_PERF_SETTINGS_DOMAIN_CPU_EXT ? "CPU" : "GPU",
+                     pe->subDomain == XR_PERF_SETTINGS_SUB_DOMAIN_COMPOSITING_EXT ? "compositing" : pe->subDomain == XR_PERF_SETTINGS_SUB_DOMAIN_RENDERING_EXT ? "rendering" : "thermal",
+                     lv[pe->fromLevel >= 75 ? 2 : pe->fromLevel >= 25 ? 1 : 0], lv[pe->toLevel >= 75 ? 2 : pe->toLevel >= 25 ? 1 : 0]);
+#endif
         } else if (ev.type == XR_TYPE_EVENT_DATA_REFERENCE_SPACE_CHANGE_PENDING) {
             need_center = 1;   /* the user recentred (long press of the headset's system button) */
         }
