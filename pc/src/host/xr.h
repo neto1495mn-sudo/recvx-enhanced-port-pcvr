@@ -64,7 +64,6 @@ int          xr_frame_begin(void);
 int          xr_frame_ready(void);              /* the headset wants an image now (xrWaitFrame on its own thread returned) */
 void         xr_frame_wait_ready(int ms);       /* wait for that up to ms */
 void         xr_timing_log(void);               /* once a second: where the headset images waited */
-int64_t      xr_next_display_time_ns(void);     /* when the image the headset asks for now is shown (OpenXR time), 0 if none */
 #endif
 const VrEye* xr_frame_eye(int e);                 /* after a begin returning 1; poses in local space */
 unsigned int xr_eye_target(int e, int w, int h);  /* acquire eye e's image (w x h); GL texture, 0 on failure */

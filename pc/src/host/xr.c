@@ -729,17 +729,6 @@ void xr_frame_wait_ready(int ms)
     SDL_UnlockMutex(w_mx);
     xt.idle += SDL_GetTicksNS() - t0;
 }
-/* the display time of the image the headset asks for now (xr_frame_ready), 0 if none is waiting (render.c: the game
-   frames interpolated for when the image is seen) */
-int64_t xr_next_display_time_ns(void)
-{
-    int64_t t = 0;
-    if (!w_thread) return 0;
-    SDL_LockMutex(w_mx);
-    if (w_st == 2 && w_res_ok) t = (int64_t)w_fs.predictedDisplayTime;
-    SDL_UnlockMutex(w_mx);
-    return t;
-}
 void xr_timing_log(void)
 {
     unsigned n = xt.n ? xt.n : 1, nw = xt.nw ? xt.nw : 1, na = xt.nacq ? xt.nacq : 1;
