@@ -50,7 +50,11 @@ double g_vr_frame_ref, g_vr_frame_period = 1001.0 / 30000.0 * 1e9;
 #include "xr.h"
 /* Android (Quest) diagnosis: once a second, the headset images presented and the loops that skipped the present - a
    partial frame (download sync point) or an in-between image dropped because the next frame was waiting */
-static unsigned hb_presents, hb_skip_partial, hb_skip_queued;
+static unsigned hb_presents, hb_skip_partial, hb_skip_queued, hb_forced;
+/* the last headset image's time: frames drawn slower than the game's rate (40-55 ms, the message before the lighter)
+   always found the next one waiting and skipped every present - the headset got no image and the controllers were
+   no longer read (both in xr_frame_begin), the game looked frozen. Over 30 ms without one: shown anyway */
+static uint64_t hb_last_present;
 #endif
 
 void render_loop(void)
@@ -86,8 +90,9 @@ void render_loop(void)
             if (now - hb_t >= 1000000000ull) {
                 VrInput in;
                 int have = xr_input(&in);
-                host_log("android: last second %u presents, skipped %u partial, %u queued\n", hb_presents, hb_skip_partial, hb_skip_queued);
-                hb_presents = hb_skip_partial = hb_skip_queued = 0;
+                host_log("android: last second %u presents (%u forced: next frame waiting), skipped %u partial, %u queued\n",
+                         hb_presents, hb_forced, hb_skip_partial, hb_skip_queued);
+                hb_presents = hb_skip_partial = hb_skip_queued = hb_forced = 0;
                 host_log("android: last second %u game frames, %u loops; buttons %x sticks %.1f %.1f / %.1f %.1f triggers %.1f %.1f grips %.1f %.1f%s\n",
                          hb_frames, hb_loops, have ? in.buttons : 0, have ? in.lx : 0, have ? in.ly : 0, have ? in.rx : 0, have ? in.ry : 0,
                          have ? in.ltrig : 0, have ? in.rtrig : 0, have ? in.lgrip : 0, have ? in.rgrip : 0, have ? "" : " (no controller input)");
@@ -176,11 +181,17 @@ void render_loop(void)
             /* the next game frame is already waiting (the game runs below its rate): an
                in-between image of this one would only delay it (a whole replay of the scene) */
             if (t < 1.0f && fixed_t <= 0.0f && stream_queued()) {
-                if (xr_active()) vr_skip++;
 #ifdef __ANDROID__
-                hb_skip_queued++;
+                if (xr_active() && SDL_GetTicksNS() - hb_last_present > 30000000ull) { hb_forced++; t = 1.0f; }   /* the frame itself, no replay */
+                else
 #endif
-                continue;
+                {
+                    if (xr_active()) vr_skip++;
+#ifdef __ANDROID__
+                    hb_skip_queued++;
+#endif
+                    continue;
+                }
             }
             if (xr_active() && ++vr_np >= 900) {   /* vr72 diagnosis (vr_debug_log): headset images skipped because the next game frame was already waiting */
                 extern int g_vr_debug_log; void host_log(const char*, ...);
@@ -194,6 +205,7 @@ void render_loop(void)
             swap = gs_present(cur, t);
 #ifdef __ANDROID__
             hb_presents++;
+            hb_last_present = SDL_GetTicksNS();
 #endif
             shown++;
             if (trace) fprintf(trace, "%llu %.3f %llu %llu\n", (unsigned long long)gs_frame_count(), t, (unsigned long long)(now / 1000),
