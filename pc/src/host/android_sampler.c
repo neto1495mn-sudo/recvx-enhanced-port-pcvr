@@ -27,6 +27,7 @@ void host_log(const char* fmt, ...);
 #define NT 2          /* threads: 0 render, 1 game */
 #define CAP 65536
 static uint32_t* buf[NT];      /* malloc'd: not in the library's data (the PS2 address window) */
+static uint32_t* cbuf[NT];     /* per sample: the first return address into librecvx.so on the stack (who called the driver) */
 static volatile unsigned cnt[NT];
 static __thread int my_slot = -1;
 static int installed;
@@ -39,6 +40,16 @@ static void on_sample(int sig, siginfo_t* si, void* ctx)
     (void)sig; (void)si;
     if (s < 0 || !buf[s] || (i = cnt[s]) >= CAP) return;
     buf[s][i] = (uint32_t)uc->uc_mcontext.arm_pc;
+    {   /* Thumb return addresses (bit 0 set) in the PS2 window, where librecvx.so is loaded: LR first, then the stack */
+        uint32_t lr = (uint32_t)uc->uc_mcontext.arm_lr, c = 0;
+        const uint32_t* sp = (const uint32_t*)(uintptr_t)uc->uc_mcontext.arm_sp;
+        uint32_t pc = (uint32_t)uc->uc_mcontext.arm_pc;
+        if (pc < 0x40000000u || pc >= 0x50000000u) {
+            if ((lr & 1) && lr >= 0x40000000u && lr < 0x50000000u) c = lr;
+            for (int k = 0; !c && k < 64; k++) { uint32_t w = sp[k]; if ((w & 1) && w >= 0x40000000u && w < 0x50000000u) c = w; }
+        }
+        cbuf[s][i] = c;
+    }
     cnt[s] = i + 1;
 }
 
@@ -58,6 +69,7 @@ void and_sampler_thread(int slot)
         installed = 1;
     }
     if (!buf[slot] && !(buf[slot] = malloc(CAP * sizeof(uint32_t)))) return;
+    if (!cbuf[slot] && !(cbuf[slot] = malloc(CAP * sizeof(uint32_t)))) return;
     my_slot = slot;
     sigemptyset(&set);
     sigaddset(&set, SIGPROF);
@@ -216,10 +228,11 @@ void and_sampler_report(void)
 {
     static uint64_t last;
     static uint32_t* copy;
+    static uint32_t* ccopy;
     static Bin* bins;
     uint64_t now = SDL_GetTicksNS();
     if (!installed) return;
-    if (!copy && (!(copy = malloc(CAP * sizeof(uint32_t))) || !(bins = malloc(1024 * sizeof(Bin))))) { installed = 0; return; }
+    if (!copy && (!(copy = malloc(CAP * sizeof(uint32_t))) || !(ccopy = malloc(CAP * sizeof(uint32_t))) || !(bins = malloc(1024 * sizeof(Bin))))) { installed = 0; return; }
     if (!last) { last = now; return; }
     if (now - last < 20000000000ull) return;
     last = now;
@@ -231,11 +244,26 @@ void and_sampler_report(void)
         char line[1024];
         int k = 0;
         memcpy(copy, buf[t], n * sizeof(uint32_t));
+        memcpy(ccopy, cbuf[t], n * sizeof(uint32_t));
         cnt[t] = 0;
         if (!n) continue;
         for (unsigned i = 0; i < n; i++) {
             int idx;
             const char* nm = name_of(copy[i], &idx);
+            if (idx < 0 && ccopy[i]) {   /* outside our code: "driver function <- our function that called it" */
+                static char combos[384][128];
+                static int ncombo;
+                int ci;
+                const char* by = name_of(ccopy[i] & ~1u, &ci);
+                char key[128];
+                if (ci >= 0) {
+                    snprintf(key, sizeof(key), "%s <- %s", nm, by);
+                    int k = 0;
+                    while (k < ncombo && strcmp(combos[k], key)) k++;
+                    if (k == ncombo && ncombo < 384) memcpy(combos[ncombo++], key, sizeof(key));
+                    if (k < ncombo) nm = combos[k];
+                }
+            }
             unsigned b = 0;
             while (b < nb && bins[b].name != nm) b++;
             if (b == nb) { if (nb == 1024) continue; bins[nb].name = nm; bins[nb].n = 0; nb++; }

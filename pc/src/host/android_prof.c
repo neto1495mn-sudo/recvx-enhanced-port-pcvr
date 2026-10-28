@@ -86,7 +86,11 @@ static void gpu_poll(int k)
 
 void and_gpu_begin(int k)
 {
-    if (gpu_ok < 0) gpu_init();
+    if (gpu_ok < 0) {   /* off: reading the queries back each frame can make the driver submit (the profiler: __ioctl 12-33%);
+                           the GPU was measured (~10-30% busy) - RECVX_GPU_TIMERS=1 (env.txt) turns them on again */
+        if (SDL_getenv("RECVX_GPU_TIMERS")) gpu_init();
+        else { gpu_ok = 0; host_log("android: GPU timer queries off\n"); }
+    }
     if (!gpu_ok || q_active[k] >= 0) return;
     gpu_poll(k);
     for (int i = 0; i < NQ; i++)
@@ -147,6 +151,8 @@ void and_prof_report(void)
     SDL_LockSpinlock(&game_lock);
     {
         unsigned n = game.n ? game.n : 1;
+        { void and_glcache_stats(unsigned*, unsigned*); unsigned sk, pa; and_glcache_stats(&sk, &pa);
+          host_log("android: GL state calls last second: %u skipped as repeated, %u passed to the driver\n", sk, pa); }
         host_log("android: cpu/gpu game thread: %u frames, cpu avg %.1f max %.1f ms, wall avg %.1f ms, waiting for the render thread avg %.1f ms; "
                  "process cpu %.0f%% of one core; effect polygons split %u\n",
                  game.n, game.cpu / 1e6 / n, game.cpu_max / 1e6, game.wall / 1e6 / n, game.wait / 1e6 / n,

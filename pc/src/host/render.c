@@ -134,6 +134,7 @@ void render_loop(void)
             uint64_t and_c0 = and_thread_cpu_ns();
             memset(&g_and_stall, 0, sizeof(g_and_stall));
             g_and_stall.draws = and_d0; g_and_stall.prims = and_p0;
+            { extern void and_glcache_reset(void); and_glcache_reset(); }   /* (gl_cache.c: what others changed since is forgotten) */
             and_gpu_begin(AND_EXEC);
 #endif
             gs_frame_begin();
@@ -241,6 +242,7 @@ void render_loop(void)
 #ifdef __ANDROID__
             uint64_t and_pt0 = SDL_GetTicksNS(), and_pc0 = and_thread_cpu_ns();
             unsigned and_pd0 = g_and_stall.draws, and_pp0 = g_and_stall.prims;
+            { extern void and_glcache_reset(void); and_glcache_reset(); }
             and_gpu_begin(AND_PRESENT);
 #endif
             swap = gs_present(cur, t);

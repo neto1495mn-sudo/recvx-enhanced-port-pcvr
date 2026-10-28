@@ -175,6 +175,12 @@ static DrawState batch_state;
 static int batch_valid;
 
 static GLuint prog, vao, vbo, present_prog, present_vao, svao, svbo;
+/* the overlay (ImGui) sets GL state behind the GL state cache's back (Android: gl_cache.c) */
+#ifdef __ANDROID__
+#define overlay_render_c() do { overlay_render(); { extern void and_glcache_reset(void); and_glcache_reset(); } } while (0)
+#else
+#define overlay_render_c() overlay_render()
+#endif
 static GLint u_vr_on, u_vr_src, u_vr_dst, u_vr_m0, u_vr_m1, u_vr_m2, u_vr_m3, u_vr_zab, u_vr_zs, u_vr_hud;
 /* VR re-projection of the draws being replayed for an eye (gs_present_vr); off otherwise */
 static struct { int on; float src[4], dst[4], m[16], zab[2], zs, hud[3]; } vr_u;
@@ -478,6 +484,7 @@ void gs_renderer_init(void)
     glBindVertexArray(vao);
 #ifdef __ANDROID__
     and_persistent_init();
+    { extern void and_glcache_install(void); and_glcache_install(); }   /* gl_cache.c (after the setup above) */
 #endif
 
     g_scale = gs_wanted_scale();
@@ -3561,14 +3568,14 @@ static uint64_t gs_present_vr(const struct Frame* cur, float t)
         vr_fade -= dt / 0.5f;
         if (vr_fade < 0.0f) vr_fade = 0.0f;
         draw_display(final_vw ? img[fin].tex : 0, final_vw ? final_vw : 640, final_vw ? final_vh : 512);   /* mirror */
-        overlay_render();
+        overlay_render_c();
         if (!present_vr_held()) xr_frame_end_none();
     } else if (fr == 1 && (vr_fade = vr_fade + dt / 0.5f > 1.0f ? 1.0f : vr_fade + dt / 0.5f, present_vr_stereo(cur, t))) {   /* (fading back in after one) */
         vr_path = 2;
         glBindFramebuffer(GL_FRAMEBUFFER, 0);   /* vr127: the mirror is the left eye (copied while drawing it); the overlay over it */
         { int ww = 0, wh = 0; SDL_GetWindowSizeInPixels(g_window, &ww, &wh); glViewport(0, 0, ww, wh); }
         clip_distances(0);
-        VR_TM(3, overlay_render());
+        VR_TM(3, overlay_render_c());
         VR_TM(4, xr_frame_end_stereo());
     } else {
         int inbetween = cur && snapshot_valid && t < 1.0f;
@@ -3578,11 +3585,11 @@ static uint64_t gs_present_vr(const struct Frame* cur, float t)
             { uint64_t tr = SDL_GetTicksNS(); stream_replay(cur, t); vr_tb[2] = SDL_GetTicksNS() - tr; }   /* vr161 */
             rt = rt_find(gs.disp_fbp, gs.disp_fbw ? gs.disp_fbw : 10);
             draw_display(rt ? rt->tex : 0, rt ? rt->vw : 640, rt ? rt->vh : 512);
-            overlay_render();
+            overlay_render_c();
             rt_restore();
         } else {
             draw_display(final_vw ? img[fin].tex : 0, final_vw ? final_vw : 640, final_vw ? final_vh : 512);
-            overlay_render();
+            overlay_render_c();
         }
         if (fr == 1) {   /* the game's picture only (no black bars), at its own aspect */
             int vx, vy, vw, vh;
@@ -3687,13 +3694,13 @@ uint64_t gs_present(const struct Frame* cur, float t)
         gt_mark(GT_RD);
         rt = rt_find(gs.disp_fbp, gs.disp_fbw ? gs.disp_fbw : 10);
         draw_display(rt ? rt->tex : 0, rt ? rt->vw : 640, rt ? rt->vh : 512);
-        overlay_render();
+        overlay_render_c();
         if (!interp_dumped) { dump_frame(1); interp_dumped = 1; }
         gt_mark(GT_DD);
         rt_restore();
     } else {
         draw_display(final_vw ? img[fin].tex : 0, final_vw ? final_vw : 640, final_vw ? final_vh : 512);
-        overlay_render();
+        overlay_render_c();
         if (!final_dumped) { dump_frame(0); final_dumped = 1; }
         dump_window();
     }
