@@ -1007,7 +1007,15 @@ void xr_frame_end_quad_rect(int x, int y, int w, int h)
     const XrCompositionLayerBaseHeader* layers[1];
     GLuint tex;
     if (!in_frame) return;
+#ifdef __ANDROID__
+    /* Android (Quest): the cinema screen (menus, inventory, scenes) at half the window's size - the window is the panel's
+       3664x1920: the copy and the compositor's sampling of it kept the swapchain busy (the log: 17-19 ms waiting to
+       acquire it, 45 images a second) */
+    int qw = w > 2048 ? (w + 1) / 2 : w, qh = w > 2048 ? (h + 1) / 2 : h;
+    if (!fs.shouldRender || w <= 0 || h <= 0 || !(tex = chain_acquire(&quad_chain, qw, qh))) { xr_frame_end_none(); return; }
+#else
     if (!fs.shouldRender || w <= 0 || h <= 0 || !(tex = chain_acquire(&quad_chain, w, h))) { xr_frame_end_none(); return; }
+#endif
 #ifndef __ANDROID__
     glDisable(GL_FRAMEBUFFER_SRGB);
 #endif
@@ -1015,7 +1023,11 @@ void xr_frame_end_quad_rect(int x, int y, int w, int h)
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, blit_fbo);
     glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
     glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);   /* the window's back buffer, as just drawn */
+#ifdef __ANDROID__
+    glBlitFramebuffer(x, y, x + w, y + h, 0, 0, qw, qh, GL_COLOR_BUFFER_BIT, qw != w ? GL_LINEAR : GL_NEAREST);
+#else
     glBlitFramebuffer(x, y, x + w, y + h, 0, 0, w, h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+#endif
     glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     chain_release(&quad_chain);
