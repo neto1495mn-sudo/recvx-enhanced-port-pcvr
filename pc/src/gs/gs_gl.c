@@ -45,6 +45,11 @@ static int and_fov_next;
    are not drawn in the eyes' replays - what a replay draws there is thrown away (rt_restore) */
 static uint8_t and_rt_drawn[16], and_rt_used[16], and_rt_skip[16];
 static unsigned and_rt_skipped;
+/* and in the executed frames too, once a target has been drawn and never read for 150 frames in a row (5 s): the first
+   read draws it again from the next frame on (that read sees it as it was) */
+static uint16_t and_rt_unread[16];
+static uint32_t and_rt_unread_fbp[16];
+static unsigned and_rt_exec_skipped;
 #endif
 typedef struct {
     int used;
@@ -1513,6 +1518,7 @@ static void rt_touch(const RenderTarget* rt)
 {
 #ifdef __ANDROID__
     if (!gs_replaying && rt && and_rt_drawn[rt - rts]) and_rt_used[rt - rts] = 1;
+    if (!gs_replaying && rt) and_rt_unread[rt - rts] = 0;   /* (read: drawn in the executed frames again) */
 #endif
     if (!gs_replaying && rt && first[rt - rts].how == FIRST_NONE) first[rt - rts].how = FIRST_READ;
 }
@@ -1679,7 +1685,12 @@ void gs_flush(void)
 #endif
     cur_rt = rt_get(fbp, fbw, fpsm);
 #ifdef __ANDROID__
-    if (!gs_replaying) and_rt_drawn[cur_rt - rts] = 1;
+    if (!gs_replaying) {
+        int ci = (int)(cur_rt - rts);
+        if (and_rt_unread_fbp[ci] != cur_rt->fbp) { and_rt_unread_fbp[ci] = cur_rt->fbp; and_rt_unread[ci] = 0; }   /* (another target in the slot) */
+        and_rt_drawn[ci] = 1;
+        if (and_rt_unread[ci] >= 150 && ci != disp_end) { and_rt_exec_skipped++; vcount = 0; nsruns = 0; return; }
+    }
     else if (vr_u.on && and_rt_skip[cur_rt - rts]) { and_rt_skipped++; vcount = 0; nsruns = 0; return; }   /* (an eye: never read) */
 #endif
 
@@ -2838,9 +2849,12 @@ void gs_frame_executed(int interpolate)
         b[0] = 0;
         for (int i = 0; i < MAX_RT; i++) {
             and_rt_skip[i] = and_rt_drawn[i] && !and_rt_used[i] && i != disp_end && rts[i].used;
+            if (and_rt_skip[i]) { if (and_rt_unread[i] < 1000) and_rt_unread[i]++; }
+            else if (and_rt_used[i]) and_rt_unread[i] = 0;
             if (and_rt_skip[i] && o < 140) o += SDL_snprintf(b + o, sizeof(b) - (size_t)o, " fbp %u", rts[i].fbp);
         }
-        if ((nlog++ % 900) == 30) host_log("android: targets drawn and never read this frame (not drawn in the eyes):%s; eye draws skipped so far %u\n", o ? b : " none", and_rt_skipped);
+        if ((nlog++ % 900) == 30) host_log("android: targets drawn and never read this frame (not drawn in the eyes):%s; eye draws skipped so far %u, "
+                                          "game frame draws skipped (unread 5 s) %u\n", o ? b : " none", and_rt_skipped, and_rt_exec_skipped);
     }
 #endif
     snapshot_valid = 0;
