@@ -40,6 +40,11 @@ static int psm_is16(uint32_t psm) { return psm == PSMCT16 || psm == PSMCT16S || 
 #ifdef __ANDROID__
 static void and_foveate(GLuint tex);   /* (foveated render targets, below) */
 static int and_fov_next;
+/* targets drawn in the executed frame and read after (sampled, copied, read back) in it; the ones drawn and never read
+   nor shown (the shadow target fbp 380: a pass of its own in each eye, and the scene's target loaded again after it)
+   are not drawn in the eyes' replays - what a replay draws there is thrown away (rt_restore) */
+static uint8_t and_rt_drawn[16], and_rt_used[16], and_rt_skip[16];
+static unsigned and_rt_skipped;
 #endif
 typedef struct {
     int used;
@@ -1506,6 +1511,9 @@ static void shadow_ensure(int i)
 /* executed frame: rt is read (sampled, reloaded, captured) */
 static void rt_touch(const RenderTarget* rt)
 {
+#ifdef __ANDROID__
+    if (!gs_replaying && rt && and_rt_drawn[rt - rts]) and_rt_used[rt - rts] = 1;
+#endif
     if (!gs_replaying && rt && first[rt - rts].how == FIRST_NONE) first[rt - rts].how = FIRST_READ;
 }
 
@@ -1670,6 +1678,10 @@ void gs_flush(void)
     g_and_sub = 1;   /* (profiler stage: targets) */
 #endif
     cur_rt = rt_get(fbp, fbw, fpsm);
+#ifdef __ANDROID__
+    if (!gs_replaying) and_rt_drawn[cur_rt - rts] = 1;
+    else if (vr_u.on && and_rt_skip[cur_rt - rts]) { and_rt_skipped++; vcount = 0; nsruns = 0; return; }   /* (an eye: never read) */
+#endif
 
     if (gs_replaying) {   /* never from GS memory: what the executed frame loaded here */
         cur_rt->pending_reload = 0;
@@ -2778,6 +2790,9 @@ void gs_frame_begin(void)
     nreloads = 0;
     mv_tbp = UINT32_MAX;   /* a movie frame binds it again (EV_MOVIE) */
     snapshot_valid = 0;   /* no replays of the previous frame while this one is half executed (download) */
+#ifdef __ANDROID__
+    memset(and_rt_drawn, 0, sizeof(and_rt_drawn)); memset(and_rt_used, 0, sizeof(and_rt_used));
+#endif
     memset(first, 0, sizeof(first));
     gs_set_scale(gs_wanted_scale());
     gs_update_widescreen();
@@ -2815,6 +2830,19 @@ void gs_frame_executed(int interpolate)
     frame_no++;
     rt = rt_find(gs.disp_fbp, gs.disp_fbw ? gs.disp_fbw : 10);
     disp_end = rt ? (int)(rt - rts) : -1;
+#ifdef __ANDROID__
+    {
+        static unsigned nlog;
+        char b[160];
+        int o = 0;
+        b[0] = 0;
+        for (int i = 0; i < MAX_RT; i++) {
+            and_rt_skip[i] = and_rt_drawn[i] && !and_rt_used[i] && i != disp_end && rts[i].used;
+            if (and_rt_skip[i] && o < 140) o += SDL_snprintf(b + o, sizeof(b) - (size_t)o, " fbp %u", rts[i].fbp);
+        }
+        if ((nlog++ % 900) == 30) host_log("android: targets drawn and never read this frame (not drawn in the eyes):%s; eye draws skipped so far %u\n", o ? b : " none", and_rt_skipped);
+    }
+#endif
     snapshot_valid = 0;
     final_dumped = interp_dumped = 0;
     if (rt) {
