@@ -55,6 +55,13 @@ int pc_native_3d(void)
 {
     static int env = -2;
     if (env == -2) env = getenv("RECVX_NATIVE3D") ? atoi(getenv("RECVX_NATIVE3D")) != 0 : -1;
+#ifdef __ANDROID__
+    {   /* Android (Quest) diagnosis: the menu's "Native 3D renderer" switched (missing arms / glass test) */
+        static int last = -1;
+        int now = env >= 0 ? env : g_config.native_3d;
+        if (now != last) { host_log("android: native 3D renderer %s\n", now ? "ON" : "OFF"); last = now; }
+    }
+#endif
     return env >= 0 ? env : g_config.native_3d;
 }
 
