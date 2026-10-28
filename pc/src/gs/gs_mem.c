@@ -17,17 +17,34 @@ static uint32_t wgen = 1, page_wgen[512];   /* write generation per 8 KB page (g
    threads store their own blocks' bytes, no shared words) */
 static uint64_t blk_hash[GS_MEM_SIZE / 256];
 static uint8_t blk_clean[GS_MEM_SIZE / 256];
+#if defined(__ARM_NEON) && !defined(RECVX_HASH_SCALAR)
+#include <arm_neon.h>
+#endif
 static inline uint64_t hash256(const uint8_t* p8, uint32_t b)
 {
-    const uint32_t* w = (const uint32_t*)(const void*)p8;
     uint32_t a = 0x9E3779B1u ^ b, c = 0x85EBCA77u, d = 0xC2B2AE3Du, e = 0x27D4EB2Fu ^ (b * 0x01000193u);
 #define HROT(x, r) (((x) << (r)) | ((x) >> (32 - (r))))
+#if defined(__ARM_NEON) && !defined(RECVX_HASH_SCALAR)
+    {   /* the 4 lanes in one NEON register: the same values as the scalar loop below */
+        static const uint32_t mk[4] = { 0x9E3779B1u, 0x85EBCA77u, 0xC2B2AE3Du, 0x27D4EB2Fu };
+        uint32_t st[4] = { a, c, d, e };
+        uint32x4_t v = vld1q_u32(st), m = vld1q_u32(mk);
+        for (int i = 0; i < 256; i += 16) {
+            v = vmulq_u32(veorq_u32(v, vreinterpretq_u32_u8(vld1q_u8(p8 + i))), m);
+            v = vorrq_u32(vshlq_n_u32(v, 13), vshrq_n_u32(v, 19));
+        }
+        vst1q_u32(st, v);
+        a = st[0]; c = st[1]; d = st[2]; e = st[3];
+    }
+#else
+    const uint32_t* w = (const uint32_t*)(const void*)p8;
     for (int i = 0; i < 64; i += 4) {
         uint32_t w0, w1, w2, w3;
         memcpy(&w0, &w[i], 4); memcpy(&w1, &w[i + 1], 4); memcpy(&w2, &w[i + 2], 4); memcpy(&w3, &w[i + 3], 4);
         a = HROT((a ^ w0) * 0x9E3779B1u, 13); c = HROT((c ^ w1) * 0x85EBCA77u, 13);
         d = HROT((d ^ w2) * 0xC2B2AE3Du, 13); e = HROT((e ^ w3) * 0x27D4EB2Fu, 13);
     }
+#endif
     a ^= HROT(d, 7) * 0x9E3779B1u; c ^= HROT(e, 11) * 0x85EBCA77u;
 #undef HROT
     a ^= a >> 15; a *= 0x2C1B3C6Du; a ^= a >> 12;
