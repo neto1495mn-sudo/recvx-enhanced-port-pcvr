@@ -62,7 +62,7 @@ static unsigned and_x_frames, and_x_free, and_x_tex, and_x_mem, and_x_cap;
 int g_and_exec_nodraw;
 static int and_nodraw_block;
 static unsigned and_nodraw_frames, and_nodraw_draws;
-static int and_opt1 = 1;   /* on: with it the holes where grates/glass are missing show (coloured flashes) - easier to find what the eyes leave out */
+static int and_opt1 = 0;   /* off: with it the game frames ran in bunches (the log: 443 late and 1265 bunched in 188 s, against 25 and 184 without) */
 int gs_exec_nodraw_ok(void) { return and_opt1 && !and_nodraw_block; }
 #endif
 typedef struct {
