@@ -61,6 +61,7 @@ AndStall g_and_stall;
 /* render.c: this game frame's drawing is timed part by part (1 in 30) - reading the clock is a kernel call on the
    Quest: ~13 reads a flush were 12-13% of the render thread */
 int g_and_time_frame;
+extern volatile int g_and_sub;   /* android_sampler.c: the stage of gs_flush_ a profiler sample falls in */
 typedef void* (GLAPIENTRY *PFN_and_map)(GLenum target, GLintptr offset, GLsizeiptr length, GLbitfield access);   /* GLES 3: glMapBufferRange */
 typedef GLboolean (GLAPIENTRY *PFN_and_unmap)(GLenum target);
 /* Android (Quest): the vertex stream in a buffer mapped once for good (GL_EXT_buffer_storage, persistent + coherent) -
@@ -1450,9 +1451,10 @@ static void gs_flush_(void);
 void gs_flush(void)   /* Android diagnosis: the flushes' wall time */
 {
     uint64_t t0;
-    if (!g_and_time_frame) { gs_flush_(); return; }
+    if (!g_and_time_frame) { gs_flush_(); g_and_sub = 0; return; }
     t0 = SDL_GetTicksNS();
     gs_flush_();
+    g_and_sub = 0;
     g_and_stall.flush_ns += SDL_GetTicksNS() - t0;
 }
 static void gs_flush_(void)
@@ -1474,6 +1476,9 @@ void gs_flush(void)
 
     fbp = st->ctx.frame & 0x1FF; fbw = (st->ctx.frame >> 16) & 0x3F; fpsm = (st->ctx.frame >> 24) & 0x3F;
     fbmsk = (uint32_t)(st->ctx.frame >> 32);
+#ifdef __ANDROID__
+    g_and_sub = 1;   /* (profiler stage: targets) */
+#endif
     cur_rt = rt_get(fbp, fbw, fpsm);
 
     if (gs_replaying) {   /* never from GS memory: what the executed frame loaded here */
@@ -1495,6 +1500,9 @@ void gs_flush(void)
     }
 #ifdef __ANDROID__
     if (g_and_time_frame) g_and_stall.fbo_ns += SDL_GetTicksNS() - and_f0;
+#ifdef __ANDROID__
+    g_and_sub = 2;   /* (profiler stage: scissor/box) */
+#endif
 #endif
     glViewport(0, 0, cur_rt->pw, cur_rt->ph);
     {
@@ -1533,6 +1541,9 @@ void gs_flush(void)
         glScissor((GLint)((x0 + g_margin_x) * g_scale), (GLint)(y0 * g_scale),
                   (GLsizei)((x1 - x0 + 1) * g_scale), (GLsizei)((y1 - y0 + 1) * g_scale));
     }
+#ifdef __ANDROID__
+    g_and_sub = 3;   /* (profiler stage: program, uniforms) */
+#endif
     glUseProgram(prog);
     clip_distances(1);
     uni2f(u_rt_size, (float)cur_rt->vw, (float)cur_rt->vh);
@@ -1555,6 +1566,9 @@ void gs_flush(void)
         uni1f(u_zscale, 1.0f / zmax);
     }
 
+#ifdef __ANDROID__
+    g_and_sub = 4;   /* (profiler stage: depth, mask, blend) */
+#endif
     /* depth */
     test = st->ctx.test;
     {
@@ -1572,6 +1586,9 @@ void gs_flush(void)
     uni1i(u_premul, premul);
     { extern int g_vr_debug_cores; uni1i(u_dbg, g_vr_debug_cores && vr_u.on); }
 
+#ifdef __ANDROID__
+    g_and_sub = 5;   /* (profiler stage: texture) */
+#endif
     /* texture */
     tme = (st->prim >> 4) & 1;
     {
@@ -1658,6 +1675,9 @@ void gs_flush(void)
     uni1i(u_atst, (int)((test >> 1) & 7));
     uni1f(u_aref, (float)((test >> 4) & 0xFF));
 
+#ifdef __ANDROID__
+    g_and_sub = 6;   /* (profiler stage: vertex upload) */
+#endif
     glBindVertexArray(vao);
     glBindBuffer(GL_ARRAY_BUFFER, vbo);
 #ifdef __ANDROID__
@@ -1753,6 +1773,9 @@ void gs_flush(void)
 and_uploaded:
     if (g_and_time_frame) g_and_stall.upload_ns += SDL_GetTicksNS() - and_u0;
 #endif
+#ifdef __ANDROID__
+    g_and_sub = 7;   /* (profiler stage: draw) */
+#endif
     afail = (test >> 12) & 3;
     if (two_pass(test)) {
         /* alpha-test fail still writes some buffers: second pass for failing pixels */
@@ -1767,6 +1790,9 @@ and_uploaded:
     }
     vcount = 0;
     nsruns = 0;
+#ifdef __ANDROID__
+    g_and_sub = 0;
+#endif
 }
 
 /* ---------------- primitive intake ---------------- */

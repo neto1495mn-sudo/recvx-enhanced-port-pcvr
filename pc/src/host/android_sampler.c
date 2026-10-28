@@ -29,6 +29,7 @@ void host_log(const char* fmt, ...);
 static uint32_t* buf[NT];      /* malloc'd: not in the library's data (the PS2 address window) */
 static uint8_t* pbuf[NT];      /* per sample: the render thread's phase (g_and_phase) */
 volatile int g_and_phase;      /* render.c: 1 executing a game frame, 2 a headset image, 0 the rest */
+volatile int g_and_sub;        /* gs_gl.c: the stage of gs_flush_ (1..7), 0 outside it */
 static uint32_t* cbuf[NT];     /* per sample: the first return address into librecvx.so on the stack (who called the driver) */
 static volatile unsigned cnt[NT];
 static __thread int my_slot = -1;
@@ -52,7 +53,7 @@ static void on_sample(int sig, siginfo_t* si, void* ctx)
         }
         cbuf[s][i] = c;
     }
-    pbuf[s][i] = (uint8_t)g_and_phase;
+    pbuf[s][i] = (uint8_t)(g_and_phase | (g_and_sub << 2));
     cnt[s] = i + 1;
 }
 
@@ -259,7 +260,7 @@ void and_sampler_report(void)
         for (unsigned i = 0; i < n; i++) {
             int idx;
             const char* nm;
-            if (ph && pcopy[i] != ph) continue;
+            if (ph && (pcopy[i] & 3) != ph) continue;
             nph++;
             nm = name_of(copy[i], &idx);
             if (idx < 0 && ccopy[i]) {   /* outside our code: "driver function <- our function that called it" */
@@ -282,6 +283,16 @@ void and_sampler_report(void)
             bins[b].n++;
         }
         if (!nph) continue;
+        if (ph) {   /* the flush stages of this phase (gs_gl.c g_and_sub), the driver time they caused included */
+            static const char* const st[8] = { "outside gs_flush", "targets", "scissor/box", "program+uniforms", "depth/mask/blend",
+                                               "texture", "vertex upload", "draw calls" };
+            unsigned cs[8] = { 0 };
+            char sl[512];
+            int q = 0;
+            for (unsigned i = 0; i < n; i++) if ((pcopy[i] & 3) == ph) cs[(pcopy[i] >> 2) & 7]++;
+            for (int k = 0; k < 8; k++) q += snprintf(sl + q, sizeof(sl) - q, " %s %.0f%%;", st[k], 100.0 * cs[k] / nph);
+            host_log("android: profile render thread, %s by flush stage:%s\n", ph == 1 ? "executing game frames" : "headset images", sl);
+        }
         qsort(bins, nb, sizeof(Bin), by_n);
         if (!ph) host_log("android: profile %s thread, %u ms of CPU in 20 s (%.0f%% of a core):\n", t ? "game" : "render", n, n / 200.0);
         else host_log("android: profile render thread, %s: %u ms (%.0f%% of its samples):\n", ph == 1 ? "executing game frames" : "headset images", nph, 100.0 * nph / n);

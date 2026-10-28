@@ -228,6 +228,128 @@ static inline void write_tracked(int psm, uint32_t bp, uint32_t bw, uint32_t x, 
     }
 }
 
+#ifdef __ANDROID__
+/* Android (Quest): whole block rows of an upload chunk, in a function so that two threads can share them (the uploads
+   were ~30% of a game frame's execution on the render thread; the Quest has idle cores). Each row of blocks writes its
+   own blocks; pages and the changed flag are kept per job and merged after. */
+#include <pthread.h>
+#include <semaphore.h>
+typedef struct { int fmt; const uint8_t* src; uint32_t rrw, dbp, bw, dsax, y0, nr; const uint8_t (*bt32)[8]; const uint8_t (*bt16)[4];
+                 uint64_t pages[512 / 64]; int changed; } UpRows;
+#define JMARK(j_, a_) do { uint32_t pg_ = ((a_) >> 13) & 511; (j_)->pages[pg_ >> 6] |= 1ull << (pg_ & 63); } while (0)
+static void up_rows(UpRows* j)
+{
+    const uint32_t rrw = j->rrw, bw = j->bw;
+    for (uint32_t r = 0; r < j->nr; r++) {
+        if (j->fmt == 0) {   /* CT32/Z32: 8x8 blocks */
+            const uint8_t* s = j->src + (size_t)r * rrw * 32;
+            uint32_t y0 = j->y0 + r * 8;
+            for (uint32_t bx = 0; bx < rrw; bx += 8) {
+                uint32_t blk[64], a = addr32(j->bt32, j->dbp, bw, j->dsax + bx, y0);
+                for (uint32_t yy = 0; yy < 8; yy++)
+                    for (uint32_t xx = 0; xx < 8; xx++) memcpy(&blk[columnTable32[yy][xx]], s + ((size_t)yy * rrw + bx + xx) * 4, 4);
+                if (memcmp(gs_memp + a, blk, 256)) { memcpy(gs_memp + a, blk, 256); j->changed = 1; }
+                JMARK(j, a);
+            }
+        } else if (j->fmt == 1) {   /* CT16 family: 16x8 blocks */
+            const uint8_t* s = j->src + (size_t)r * rrw * 16;
+            uint32_t y0 = j->y0 + r * 8;
+            for (uint32_t bx = 0; bx < rrw; bx += 16) {
+                uint16_t blk[128];
+                uint32_t a = addr16(j->bt16, j->dbp, bw, j->dsax + bx, y0) - columnTable16[0][0] * 2;
+                for (uint32_t yy = 0; yy < 8; yy++)
+                    for (uint32_t xx = 0; xx < 16; xx++) memcpy(&blk[columnTable16[yy][xx]], s + ((size_t)yy * rrw + bx + xx) * 2, 2);
+                if (memcmp(gs_memp + a, blk, 256)) { memcpy(gs_memp + a, blk, 256); j->changed = 1; }
+                JMARK(j, a);
+            }
+        } else if (j->fmt == 2) {   /* T8: 16x16 blocks */
+            const uint8_t* s = j->src + (size_t)r * rrw * 16;
+            uint32_t y0 = j->y0 + r * 16;
+            for (uint32_t bx = 0; bx < rrw; bx += 16) {
+                uint8_t blk[256];
+                uint32_t a = addr8(j->dbp, bw, j->dsax + bx, y0) - columnTable8[0][0];
+                for (uint32_t yy = 0; yy < 16; yy++) {
+                    const uint8_t* row = s + (size_t)yy * rrw + bx;
+                    for (uint32_t xx = 0; xx < 16; xx++) blk[columnTable8[yy][xx]] = row[xx];
+                }
+                if (memcmp(gs_memp + a, blk, 256)) { memcpy(gs_memp + a, blk, 256); j->changed = 1; }
+                JMARK(j, a);
+            }
+        } else {   /* T4: 32x16 blocks */
+            const uint8_t* s = j->src + (size_t)r * rrw * 8;
+            uint32_t y0 = j->y0 + r * 16;
+            for (uint32_t bx = 0; bx < rrw; bx += 32) {
+                uint8_t blk[256];
+                uint32_t a = (addr4(j->dbp, bw, j->dsax + bx, y0) - columnTable4[0][0]) >> 1;
+                memset(blk, 0, sizeof(blk));
+                for (uint32_t yy = 0; yy < 16; yy++) {
+                    const uint8_t* row = s + ((size_t)yy * rrw + bx) / 2;
+                    for (uint32_t xx = 0; xx < 32; xx++) {
+                        uint32_t o = columnTable4[yy][xx], v = (row[xx >> 1] >> ((xx & 1) * 4)) & 15;
+                        blk[o >> 1] |= (uint8_t)(v << ((o & 1) * 4));
+                    }
+                }
+                if (memcmp(gs_memp + a, blk, 256)) { memcpy(gs_memp + a, blk, 256); j->changed = 1; }
+                JMARK(j, a);
+            }
+        }
+    }
+}
+/* the helper thread: runs the second half of a big chunk's rows while the render thread does the first */
+static pthread_t up_thr;
+static sem_t up_go, up_done;
+static UpRows* volatile up_job;
+static int up_state;   /* 0 not started, 1 running, -1 none (could not start) */
+static void* up_main(void* ud)
+{
+    (void)ud;
+    for (;;) { sem_wait(&up_go); up_rows(up_job); sem_post(&up_done); }
+    return NULL;
+}
+static int up_helper(void)
+{
+    if (!up_state) {
+        up_state = sem_init(&up_go, 0, 0) == 0 && sem_init(&up_done, 0, 0) == 0 && pthread_create(&up_thr, NULL, up_main, NULL) == 0 ? 1 : -1;
+    }
+    return up_state > 0;
+}
+/* the chunk's whole block rows from the current position: 1 if it handled some */
+static int up_block_rows(const uint8_t* src, uint32_t bytes, uint32_t* pi, int dpsm, uint32_t dbp, uint32_t bw, uint32_t dsax, uint32_t dsay, uint32_t rrw, uint32_t rrh)
+{
+    int fmt = dpsm == PSMCT32 || dpsm == PSMZ32 ? 0 : dpsm == PSMCT16 || dpsm == PSMCT16S || dpsm == PSMZ16 || dpsm == PSMZ16S ? 1 :
+              dpsm == PSMT8 ? 2 : dpsm == PSMT4 ? 3 : -1;
+    uint32_t bwid = fmt == 0 ? 8 : fmt == 3 ? 32 : 16, bh = fmt <= 1 ? 8 : 16, rowbytes, n, i = *pi;
+    if (fmt < 0 || (dsax & (bwid - 1)) || (rrw & (bwid - 1)) || gs.xfer_x || (fmt == 3 && gs.xfer_pending_bits) || ((dsay + gs.xfer_y) & (bh - 1))) return 0;
+    rowbytes = fmt == 0 ? rrw * 32 : fmt == 3 ? rrw * 8 : rrw * 16;
+    n = (rrh - gs.xfer_y) / bh;
+    if ((bytes - i) / rowbytes < n) n = (bytes - i) / rowbytes;
+    if (!n) return 0;
+    {
+        UpRows a, b;
+        memset(&a, 0, sizeof(a));
+        a.fmt = fmt; a.src = src + i; a.rrw = rrw; a.dbp = dbp; a.bw = bw; a.dsax = dsax; a.y0 = dsay + gs.xfer_y; a.nr = n;
+        a.bt32 = dpsm == PSMZ32 ? blockTableZ32 : blockTable32; a.bt16 = fmt == 1 ? bt16(dpsm) : blockTable16;
+        if (n >= 2 && (size_t)n * rowbytes >= 32768 && up_helper()) {
+            uint32_t half = n / 2;
+            b = a;
+            a.nr = half;
+            b.src += (size_t)half * rowbytes; b.y0 += half * bh; b.nr = n - half;
+            up_job = &b;
+            sem_post(&up_go);
+            up_rows(&a);
+            sem_wait(&up_done);
+            for (int w = 0; w < 8; w++) a.pages[w] |= b.pages[w];
+            a.changed |= b.changed;
+        } else up_rows(&a);
+        for (int w = 0; w < 8; w++) { xfer_pages[w] |= a.pages[w]; chunk_pages[w] |= a.pages[w]; }
+        if (a.changed) xfer_changed = CHUNK_CHANGED;
+    }
+    *pi = i + n * rowbytes;
+    gs.xfer_y += n * bh;
+    return 1;
+}
+#endif
+
 static void xfer_finish(void)
 {
     gs.xfer_active = 0;
@@ -302,6 +424,9 @@ void gs_exec_upload(const uint8_t* src, uint32_t bytes)
         uint32_t bw = dbw ? dbw : 1;
 #define MARK(a_) do { uint32_t pg_ = (a_) >> 13; xfer_pages[pg_ >> 6] |= 1ull << (pg_ & 63); CHUNK_PAGE(pg_); } while (0)
 #define ADVANCE() do { if (++gs.xfer_x >= rrw) { gs.xfer_x = 0; gs.xfer_y++; } } while (0)
+#ifdef __ANDROID__
+        up_block_rows(src, bytes, &i, (int)dpsm, dbp, bw, dsax, dsay, rrw, rrh);   /* (whole block rows, maybe on two threads) */
+#endif
         if ((dpsm == PSMCT32 || dpsm == PSMZ32) && !(dsax & 7) && !(rrw & 7)) {
             /* whole 8x8 blocks: assemble each 256-byte block in swizzled order, compare and
                store it at once (texture streaming uploads megabytes per frame) */
