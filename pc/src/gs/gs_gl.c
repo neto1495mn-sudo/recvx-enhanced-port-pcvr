@@ -96,33 +96,25 @@ static void and_text(int x, int y, int px, const char* str, float r, float g, fl
                 if (font[f - chars] >> (14 - rr * 3 - c) & 1) { glScissor(cx + c * px, y + (4 - rr) * px, px, px); glClear(GL_COLOR_BUFFER_BIT); }
     }
 }
-static void and_fps_draw(int x, int y, int h)
+static void and_fps_draw(int x, int y, int h)   /* (the CPU/GPU lines were taken out again: the owner felt them cost) */
 {
-    extern volatile float g_and_hud[6];   /* android_prof.c */
-    int px = h / 170 > 2 ? h / 170 : 2, lh = 7 * px;
-    char l0[16], l1[16], l2[32], l3[32];
+    int px = h / 170 > 2 ? h / 170 : 2;
+    char l0[16], l1[16];
     int hv = g_and_fps_headset, gv = g_and_fps_game, n0, n1;
     snprintf(l0, sizeof(l0), "%d", hv);
     snprintf(l1, sizeof(l1), "%d", gv);
-    snprintf(l2, sizeof(l2), "C %.0f%% %.1f %.1f", g_and_hud[0], g_and_hud[1], g_and_hud[2]);
-    snprintf(l3, sizeof(l3), "G %.0f%% %.1f %.1f", g_and_hud[3], g_and_hud[4], g_and_hud[5]);
     n0 = (int)strlen(l0); n1 = (int)strlen(l1);
     glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
     glEnable(GL_SCISSOR_TEST);
-    {   /* the background: the widest line */
-        int wl = (int)(strlen(l2) > strlen(l3) ? strlen(l2) : strlen(l3)), w0 = n0 + 1 + n1;
-        glScissor(x - px, y - 2 * lh - px, (wl > w0 ? wl : w0) * 4 * px + px, 3 * lh);
-        glClearColor(0, 0, 0, 1);
-        glClear(GL_COLOR_BUFFER_BIT);
-    }
+    glScissor(x - px, y - px, (n0 + 1 + n1) * 4 * px + px, 7 * px);
+    glClearColor(0, 0, 0, 1);
+    glClear(GL_COLOR_BUFFER_BIT);
     {   /* frame rates: green full, yellow some lost, red slow */
         int good = hv >= 65, ok = hv >= 45;
         and_text(x, y, px, l0, good ? 0.2f : 1.0f, good || ok ? 1.0f : 0.25f, 0.2f);
         good = gv >= 28; ok = gv >= 20;
         and_text(x + (n0 + 1) * 4 * px, y, px, l1, good ? 0.2f : 1.0f, good || ok ? 1.0f : 0.25f, 0.2f);
     }
-    and_text(x, y - lh, px, l2, 0.85f, 0.85f, 1.0f);   /* CPU: % of one core, ms a game frame, ms a headset image */
-    and_text(x, y - 2 * lh, px, l3, 1.0f, 0.85f, 0.6f);   /* GPU: busy %, ms a game frame, ms a headset image */
     glDisable(GL_SCISSOR_TEST);
 }
 #endif

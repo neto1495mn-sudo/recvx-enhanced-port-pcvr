@@ -87,9 +87,11 @@ static void gpu_poll(int k)
 
 void and_gpu_begin(int k)
 {
-    static unsigned every[AND_N];
-    if (gpu_ok < 0) gpu_init();
-    if ((every[k]++ & 7) != 0) return;   /* 1 in 8 measured: reading queries back each frame can make the driver submit */
+    if (gpu_ok < 0) {   /* off (the owner: the on-screen CPU/GPU cost; reading queries back can make the driver submit) -
+                           RECVX_GPU_TIMERS=1 (env.txt) turns them on */
+        if (SDL_getenv("RECVX_GPU_TIMERS")) gpu_init();
+        else { gpu_ok = 0; host_log("android: GPU timer queries off\n"); }
+    }
     if (!gpu_ok || q_active[k] >= 0) return;
     gpu_poll(k);
     for (int i = 0; i < NQ; i++)

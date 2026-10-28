@@ -329,7 +329,7 @@ static int up_block_rows(const uint8_t* src, uint32_t bytes, uint32_t* pi, int d
         memset(&a, 0, sizeof(a));
         a.fmt = fmt; a.src = src + i; a.rrw = rrw; a.dbp = dbp; a.bw = bw; a.dsax = dsax; a.y0 = dsay + gs.xfer_y; a.nr = n;
         a.bt32 = dpsm == PSMZ32 ? blockTableZ32 : blockTable32; a.bt16 = fmt == 1 ? bt16(dpsm) : blockTable16;
-        if (n >= 2 && (size_t)n * rowbytes >= 32768 && up_helper()) {
+        if (n >= 2 && (size_t)n * rowbytes >= 131072 && up_helper()) {   /* (128 KB: waking the helper is a kernel call each way - 6% at 32 KB) */
             uint32_t half = n / 2;
             b = a;
             a.nr = half;
