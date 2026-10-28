@@ -1877,7 +1877,10 @@ void gs_flush(void)
         else {
             for (int k = 0; k < 6; k++) {
                 const GlVertex* v = &vbuf[k];
-                if (v->w != 1.0f || fabsf(v->s + and_ox - v->x) > 0.01f || fabsf(v->t + and_oy - v->y) > 0.01f) { why = 6; break; }
+                /* (texel for pixel, or half a texel on: PS2_swap's sprite has s = x + 0.5 - at 2x that samples the next
+                   pixel's centre, a one-pixel shift of the 1832x1024 picture, not a blend) */
+                float dsx = v->s + and_ox - v->x, dty = v->t + and_oy - v->y;
+                if (v->w != 1.0f || (fabsf(dsx) > 0.01f && fabsf(dsx - 0.5f) > 0.01f) || (fabsf(dty) > 0.01f && fabsf(dty - 0.5f) > 0.01f)) { why = 6; break; }
                 if (tfx == 0 && (fabsf(v->r * 255.0f - 128.0f) > 0.01f || fabsf(v->g * 255.0f - 128.0f) > 0.01f || fabsf(v->b * 255.0f - 128.0f) > 0.01f)) { why = 7; break; }
                 mx0 = fminf(mx0, v->x); mx1 = fmaxf(mx1, v->x); my0 = fminf(my0, v->y); my1 = fmaxf(my1, v->y);
             }
