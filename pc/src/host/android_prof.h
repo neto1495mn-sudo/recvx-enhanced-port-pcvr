@@ -12,6 +12,7 @@ uint64_t and_thread_cpu_ns(void);                  /* this thread's CPU time */
 void and_gpu_begin(int k);
 void and_gpu_end(int k);
 void and_render_add(int k, uint64_t wall_ns, uint64_t cpu_ns, unsigned draws, unsigned prims);
+void and_exec_gl(uint64_t flush_ns, uint64_t upload_ns, uint64_t draw_ns, uint64_t fbo_ns, uint64_t tex_reload_ns);   /* render thread: one game frame's drawing */
 void and_game_frame(uint64_t wall_ns, uint64_t cpu_ns, uint64_t wait_ns);   /* game thread, at each submitted frame */
 void and_prof_report(void);                        /* render thread, once a second */
 

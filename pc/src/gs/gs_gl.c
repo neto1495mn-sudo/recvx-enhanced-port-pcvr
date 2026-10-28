@@ -975,7 +975,18 @@ int gs_batch_two_pass(void) { return batch_valid && vcount && two_pass(batch_sta
 
 /* the batch: vbuf's vertices from vbo_first on, with the static runs in their places (one draw
    call each part, in order: the same primitives in the same order as one call) */
+#ifdef __ANDROID__
+static void draw_batch_(int afail_pass);
+static void draw_batch(int afail_pass)   /* Android diagnosis: the draw calls' wall time */
+{
+    uint64_t t0 = SDL_GetTicksNS();
+    draw_batch_(afail_pass);
+    g_and_stall.draw_ns += SDL_GetTicksNS() - t0;
+}
+static void draw_batch_(int afail_pass)
+#else
 static void draw_batch(int afail_pass)
+#endif
 {
     int at = 0;
     uni1i(u_afail_pass, afail_pass);
@@ -1288,7 +1299,18 @@ void gs_replay_begin(void)
     gt_mark(GT_RB);
 }
 
+#ifdef __ANDROID__
+static void gs_flush_(void);
+void gs_flush(void)   /* Android diagnosis: the flushes' wall time */
+{
+    uint64_t t0 = SDL_GetTicksNS();
+    gs_flush_();
+    g_and_stall.flush_ns += SDL_GetTicksNS() - t0;
+}
+static void gs_flush_(void)
+#else
 void gs_flush(void)
+#endif
 {
     const DrawState* st = &batch_state;
     TexMemo *replay_memo = NULL, *record_memo = NULL;
@@ -1313,6 +1335,9 @@ void gs_flush(void)
         cur_rt->pending_reload = 0;
         if (!batch_full_cover) { rt_load_from_mem(cur_rt); stat_reloads++; reload_record(cur_rt, st->epoch); rt_touch(cur_rt); }
     }
+#ifdef __ANDROID__
+    uint64_t and_f0 = SDL_GetTicksNS();
+#endif
     if (!gs_replaying && first[cur_rt - rts].how == FIRST_NONE) rt_first_draw(cur_rt, st, fbw, fpsm);
     glBindFramebuffer(GL_FRAMEBUFFER, cur_rt->fbo);
     {
@@ -1320,6 +1345,9 @@ void gs_flush(void)
         GLuint dt = depth_for(zbp, cur_rt->pw, cur_rt->ph);
         attach_depth(cur_rt->fbo, dt);
     }
+#ifdef __ANDROID__
+    g_and_stall.fbo_ns += SDL_GetTicksNS() - and_f0;
+#endif
     glViewport(0, 0, cur_rt->pw, cur_rt->ph);
     {
         uint64_t sc = st->ctx.scissor;
@@ -1484,6 +1512,9 @@ void gs_flush(void)
 
     glBindVertexArray(vao);
     glBindBuffer(GL_ARRAY_BUFFER, vbo);
+#ifdef __ANDROID__
+    uint64_t and_u0 = SDL_GetTicksNS();
+#endif
     {
         static int vbo_next;
         if (vbo_next + vcount > VBO_VERTS) {
@@ -1500,6 +1531,9 @@ void gs_flush(void)
         }
         vbo_next += vcount;
     }
+#ifdef __ANDROID__
+    g_and_stall.upload_ns += SDL_GetTicksNS() - and_u0;
+#endif
     afail = (test >> 12) & 3;
     if (two_pass(test)) {
         /* alpha-test fail still writes some buffers: second pass for failing pixels */

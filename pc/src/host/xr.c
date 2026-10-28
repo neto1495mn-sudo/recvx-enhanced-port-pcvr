@@ -452,6 +452,33 @@ static void read_actions(XrTime t)
     SDL_UnlockSpinlock(&pose_lock);
 }
 
+#ifdef __ANDROID__
+#include <unistd.h>
+#include <sys/syscall.h>
+/* Android (Quest): the CPU and GPU clock levels (XR_EXT_performance_settings) and the threads' roles for the
+   scheduler (XR_KHR_android_thread_settings) - without them the runtime keeps the app on its default levels. The
+   log showed the render thread at ~50% of one core and the GPU ~15% busy, yet the frames slow (25-30 ms). */
+static int have_perf, have_threads;
+static volatile int game_tid, game_tid_done;
+void xr_android_game_thread(void) { game_tid = (int)syscall(SYS_gettid); }   /* host.c: the game thread at its start */
+static void android_thread(XrAndroidThreadTypeKHR type, int tid, const char* name)
+{
+    PFN_xrSetAndroidApplicationThreadKHR set = NULL;
+    if (!have_threads || !sess) return;
+    if (!xr_ok(xrGetInstanceProcAddr(inst, "xrSetAndroidApplicationThreadKHR", (PFN_xrVoidFunction*)&set), "xrGetInstanceProcAddr(xrSetAndroidApplicationThreadKHR)")) return;
+    host_log("vr: thread %s (tid %d) %s\n", name, tid, XR_SUCCEEDED(set(sess, type, (uint32_t)tid)) ? "registered with the runtime" : "not registered");
+}
+static void android_perf(void)
+{
+    PFN_xrPerfSettingsSetPerformanceLevelEXT set = NULL;
+    if (!have_perf || !sess) return;
+    if (!xr_ok(xrGetInstanceProcAddr(inst, "xrPerfSettingsSetPerformanceLevelEXT", (PFN_xrVoidFunction*)&set), "xrGetInstanceProcAddr(xrPerfSettingsSetPerformanceLevelEXT)")) return;
+    host_log("vr: performance level CPU sustained high %s, GPU sustained high %s\n",
+             XR_SUCCEEDED(set(sess, XR_PERF_SETTINGS_DOMAIN_CPU_EXT, XR_PERF_SETTINGS_LEVEL_SUSTAINED_HIGH_EXT)) ? "set" : "refused",
+             XR_SUCCEEDED(set(sess, XR_PERF_SETTINGS_DOMAIN_GPU_EXT, XR_PERF_SETTINGS_LEVEL_SUSTAINED_HIGH_EXT)) ? "set" : "refused");
+}
+#endif
+
 int xr_init(void)
 {
 #ifdef __ANDROID__
@@ -485,6 +512,9 @@ int xr_init(void)
     ici.enabledExtensionCount = sizeof(exts) / sizeof(exts[0]);
     ici.enabledExtensionNames = exts;
 #ifdef __ANDROID__
+    const char* exts_all[4];   /* the two needed, and the optional ones the runtime has (after the loader init below) */
+#endif
+#ifdef __ANDROID__
     {   /* the loader first (XR_KHR_loader_init), then the instance, both with the app's VM and activity */
         JNIEnv* env = (JNIEnv*)SDL_GetAndroidJNIEnv();
         PFN_xrInitializeLoaderKHR init_loader = NULL;
@@ -499,6 +529,20 @@ int xr_init(void)
         aci.applicationVM = vm;
         aci.applicationActivity = activity;
         ici.next = &aci;
+    }
+    {
+        XrExtensionProperties ep[128];
+        uint32_t n = 0, k = 0;
+        exts_all[k++] = exts[0]; exts_all[k++] = exts[1];
+        for (uint32_t i = 0; i < 128; i++) ep[i] = (XrExtensionProperties){ XR_TYPE_EXTENSION_PROPERTIES };
+        if (XR_SUCCEEDED(xrEnumerateInstanceExtensionProperties(NULL, 128, &n, ep)))
+            for (uint32_t i = 0; i < n && i < 128; i++) {
+                if (!strcmp(ep[i].extensionName, XR_EXT_PERFORMANCE_SETTINGS_EXTENSION_NAME)) { exts_all[k++] = XR_EXT_PERFORMANCE_SETTINGS_EXTENSION_NAME; have_perf = 1; }
+                else if (!strcmp(ep[i].extensionName, XR_KHR_ANDROID_THREAD_SETTINGS_EXTENSION_NAME)) { exts_all[k++] = XR_KHR_ANDROID_THREAD_SETTINGS_EXTENSION_NAME; have_threads = 1; }
+            }
+        host_log("vr: optional extensions: performance settings %s, thread settings %s\n", have_perf ? "yes" : "no", have_threads ? "yes" : "no");
+        ici.enabledExtensionCount = k;
+        ici.enabledExtensionNames = exts_all;
     }
 #endif
     if (!xr_ok(xrCreateInstance(&ici, &inst), "xrCreateInstance (is a VR runtime installed and set as the OpenXR runtime?)"))
@@ -553,6 +597,10 @@ int xr_init(void)
     sci.next = &bind;
     sci.systemId = sys;
     if (!xr_ok(xrCreateSession(inst, &sci, &sess), "xrCreateSession")) goto fail;
+#ifdef __ANDROID__
+    android_perf();
+    android_thread(XR_ANDROID_THREAD_TYPE_RENDERER_MAIN_KHR, (int)syscall(SYS_gettid), "render");   /* (xr_init runs on the render thread) */
+#endif
 
     rci.poseInReferenceSpace.orientation.w = 1.0f;
     rci.referenceSpaceType = XR_REFERENCE_SPACE_TYPE_LOCAL;
@@ -675,6 +723,9 @@ int xr_frame_begin(void)
     XrFrameBeginInfo bi = { XR_TYPE_FRAME_BEGIN_INFO };
     eyes_valid = 0;
     if (!xr_active()) return -1;
+#ifdef __ANDROID__
+    if (game_tid && !game_tid_done) { game_tid_done = 1; android_thread(XR_ANDROID_THREAD_TYPE_APPLICATION_MAIN_KHR, game_tid, "game"); }
+#endif
     poll_events();
     if (!xr_active() || !running) { SDL_SetAtomicInt(&stereo_ready, 0); SDL_Delay(5); return -1; }   /* not visible yet: do not spin */
     fs = (XrFrameState){ XR_TYPE_FRAME_STATE };

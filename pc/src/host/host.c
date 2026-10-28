@@ -278,6 +278,9 @@ static int SDLCALL game_thread(void* ud)
     (void)ud;
     prof_thread(PROF_LOGIC);
     { extern void profile_thread(char); profile_thread('g'); }   /* RECVX_PROFILE */
+#if defined(__ANDROID__) && defined(RECVX_HAVE_OPENXR)
+    { extern void xr_android_game_thread(void); xr_android_game_thread(); }   /* Android: its role for the runtime (xr.c) */
+#endif
     exit(recvx_game_main(1, game_argv));
 }
 
@@ -299,6 +302,9 @@ static void end_process(void)
 #ifdef _WIN32
     TerminateProcess(GetCurrentProcess(), 0);
 #endif
+#ifdef __ANDROID__
+    _exit(0);   /* Android (Quest): as on Windows - the log showed abort (signal 6) right after this line, in the teardown */
+#endif
 }
 
 int main(int argc, char** argv)
@@ -310,6 +316,26 @@ int main(int argc, char** argv)
     parse_args(argc, argv);
     home_dir();
     if (log_path[0]) { extern void log_start(const char*); log_start(log_path); }
+#ifdef __ANDROID__
+    {   /* Android (Quest): test switches without a new APK - env.txt in the app's folder (adb push), one NAME=value a
+           line (# comments), set as environment variables before anything reads them (RECVX_VU_CHECK, RECVX_NATIVE3D...) */
+        FILE* ef = fopen("env.txt", "r");
+        char line[256];
+        if (ef) {
+            while (fgets(line, sizeof(line), ef)) {
+                char* eq = strchr(line, '=');
+                size_t n = strcspn(line, "\r\n");
+                line[n] = 0;
+                if (line[0] == '#' || !eq) continue;
+                *eq = 0;
+                SDL_setenv_unsafe(line, eq + 1, 1);
+                setenv(line, eq + 1, 1);   /* (getenv users too) */
+                host_log("android: env.txt: %s=%s\n", line, eq + 1);
+            }
+            fclose(ef);
+        }
+    }
+#endif
     host_log("recvx-enhanced-recomp " RECVX_VERSION "\n");
     if (profile_path[0]) { extern void prof_open_csv(const char*); prof_open_csv(profile_path); }
 #ifndef _WIN32

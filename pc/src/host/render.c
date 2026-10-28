@@ -129,13 +129,15 @@ void render_loop(void)
                 uint64_t tx = SDL_GetTicksNS() - tx0, cpu = and_thread_cpu_ns() - and_c0,
                          known = s->tex_ns + s->ntex_ns + s->reload_ns + s->compile_ns + s->store_ns;
                 and_render_add(AND_EXEC, tx, cpu, s->draws - and_d0, s->prims - and_p0);
+                and_exec_gl(s->flush_ns, s->upload_ns, s->draw_ns, s->fbo_ns, s->reload_ns + s->tex_ns + s->ntex_ns);
                 if (tx >= 20000000 && hb_slow_logged < 5) {
                     hb_slow_logged++;
                     host_log("android: slow frame %.1f ms (cpu %.1f ms, %u draws, %u prims): tex %.1f ms/%u, ntex %.1f ms/%u, reload %.1f ms/%u (cpu loop %.1f), "
-                             "compile %.1f ms/%u, storeimage %.1f ms/%u, other %.1f ms\n",
+                             "compile %.1f ms/%u, storeimage %.1f ms/%u, other %.1f ms; GL: flushes %.1f ms (uploads %.1f, draw calls %.1f, framebuffers %.1f)\n",
                              tx / 1e6, cpu / 1e6, s->draws - and_d0, s->prims - and_p0, s->tex_ns / 1e6, s->tex_n, s->ntex_ns / 1e6, s->ntex_n,
                              s->reload_ns / 1e6, s->reload_n, s->reload_cpu_ns / 1e6,
-                             s->compile_ns / 1e6, s->compile_n, s->store_ns / 1e6, s->store_n, (tx > known ? tx - known : 0) / 1e6);
+                             s->compile_ns / 1e6, s->compile_n, s->store_ns / 1e6, s->store_n, (tx > known ? tx - known : 0) / 1e6,
+                             s->flush_ns / 1e6, s->upload_ns / 1e6, s->draw_ns / 1e6, s->fbo_ns / 1e6);
                 }
             }
 #endif

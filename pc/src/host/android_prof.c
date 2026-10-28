@@ -45,6 +45,12 @@ typedef struct { uint64_t wall, wall_max, cpu, cpu_max, gpu, gpu_max; unsigned n
 static Acc acc[AND_N];
 static struct { uint64_t wall, cpu, cpu_max, wait; unsigned n; } game;   /* game thread (written there, read here: diagnosis only) */
 static SDL_SpinLock game_lock;
+static struct { uint64_t flush, upload, draw, fbo, texrl; unsigned n; } gl;   /* game frames' drawing: the GL parts (wall) */
+
+void and_exec_gl(uint64_t flush_ns, uint64_t upload_ns, uint64_t draw_ns, uint64_t fbo_ns, uint64_t tex_reload_ns)
+{
+    gl.n++; gl.flush += flush_ns; gl.upload += upload_ns; gl.draw += draw_ns; gl.fbo += fbo_ns; gl.texrl += tex_reload_ns;
+}
 
 static void gpu_init(void)
 {
@@ -117,7 +123,7 @@ void and_prof_report(void)
     static uint64_t last_t, last_proc;
     static const char* const name[AND_N] = { "game-frame drawing", "headset images" };
     uint64_t now = SDL_GetTicksNS(), proc = process_cpu_ns();
-    double secs = last_t ? (now - last_t) / 1e9 : 1.0;
+    double secs = last_t ? (now - last_t) / 1e9 : 1.0, exec_avg = 0.0;
     if (gpu_ok > 0) for (int k = 0; k < AND_N; k++) gpu_poll(k);
     for (int k = 0; k < AND_N; k++) {
         Acc* a = &acc[k];
@@ -127,7 +133,16 @@ void and_prof_report(void)
                  name[k], a->n, a->wall / 1e6 / n, a->wall_max / 1e6, a->cpu / 1e6 / n, a->cpu_max / 1e6,
                  a->gpu / 1e6 / ng, a->gpu_max / 1e6, a->ngpu, a->gpu_lost,
                  a->ngpu ? 100.0 * (double)a->gpu / ng * a->n / (secs * 1e9) : 0.0, a->draws / n, a->prims / n);
+        if (k == AND_EXEC) exec_avg = a->wall / 1e6 / n;
         *a = (Acc){ 0 };
+    }
+    {
+        unsigned n = gl.n ? gl.n : 1;
+        host_log("android: cpu/gpu game-frame drawing, wall per frame: flushes %.1f ms (vertex uploads %.1f, draw calls %.1f, framebuffers %.1f, "
+                 "textures and reloads %.1f, the rest state set-up), outside the flushes %.1f ms\n",
+                 gl.flush / 1e6 / n, gl.upload / 1e6 / n, gl.draw / 1e6 / n, gl.fbo / 1e6 / n, gl.texrl / 1e6 / n,
+                 exec_avg > gl.flush / 1e6 / n ? exec_avg - gl.flush / 1e6 / n : 0.0);
+        gl = (typeof(gl)){ 0 };
     }
     SDL_LockSpinlock(&game_lock);
     {
