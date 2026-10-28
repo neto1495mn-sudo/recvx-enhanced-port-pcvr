@@ -41,7 +41,7 @@ static int psm_is16(uint32_t psm) { return psm == PSMCT16 || psm == PSMCT16S || 
 static void and_foveate(GLuint tex);   /* (foveated render targets, below) */
 static int and_fov_next;
 /* multiview (both eyes in one replay, GL_OVR_multiview2): below, after and_defer_do */
-static int and_mv_on, and_mv_bad;
+static int and_mv_on, and_mv_bad, and_mv_srt;   /* (and_mv_srt: this flush's draw samples a 2-layer target) */
 static const char* and_mv_why;
 static void and_mv_mark_bad(const char* why) { if (!and_mv_bad) and_mv_why = why; and_mv_bad = 1; }
 static int and_mv_slot_of(const void* rt);
@@ -2035,6 +2035,7 @@ void gs_flush(void)
     uint64_t test;
     if (!batch_valid || vcount == 0) { vcount = 0; nsruns = 0; return; }
 #ifdef __ANDROID__
+    and_mv_srt = 0;
     if (and_mv_on && and_mv_bad) { vcount = 0; nsruns = 0; return; }   /* (this image is drawn again the old way) */
     if (and_defer_dst) and_defer_do();   /* something drawn after the held-back copy: the copy first */
 #endif
@@ -2228,7 +2229,7 @@ void gs_flush(void)
             if (gs_replaying && m) {
                 srt = m->rt >= 0 ? &rts[m->rt] : NULL;
 #ifdef __ANDROID__
-                if (and_mv_on && srt && srt != cur_rt) { and_mv_mark_bad("a draw samples a target"); vcount = 0; nsruns = 0; return; }
+                if (and_mv_on && srt && srt != cur_rt) and_mv_srt = 1;   /* (allowed only as the held back display copy, below) */
 #endif
                 ox = m->ox; oy = m->oy; is16 = m->is16;
                 replay_memo = m;
@@ -2258,6 +2259,10 @@ void gs_flush(void)
         GLint filt = ((st->ctx.tex1 >> 5) & 1) ? GL_LINEAR : GL_NEAREST;
         int wms = st->ctx.clamp & 3, wmt = (st->ctx.clamp >> 2) & 3, hdk = 0;
         glActiveTexture(GL_TEXTURE0);
+#ifdef __ANDROID__
+        if (and_mv_srt) {}   /* (a 2-layer target: not bound - the draw is held back or the image drawn the old way) */
+        else
+#endif
         if (srt && srt != cur_rt) {
             glBindTexture(GL_TEXTURE_2D, srt->tex);
             /* texel (GS units) -> RT normalized */
@@ -2350,7 +2355,7 @@ void gs_flush(void)
         }
         if (!why) {
             and_defer_src = and_srt; and_defer_dst = cur_rt; and_defer_n++;
-            vcount = 0; nsruns = 0;
+            vcount = 0; nsruns = 0; and_mv_srt = 0;
             return;
         }
         if (cur_rt->fbp == gs.disp_fbp) {   /* (a draw into the display target not taken: why, for the log) */
@@ -2365,6 +2370,7 @@ void gs_flush(void)
             }
         }
     }
+    if (and_mv_srt) { and_mv_srt = 0; and_mv_mark_bad("a draw samples a target"); vcount = 0; nsruns = 0; return; }
 #endif
 
 #ifdef __ANDROID__
