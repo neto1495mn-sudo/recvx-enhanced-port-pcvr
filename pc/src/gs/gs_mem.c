@@ -11,6 +11,47 @@
 uint8_t gs_mem[GS_MEM_SIZE] __attribute__((aligned(64)));
 #ifdef __ANDROID__
 static uint32_t wgen = 1, page_wgen[512];   /* write generation per 8 KB page (gs_exec_upload's skipping) */
+/* Android (Quest): a hash per 256-byte block, made where an upload assembles the block (it is in the L1 cache then) or
+   later for blocks other writes left stale; the page hash (gs_gl.c texture lookups) combines its 32. Rehashing whole
+   changed pages at their next texture lookup was 20-25% of a game frame. blk_clean: 1 byte a block (both upload
+   threads store their own blocks' bytes, no shared words) */
+static uint64_t blk_hash[GS_MEM_SIZE / 256];
+static uint8_t blk_clean[GS_MEM_SIZE / 256];
+static inline uint64_t hash256(const uint8_t* p8, uint32_t b)
+{
+    const uint32_t* w = (const uint32_t*)(const void*)p8;
+    uint32_t a = 0x9E3779B1u ^ b, c = 0x85EBCA77u, d = 0xC2B2AE3Du, e = 0x27D4EB2Fu ^ (b * 0x01000193u);
+#define HROT(x, r) (((x) << (r)) | ((x) >> (32 - (r))))
+    for (int i = 0; i < 64; i += 4) {
+        uint32_t w0, w1, w2, w3;
+        memcpy(&w0, &w[i], 4); memcpy(&w1, &w[i + 1], 4); memcpy(&w2, &w[i + 2], 4); memcpy(&w3, &w[i + 3], 4);
+        a = HROT((a ^ w0) * 0x9E3779B1u, 13); c = HROT((c ^ w1) * 0x85EBCA77u, 13);
+        d = HROT((d ^ w2) * 0xC2B2AE3Du, 13); e = HROT((e ^ w3) * 0x27D4EB2Fu, 13);
+    }
+    a ^= HROT(d, 7) * 0x9E3779B1u; c ^= HROT(e, 11) * 0x85EBCA77u;
+#undef HROT
+    a ^= a >> 15; a *= 0x2C1B3C6Du; a ^= a >> 12;
+    c ^= c >> 15; c *= 0x297A2D39u; c ^= c >> 12;
+    return ((uint64_t)a << 32 | c) ^ ((uint64_t)d << 17) ^ e;
+}
+#define BLK_DIRTY(byte_a) do { if (gs_memp == gs_mem) blk_clean[((byte_a) >> 8) & (GS_MEM_SIZE / 256 - 1)] = 0; } while (0)
+#define BLK_SET(byte_a, data) do { if (gs_memp == gs_mem) { uint32_t b_ = ((byte_a) >> 8) & (GS_MEM_SIZE / 256 - 1); \
+                                    blk_hash[b_] = hash256((const uint8_t*)(data), b_); blk_clean[b_] = 1; } } while (0)
+/* gs_gl.c page_hash_get: the hash of 8 KB page p from its blocks' */
+uint64_t gs_page_hash(uint32_t p)
+{
+    uint64_t h = 0x9E3779B97F4A7C15ull * (p + 1);
+    for (uint32_t k = 0; k < 32; k++) {
+        uint32_t b = (p * 32 + k) & (GS_MEM_SIZE / 256 - 1);
+        if (!blk_clean[b]) { blk_hash[b] = hash256(gs_mem + (size_t)b * 256, b); blk_clean[b] = 1; }
+        h = (h ^ blk_hash[b]) * 0x100000001B3ull;
+        h ^= h >> 29;
+    }
+    return h;
+}
+#else
+#define BLK_DIRTY(byte_a) ((void)0)
+#define BLK_SET(byte_a, data) ((void)0)
 #endif
 /* the memory the functions below work on: gs_mem, or a scratch buffer while a native texture
    is decoded (gs_mem_scratch_begin/end) */
@@ -168,6 +209,7 @@ void gs_write_pixel(int psm, uint32_t bp, uint32_t bw, uint32_t x, uint32_t y, u
     }
 #ifdef __ANDROID__
     if (gs_memp == gs_mem) page_wgen[((psm == PSMT4 ? a >> 1 : a) >> 13) & 511] = ++wgen;   /* (the upload skipping, below) */
+    BLK_DIRTY(psm == PSMT4 ? a >> 1 : a);
 #endif
 }
 
@@ -211,16 +253,16 @@ static inline void write_tracked(int psm, uint32_t bp, uint32_t bw, uint32_t x, 
     switch (psm) {
     case PSMCT32: case PSMZ32: {
         uint32_t old; m = gs_memp + a; memcpy(&old, m, 4);
-        if (old != v) { memcpy(m, &v, 4); xfer_changed = CHUNK_CHANGED; }
+        if (old != v) { memcpy(m, &v, 4); xfer_changed = CHUNK_CHANGED; BLK_DIRTY(a); }
         return;
     }
     case PSMCT16: case PSMCT16S: case PSMZ16: case PSMZ16S: {
         uint16_t old, h = (uint16_t)v; m = gs_memp + a; memcpy(&old, m, 2);
-        if (old != h) { memcpy(m, &h, 2); xfer_changed = CHUNK_CHANGED; }
+        if (old != h) { memcpy(m, &h, 2); xfer_changed = CHUNK_CHANGED; BLK_DIRTY(a); }
         return;
     }
     case PSMT8:
-        if (gs_memp[a] != (uint8_t)v) { gs_memp[a] = (uint8_t)v; xfer_changed = CHUNK_CHANGED; }
+        if (gs_memp[a] != (uint8_t)v) { gs_memp[a] = (uint8_t)v; xfer_changed = CHUNK_CHANGED; BLK_DIRTY(a); }
         return;
     default:
         if (gs_read_pixel(psm, bp, bw, x, y) != v) { gs_write_pixel(psm, bp, bw, x, y, v); xfer_changed = CHUNK_CHANGED; }
@@ -248,7 +290,7 @@ static void up_rows(UpRows* j)
                 uint32_t blk[64], a = addr32(j->bt32, j->dbp, bw, j->dsax + bx, y0);
                 for (uint32_t yy = 0; yy < 8; yy++)
                     for (uint32_t xx = 0; xx < 8; xx++) memcpy(&blk[columnTable32[yy][xx]], s + ((size_t)yy * rrw + bx + xx) * 4, 4);
-                if (memcmp(gs_memp + a, blk, 256)) { memcpy(gs_memp + a, blk, 256); j->changed = 1; }
+                if (memcmp(gs_memp + a, blk, 256)) { memcpy(gs_memp + a, blk, 256); j->changed = 1; BLK_SET(a, blk); }
                 JMARK(j, a);
             }
         } else if (j->fmt == 1) {   /* CT16 family: 16x8 blocks */
@@ -259,7 +301,7 @@ static void up_rows(UpRows* j)
                 uint32_t a = addr16(j->bt16, j->dbp, bw, j->dsax + bx, y0) - columnTable16[0][0] * 2;
                 for (uint32_t yy = 0; yy < 8; yy++)
                     for (uint32_t xx = 0; xx < 16; xx++) memcpy(&blk[columnTable16[yy][xx]], s + ((size_t)yy * rrw + bx + xx) * 2, 2);
-                if (memcmp(gs_memp + a, blk, 256)) { memcpy(gs_memp + a, blk, 256); j->changed = 1; }
+                if (memcmp(gs_memp + a, blk, 256)) { memcpy(gs_memp + a, blk, 256); j->changed = 1; BLK_SET(a, blk); }
                 JMARK(j, a);
             }
         } else if (j->fmt == 2) {   /* T8: 16x16 blocks */
@@ -272,7 +314,7 @@ static void up_rows(UpRows* j)
                     const uint8_t* row = s + (size_t)yy * rrw + bx;
                     for (uint32_t xx = 0; xx < 16; xx++) blk[columnTable8[yy][xx]] = row[xx];
                 }
-                if (memcmp(gs_memp + a, blk, 256)) { memcpy(gs_memp + a, blk, 256); j->changed = 1; }
+                if (memcmp(gs_memp + a, blk, 256)) { memcpy(gs_memp + a, blk, 256); j->changed = 1; BLK_SET(a, blk); }
                 JMARK(j, a);
             }
         } else {   /* T4: 32x16 blocks */
@@ -289,7 +331,7 @@ static void up_rows(UpRows* j)
                         blk[o >> 1] |= (uint8_t)(v << ((o & 1) * 4));
                     }
                 }
-                if (memcmp(gs_memp + a, blk, 256)) { memcpy(gs_memp + a, blk, 256); j->changed = 1; }
+                if (memcmp(gs_memp + a, blk, 256)) { memcpy(gs_memp + a, blk, 256); j->changed = 1; BLK_SET(a, blk); }
                 JMARK(j, a);
             }
         }
@@ -438,7 +480,7 @@ void gs_exec_upload(const uint8_t* src, uint32_t bytes)
                     for (uint32_t yy = 0; yy < 8; yy++)
                         for (uint32_t xx = 0; xx < 8; xx++)
                             memcpy(&blk[columnTable32[yy][xx]], src + i + ((size_t)yy * rrw + bx + xx) * 4, 4);
-                    if (memcmp(gs_memp + a, blk, 256)) { memcpy(gs_memp + a, blk, 256); xfer_changed = CHUNK_CHANGED; }
+                    if (memcmp(gs_memp + a, blk, 256)) { memcpy(gs_memp + a, blk, 256); xfer_changed = CHUNK_CHANGED; BLK_SET(a, blk); }
                     MARK(a);
                 }
                 i += rrw * 32;
@@ -458,7 +500,7 @@ void gs_exec_upload(const uint8_t* src, uint32_t bytes)
                     for (uint32_t yy = 0; yy < 8; yy++)
                         for (uint32_t xx = 0; xx < 16; xx++)
                             memcpy(&blk[columnTable16[yy][xx]], src + i + ((size_t)yy * rrw + bx + xx) * 2, 2);
-                    if (memcmp(gs_memp + a, blk, 256)) { memcpy(gs_memp + a, blk, 256); xfer_changed = CHUNK_CHANGED; }
+                    if (memcmp(gs_memp + a, blk, 256)) { memcpy(gs_memp + a, blk, 256); xfer_changed = CHUNK_CHANGED; BLK_SET(a, blk); }
                     MARK(a);
                 }
                 i += rrw * 16;
@@ -475,7 +517,7 @@ void gs_exec_upload(const uint8_t* src, uint32_t bytes)
                         const uint8_t* row = src + i + (size_t)yy * rrw + bx;
                         for (uint32_t xx = 0; xx < 16; xx++) blk[columnTable8[yy][xx]] = row[xx];
                     }
-                    if (memcmp(gs_memp + a, blk, 256)) { memcpy(gs_memp + a, blk, 256); xfer_changed = CHUNK_CHANGED; }
+                    if (memcmp(gs_memp + a, blk, 256)) { memcpy(gs_memp + a, blk, 256); xfer_changed = CHUNK_CHANGED; BLK_SET(a, blk); }
                     MARK(a);
                 }
                 i += rrw * 16;
@@ -496,7 +538,7 @@ void gs_exec_upload(const uint8_t* src, uint32_t bytes)
                             blk[o >> 1] |= (uint8_t)(v << ((o & 1) * 4));
                         }
                     }
-                    if (memcmp(gs_memp + a, blk, 256)) { memcpy(gs_memp + a, blk, 256); xfer_changed = CHUNK_CHANGED; }
+                    if (memcmp(gs_memp + a, blk, 256)) { memcpy(gs_memp + a, blk, 256); xfer_changed = CHUNK_CHANGED; BLK_SET(a, blk); }
                     MARK(a);
                 }
                 i += rrw * 8;
@@ -508,20 +550,20 @@ void gs_exec_upload(const uint8_t* src, uint32_t bytes)
             const uint8_t (*bt)[8] = dpsm == PSMCT32 ? blockTable32 : blockTableZ32;
             while (i + 4 <= bytes && gs.xfer_y < rrh) {
                 uint32_t a = addr32(bt, dbp, bw, dsax + gs.xfer_x, dsay + gs.xfer_y);
-                if (memcmp(gs_memp + a, src + i, 4)) { memcpy(gs_memp + a, src + i, 4); xfer_changed = CHUNK_CHANGED; }
+                if (memcmp(gs_memp + a, src + i, 4)) { memcpy(gs_memp + a, src + i, 4); xfer_changed = CHUNK_CHANGED; BLK_DIRTY(a); }
                 MARK(a); i += 4; ADVANCE();
             }
         } else if (dpsm == PSMCT16 || dpsm == PSMCT16S || dpsm == PSMZ16 || dpsm == PSMZ16S) {
             const uint8_t (*bt)[4] = bt16(dpsm);
             while (i + 2 <= bytes && gs.xfer_y < rrh) {
                 uint32_t a = addr16(bt, dbp, bw, dsax + gs.xfer_x, dsay + gs.xfer_y);
-                if (memcmp(gs_memp + a, src + i, 2)) { memcpy(gs_memp + a, src + i, 2); xfer_changed = CHUNK_CHANGED; }
+                if (memcmp(gs_memp + a, src + i, 2)) { memcpy(gs_memp + a, src + i, 2); xfer_changed = CHUNK_CHANGED; BLK_DIRTY(a); }
                 MARK(a); i += 2; ADVANCE();
             }
         } else if (dpsm == PSMT8) {
             while (i < bytes && gs.xfer_y < rrh) {
                 uint32_t a = addr8(dbp, bw, dsax + gs.xfer_x, dsay + gs.xfer_y);
-                if (gs_memp[a] != src[i]) { gs_memp[a] = src[i]; xfer_changed = CHUNK_CHANGED; }
+                if (gs_memp[a] != src[i]) { gs_memp[a] = src[i]; xfer_changed = CHUNK_CHANGED; BLK_DIRTY(a); }
                 MARK(a); i++; ADVANCE();
             }
         } else if (dpsm == PSMT4) {
@@ -529,7 +571,7 @@ void gs_exec_upload(const uint8_t* src, uint32_t bytes)
                 uint32_t a = addr4(dbp, bw, dsax + gs.xfer_x, dsay + gs.xfer_y), sh = (a & 1) * 4;
                 uint8_t v = (uint8_t)((src[i] >> (gs.xfer_pending_bits ? 4 : 0)) & 15), *p = &gs_memp[a >> 1];
                 if (gs.xfer_pending_bits) { i++; gs.xfer_pending_bits = 0; } else gs.xfer_pending_bits = 1;
-                if (((*p >> sh) & 15) != v) { *p = (uint8_t)((*p & ~(15 << sh)) | (v << sh)); xfer_changed = CHUNK_CHANGED; }
+                if (((*p >> sh) & 15) != v) { *p = (uint8_t)((*p & ~(15 << sh)) | (v << sh)); xfer_changed = CHUNK_CHANGED; BLK_DIRTY(a >> 1); }
                 MARK(a >> 1); ADVANCE();
             }
         }

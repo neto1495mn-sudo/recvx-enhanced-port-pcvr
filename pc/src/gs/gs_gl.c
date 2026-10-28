@@ -144,6 +144,9 @@ static uint64_t page_hash_get(uint32_t p)
     if (!page_hash_init) { memset(page_dirty, 1, sizeof(page_dirty)); page_hash_init = 1; }
     if (page_dirty[p]) {
 #ifdef __ANDROID__
+        extern uint64_t gs_page_hash(uint32_t p);
+        uint64_t h = gs_page_hash(p);   /* (gs_mem.c: from the 256-byte blocks' hashes, made where uploads assemble them) */
+#elif 0
         /* Android (Quest): 32-bit multiplies in 4 independent lanes - the 64-bit multiply per word is several instructions
            on 32-bit ARM, and every page an upload changed is hashed again at its next texture lookup (the texture stage:
            33-42% of a game frame). 1.5x faster on ARM (qemu); every single-byte change of a page changes it. */
