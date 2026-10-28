@@ -62,7 +62,8 @@ static unsigned and_x_frames, and_x_free, and_x_tex, and_x_mem, and_x_cap;
 int g_and_exec_nodraw;
 static int and_nodraw_block;
 static unsigned and_nodraw_frames, and_nodraw_draws;
-int gs_exec_nodraw_ok(void) { return !and_nodraw_block; }
+static int and_opt1 = 0;   /* off again: the owner saw stutters with coloured flashes where grates/glass are missing */
+int gs_exec_nodraw_ok(void) { return and_opt1 && !and_nodraw_block; }
 #endif
 typedef struct {
     int used;
@@ -1857,6 +1858,19 @@ void gs_flush(void)
 #ifdef __ANDROID__
         and_srt = srt; and_ox = ox; and_oy = oy; and_is16 = is16;
         if (!gs_replaying && srt && srt != cur_rt) { if (cur_rt->fbp == gs.disp_fbp) and_rd_disp++; else and_rd_tex++; }
+        if (!gs_replaying && !srt) {   /* (grates/glass missing: a texture over a drawn target's pages read from GS memory instead) */
+            static int nl;
+            for (int k = 0; k < MAX_RT && nl < 40; k++) {
+                const RenderTarget* r = &rts[k];
+                uint32_t base = r->fbp * 32;
+                if (r->used && tbp >= base && tbp < base + rt_page_count(r) * 32 && rt_pages_drawn(r, tbp / 32, tbp / 32)) {
+                    nl++;
+                    host_log("android: texture over a drawn target read from GS memory: tex0 %016llx (tbp %u psm %u %ux%u) over fbp %u psm %u fbw %u%s; draw into fbp %u, %d verts\n",
+                             (unsigned long long)tex0, tbp, tpsm, tw, th, r->fbp, r->psm, r->fbw, r->stale ? " (stale)" : "", cur_rt->fbp, vcount);
+                    break;
+                }
+            }
+        }
 #endif
         GLint filt = ((st->ctx.tex1 >> 5) & 1) ? GL_LINEAR : GL_NEAREST;
         int wms = st->ctx.clamp & 3, wmt = (st->ctx.clamp >> 2) & 3, hdk = 0;
