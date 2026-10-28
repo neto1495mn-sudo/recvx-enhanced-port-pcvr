@@ -463,6 +463,42 @@ void gs_clut_load(uint64_t tex0)
     if (!load) return;
     gs_flush();
     ntex_before_access(cbp / 32, cbp / 32 + 1);
+#ifdef __ANDROID__
+    {   /* Android (Quest): the entries' addresses from a table - within the CLUT they are cbp * 256 plus a fixed offset (the
+           profiler: gs_clut_load and gs_read_pixel ~8% of the render thread, 256 address computations a load) */
+        static uint32_t off[3][256];   /* CT32, CT16, CT16S; for 256 and 16 entries the same positions (clut_pos) */
+        static int init;
+        int k = cpsm == 0 ? 0 : cpsm == 2 ? 1 : 2;
+        if (!init) {
+            for (uint32_t i = 0; i < 256; i++) {
+                uint32_t x, y;
+                clut_pos(256, i, &x, &y);
+                off[0][i] = gs_pixel_addr(PSMCT32, 0, 1, x, y);
+                off[1][i] = gs_pixel_addr(PSMCT16, 0, 1, x, y);
+                off[2][i] = gs_pixel_addr(PSMCT16S, 0, 1, x, y);
+            }
+            init = 1;
+        }
+        for (uint32_t i = 0; i < (uint32_t)entries; i++) {
+            uint32_t x, y, j = i;
+            if (entries == 16) { clut_pos(16, i, &x, &y); j = 0; }   /* (16 entries: the 8x2 layout, looked up directly) */
+            {
+                uint32_t a = entries == 16 ? gs_pixel_addr(k == 0 ? PSMCT32 : k == 1 ? PSMCT16 : PSMCT16S, cbp, 1, x, y)
+                                           : (cbp * 256 + off[k][j]) & (GS_MEM_SIZE - 1);
+                if (k == 0) {
+                    uint32_t c, e = (csa * 16 + i) & 255;
+                    memcpy(&c, gs_memp + a, 4);
+                    clut_buf[e] = (uint16_t)c; clut_buf[256 + e] = (uint16_t)(c >> 16);
+                } else {
+                    uint16_t h;
+                    memcpy(&h, gs_memp + a, 2);
+                    clut_buf[(csa * 16 + i) & 511] = h;
+                }
+            }
+        }
+        return;
+    }
+#endif
     for (uint32_t i = 0; i < (uint32_t)entries; i++) {
         uint32_t x, y;
         clut_pos(entries, i, &x, &y);

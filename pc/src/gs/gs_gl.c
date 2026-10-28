@@ -58,6 +58,9 @@ static uint64_t frame_no;
 static uint32_t stat_prims, stat_flushes, stat_reloads, stat_decodes, stat_decode_px;
 #ifdef __ANDROID__
 AndStall g_and_stall;
+/* render.c: this game frame's drawing is timed part by part (1 in 30) - reading the clock is a kernel call on the
+   Quest: ~13 reads a flush were 12-13% of the render thread */
+int g_and_time_frame;
 typedef void* (GLAPIENTRY *PFN_and_map)(GLenum target, GLintptr offset, GLsizeiptr length, GLbitfield access);   /* GLES 3: glMapBufferRange */
 typedef GLboolean (GLAPIENTRY *PFN_and_unmap)(GLenum target);
 /* Android (Quest): the vertex stream in a buffer mapped once for good (GL_EXT_buffer_storage, persistent + coherent) -
@@ -1074,7 +1077,9 @@ int gs_batch_two_pass(void) { return batch_valid && vcount && two_pass(batch_sta
 static void draw_batch_(int afail_pass);
 static void draw_batch(int afail_pass)   /* Android diagnosis: the draw calls' wall time */
 {
-    uint64_t t0 = SDL_GetTicksNS();
+    uint64_t t0;
+    if (!g_and_time_frame) { draw_batch_(afail_pass); return; }
+    t0 = SDL_GetTicksNS();
     draw_batch_(afail_pass);
     g_and_stall.draw_ns += SDL_GetTicksNS() - t0;
 }
@@ -1398,7 +1403,9 @@ void gs_replay_begin(void)
 static void gs_flush_(void);
 void gs_flush(void)   /* Android diagnosis: the flushes' wall time */
 {
-    uint64_t t0 = SDL_GetTicksNS();
+    uint64_t t0;
+    if (!g_and_time_frame) { gs_flush_(); return; }
+    t0 = SDL_GetTicksNS();
     gs_flush_();
     g_and_stall.flush_ns += SDL_GetTicksNS() - t0;
 }
@@ -1431,7 +1438,7 @@ void gs_flush(void)
         if (!batch_full_cover) { rt_load_from_mem(cur_rt); stat_reloads++; reload_record(cur_rt, st->epoch); rt_touch(cur_rt); }
     }
 #ifdef __ANDROID__
-    uint64_t and_f0 = SDL_GetTicksNS();
+    uint64_t and_f0 = g_and_time_frame ? SDL_GetTicksNS() : 0;
 #endif
     if (!gs_replaying && first[cur_rt - rts].how == FIRST_NONE) rt_first_draw(cur_rt, st, fbw, fpsm);
     glBindFramebuffer(GL_FRAMEBUFFER, cur_rt->fbo);
@@ -1441,7 +1448,7 @@ void gs_flush(void)
         attach_depth(cur_rt->fbo, dt);
     }
 #ifdef __ANDROID__
-    g_and_stall.fbo_ns += SDL_GetTicksNS() - and_f0;
+    if (g_and_time_frame) g_and_stall.fbo_ns += SDL_GetTicksNS() - and_f0;
 #endif
     glViewport(0, 0, cur_rt->pw, cur_rt->ph);
     {
@@ -1608,7 +1615,7 @@ void gs_flush(void)
     glBindVertexArray(vao);
     glBindBuffer(GL_ARRAY_BUFFER, vbo);
 #ifdef __ANDROID__
-    uint64_t and_u0 = SDL_GetTicksNS();
+    uint64_t and_u0 = g_and_time_frame ? SDL_GetTicksNS() : 0;
 #endif
     {
         static int vbo_next;
@@ -1698,7 +1705,7 @@ void gs_flush(void)
     }
 #ifdef __ANDROID__
 and_uploaded:
-    g_and_stall.upload_ns += SDL_GetTicksNS() - and_u0;
+    if (g_and_time_frame) g_and_stall.upload_ns += SDL_GetTicksNS() - and_u0;
 #endif
     afail = (test >> 12) & 3;
     if (two_pass(test)) {
@@ -1824,7 +1831,8 @@ void gs_draw_primitive(int type, const GsVertex* v, int count, const GsContext* 
         prim_layer = prim_big && (((x1 - x0) >= 600.0f && (y1 - y0) >= 400.0f) || ((z1 - z0) <= 0.002f * fabsf(z1) + 1.0f && z1 <= 100.0f));
         {
             static unsigned nl;
-            if (!prim_layer && prim_big && (z1 - z0) <= 0.002f * fabsf(z1) + 1.0f && nl < 10) {
+            extern int g_and_diag;
+            if (g_and_diag && !prim_layer && prim_big && (z1 - z0) <= 0.002f * fabsf(z1) + 1.0f && nl < 10) {
                 nl++;
                 host_log("android: big flat primitive at a world depth kept in the world (was a screen layer): x %.0f..%.0f y %.0f..%.0f depth %.1f\n", x0, x1, y0, y1, z1);
             }
@@ -1841,7 +1849,8 @@ void gs_draw_primitive(int type, const GsVertex* v, int count, const GsContext* 
             static int nseen;
             int fx = g_vr_fx_fix && z1 > 100.0f && !gs_raw_ui && !prim_layer;
             (void)gs_replaying;
-            if (vr_u.on && !gs_raw_vr && !gs_vu1_vr && !fx && !prim_tall && nseen < 64) {   /* (vr_u.on: an eye's replay) */
+            extern int g_and_diag;
+            if (g_and_diag && vr_u.on && !gs_raw_vr && !gs_vu1_vr && !fx && !prim_tall && nseen < 64) {   /* (vr_u.on: an eye's replay) */
                 uint32_t key = (uint32_t)(c->tex0 & 0x3FFF) | ((uint32_t)type << 16) | (((prim >> 4) & 1) << 20);
                 int k = 0;
                 while (k < nseen && seen[k] != key) k++;
@@ -1928,7 +1937,8 @@ static void native_to_gl(unsigned int prim, const NativeVertex* v, int n, GlVert
             o->vr = (q->cull & 0x80) ? 1.0f : (q->cull & 0x40) ? 2.25f : (q->cull & 0x20) ? 0.0f : 3.0f;   /* (2.25: a native effect - the same path, told apart by vr_debug_cores) */   /* 2: 2D with a GS depth (vr_fx_fix); 3: 2D on the VR panel; 0: screen layers */
             vr_stat_vertex(o);
 #ifdef __ANDROID__
-            {   /* Android (Quest) diagnosis: missing arms, glass, parts of objects (only on the Quest) - vertices that
+            extern int g_and_diag;
+            if (g_and_diag) {   /* Android (Quest) diagnosis: missing arms, glass, parts of objects (only on the Quest) - vertices that
                    cannot draw: not finite, w <= 0 for 3D, far outside the GS area; counted per path, a few logged */
                 static unsigned nall[4], nbad[4], nlog;
                 static uint64_t t_last;

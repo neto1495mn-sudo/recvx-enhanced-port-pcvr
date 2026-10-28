@@ -10,6 +10,7 @@
 void host_log(const char* fmt, ...);
 
 volatile unsigned g_and_fx_split;
+int g_and_diag = 0;   /* the graphics diagnosis logs (bad vertices, panel/layer primitives, slow frames): paused - performance only now */
 
 uint64_t and_thread_cpu_ns(void)
 {

@@ -150,6 +150,7 @@ void render_loop(void)
             memset(&g_and_stall, 0, sizeof(g_and_stall));
             g_and_stall.draws = and_d0; g_and_stall.prims = and_p0;
             { extern void and_glcache_reset(void); and_glcache_reset(); }   /* (gl_cache.c: what others changed since is forgotten) */
+            { extern int g_and_time_frame; static unsigned nexec; g_and_time_frame = (nexec++ % 30) == 0; }   /* (gs_gl.c: 1 in 30 timed part by part) */
             and_gpu_begin(AND_EXEC);
 #endif
             gs_frame_begin();
@@ -164,8 +165,9 @@ void render_loop(void)
                 uint64_t tx = SDL_GetTicksNS() - tx0, cpu = and_thread_cpu_ns() - and_c0,
                          known = s->tex_ns + s->ntex_ns + s->reload_ns + s->compile_ns + s->store_ns;
                 and_render_add(AND_EXEC, tx, cpu, s->draws - and_d0, s->prims - and_p0);
-                and_exec_gl(s->flush_ns, s->upload_ns, s->draw_ns, s->fbo_ns, s->reload_ns + s->tex_ns + s->ntex_ns);
-                if (tx >= 20000000 && hb_slow_logged < 5) {
+                { extern int g_and_time_frame; if (g_and_time_frame) and_exec_gl(s->flush_ns, s->upload_ns, s->draw_ns, s->fbo_ns, s->reload_ns + s->tex_ns + s->ntex_ns); g_and_time_frame = 0; }
+                extern int g_and_diag;
+                if (g_and_diag && tx >= 20000000 && hb_slow_logged < 5) {
                     hb_slow_logged++;
                     host_log("android: slow frame %.1f ms (cpu %.1f ms, %u draws, %u prims): tex %.1f ms/%u, ntex %.1f ms/%u, reload %.1f ms/%u (cpu loop %.1f), "
                              "compile %.1f ms/%u, storeimage %.1f ms/%u, other %.1f ms; GL: flushes %.1f ms (uploads %.1f, draw calls %.1f, framebuffers %.1f)\n",

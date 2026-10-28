@@ -239,8 +239,9 @@ uint32_t pc_native_prim(unsigned int prim, const unsigned int* dp, int n, int cl
             {   /* Android (Quest) diagnosis: green streaks / invisible parts (vr_debug_cores) - polygons collapsed here;
                    which corners are out of the world (view z >= -1.0001 or GS depth <= 100) */
                 static unsigned nl;
+                extern int g_and_diag;
                 g_and_fx_split++;
-                if (nl < 40) {
+                if (g_and_diag && nl < 40) {
                     char b[512];
                     int k = 0;
                     nl++;
@@ -260,7 +261,8 @@ uint32_t pc_native_prim(unsigned int prim, const unsigned int* dp, int n, int cl
         if (y1 - y0 > 240.0f && (layer || !(v[0].cull & 0x40))) for (int i = 0; i < n; i++) v[i].cull |= 0x20;   /* (not a big effect in the world) */
     }
 #ifdef __ANDROID__
-    if (!clip_3d_on && n > 0 && !(v[0].cull & 0x60)) {   /* Android (Quest) diagnosis: 2D going onto the VR panel (yellow with vr_debug_cores) -
+    extern int g_and_diag;
+    if (g_and_diag && !clip_3d_on && n > 0 && !(v[0].cull & 0x60)) {   /* Android (Quest) diagnosis: 2D going onto the VR panel (yellow with vr_debug_cores) -
                                                             a lit window's panes were among them; which game function, its depths */
         static unsigned nl, tick;
         static uint32_t seen[64];
@@ -321,7 +323,8 @@ uint32_t pc_native_prim_raw(unsigned int prim, const unsigned int* dp, int n, in
         if (x1 - x0 > 320 * 16 || y1 - y0 > 240 * 16) for (int i = 0; i < n; i++) v[i].vr3d = 0;
     }
 #ifdef __ANDROID__
-    if (!clip_3d_on && n > 0 && v[0].ui) {   /* Android diagnosis: sprites/lines going onto the VR panel, as in pc_native_prim */
+    extern int g_and_diag;
+    if (g_and_diag && !clip_3d_on && n > 0 && v[0].ui) {   /* Android diagnosis: sprites/lines going onto the VR panel, as in pc_native_prim */
         static unsigned nl, tick;
         static uint32_t seen[64];
         if (!(++tick & 15) && nl < 40) {
