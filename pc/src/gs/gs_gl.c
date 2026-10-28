@@ -74,6 +74,7 @@ static unsigned and_waits; static uint64_t and_wait_ns;   /* (the ring's waits: 
 static void and_persistent_init(void);
 volatile int g_and_fps_headset, g_and_fps_game;   /* render.c, once a second: images to the headset, game frames */
 int g_and_ab;   /* render.c: A/B test mode - bit 0 no window swap, bit 1 no per-eye glFlush */
+int g_vr_one_replay = 1;   /* the right eye re-issues the left eye's recorded GL calls (gl_record.c); 0: both eyes replay */
 /* Android (Quest): the frame rates in the picture (the owner follows them in the headset) - two numbers drawn with
    scissored clears (no shader, no font): images the headset got per second, game frames per second. Green: full
    rate, yellow: some lost, red: slow. x, y: lower left in the bound framebuffer; h: its height (the size) */
@@ -2185,19 +2186,31 @@ static int rt_snapshot(void)
 }
 
 /* after a replay: the executed frame's targets back; the replay's become the shadows again */
+#ifdef __ANDROID__
+static int rt_restore_deleted;   /* (gl_record: a target the recorded replay used is gone) */
+static int and_rec_ok;           /* the left eye's recording can be issued again for the right eye */
+#endif
 static void rt_restore(void)
 {
     for (int i = 0; i < MAX_RT; i++) {
         RenderTarget* r = &rts[i];
         const RenderTarget* sn = &rts_snap[i];
         if (!sn->used) {   /* created during the replay: lost (recreated from GS memory when next used) */
-            if (r->used) { glDeleteTextures(1, &r->tex); glDeleteFramebuffers(1, &r->fbo); fb_forget(); memset(r, 0, sizeof(*r)); }
+            if (r->used) { glDeleteTextures(1, &r->tex); glDeleteFramebuffers(1, &r->fbo); fb_forget(); memset(r, 0, sizeof(*r));
+#ifdef __ANDROID__
+                rt_restore_deleted = 1;
+#endif
+            }
             continue;
         }
         /* the slot's textures now (the replay's, or another target's if the replay evicted it) */
         if (r->used && r->pw == sn->pw && r->ph == sn->ph) { shadow[i] = (Shadow){ r->tex, r->fbo, r->pw, r->ph }; }
         else {
-            if (r->used) { glDeleteTextures(1, &r->tex); glDeleteFramebuffers(1, &r->fbo); fb_forget(); }
+            if (r->used) { glDeleteTextures(1, &r->tex); glDeleteFramebuffers(1, &r->fbo); fb_forget();
+#ifdef __ANDROID__
+                rt_restore_deleted = 1;
+#endif
+            }
             memset(&shadow[i], 0, sizeof(shadow[i]));
         }
         *r = *sn;
@@ -3347,8 +3360,48 @@ static int present_vr_stereo_(const struct Frame* cur, float t)
             static unsigned nlog;
             int logit = e == 0 && nlog < 40 && (frame_no % 90) == 0;
             if (logit) memset(&vr_st, 0, sizeof(vr_st)), vr_st.on = 1;
+#ifdef __ANDROID__
+            /* Android (Quest): the left eye's replay recorded, the right eye issues it again with its own matrix and
+               frustum (gl_record.c) - the game frame's stream runs once a headset image, not twice. Anything the
+               recording cannot reproduce: the right eye replays as before. */
+            extern int g_vr_one_replay;
+            extern void glrec_begin(void); extern int glrec_end(void); extern void glrec_replay(const GLint*, const float (*)[4], int);
+            extern const char* glrec_why(void); extern size_t glrec_count(void); extern int glrec_buffers_ok;
+            static RenderTarget rec_rts[MAX_RT];
+            static Shadow rec_shadow[MAX_RT];
+            static unsigned n_reissue, n_full, n_logged;
+            if (e == 1 && and_rec_ok && g_vr_one_replay) {
+                const GLint locs[5] = { u_vr_dst, u_vr_m0, u_vr_m1, u_vr_m2, u_vr_m3 };
+                const float vals[5][4] = { { vr_u.dst[0], vr_u.dst[1], vr_u.dst[2], vr_u.dst[3] }, { vr_u.m[0], vr_u.m[1], vr_u.m[2], vr_u.m[3] },
+                                           { vr_u.m[4], vr_u.m[5], vr_u.m[6], vr_u.m[7] }, { vr_u.m[8], vr_u.m[9], vr_u.m[10], vr_u.m[11] },
+                                           { vr_u.m[12], vr_u.m[13], vr_u.m[14], vr_u.m[15] } };
+                memcpy(rts, rec_rts, sizeof(rts)); memcpy(shadow, rec_shadow, sizeof(shadow));   /* the targets as the left eye's replay left them */
+                VR_TM(0, glrec_replay(locs, vals, 5));
+                memset(uknown, 0, sizeof(uknown)); clip_on = -1; fb_forget();   /* (GL state now the recording's end, not the caches') */
+                n_reissue++;
+            } else {
+                int rec = e == 0 && g_vr_one_replay;
+                and_rec_ok = 0;
+                if (rec) {   /* the caches forgotten: the recording sets every state it relies on */
+                    memset(uknown, 0, sizeof(uknown)); clip_on = -1; fb_forget();
+                    glrec_buffers_ok = and_pmap != NULL;
+                    glrec_begin();
+                }
+                if (chars) VR_TM(0, stream_replay_chars(cur, t, chT));
+                else VR_TM(0, stream_replay_exact(cur));
+                if (rec) {
+                    and_rec_ok = glrec_end();
+                    if (and_rec_ok) { memcpy(rec_rts, rts, sizeof(rts)); memcpy(rec_shadow, shadow, sizeof(shadow)); rt_restore_deleted = 0; }
+                    else if (n_logged < 20) { n_logged++; host_log("android: one replay for both eyes: not this image (%s)\n", glrec_why()); }
+                }
+                if (e == 1) n_full++;
+            }
+            if (e == 1 && (n_reissue + n_full) % 2000 == 1)
+                host_log("android: one replay for both eyes: %u images re-issued, %u replayed twice (last recording %u GL calls)\n", n_reissue, n_full, (unsigned)glrec_count());
+#else
             if (chars) VR_TM(0, stream_replay_chars(cur, t, chT));
             else VR_TM(0, stream_replay_exact(cur));
+#endif
             if (logit) {
                 vr_st.on = 0; nlog++;
                 host_log("vr: frame %llu vertices: 3D %u, GS-depth (sprites/VU1) %u, flat 2D %u (screen layers kept flat %u)\n",
@@ -3403,6 +3456,14 @@ static int present_vr_stereo_(const struct Frame* cur, float t)
         glFlush();   /* vr99: the eye's work to the GPU now, not all at the hand-off (xrEndFrame waits less) */
         xr_eye_release(e);
         rt_restore();
+#ifdef __ANDROID__
+        if (rt_restore_deleted && and_rec_ok) {
+            static unsigned nl;
+            if (nl++ < 20) host_log("android: one replay for both eyes: not this image (a render target of the replay deleted)\n");
+            and_rec_ok = 0;
+        }
+        rt_restore_deleted = 0;
+#endif
     }
     return ok;
 }
