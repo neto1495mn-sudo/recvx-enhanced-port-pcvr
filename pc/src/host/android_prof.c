@@ -154,6 +154,8 @@ void and_prof_report(void)
         unsigned n = game.n ? game.n : 1;
         { void and_glcache_stats(unsigned*, unsigned*); unsigned sk, pa; and_glcache_stats(&sk, &pa);
           host_log("android: GL state calls last second: %u skipped as repeated, %u passed to the driver\n", sk, pa); }
+        { void gs_upload_stats(unsigned*, unsigned*); unsigned uh, um; gs_upload_stats(&uh, &um);
+          host_log("android: texture upload chunks last second: %u skipped (same data, memory untouched), %u run\n", uh, um); }
         host_log("android: cpu/gpu game thread: %u frames, cpu avg %.1f max %.1f ms, wall avg %.1f ms, waiting for the render thread avg %.1f ms; "
                  "process cpu %.0f%% of one core; effect polygons split %u\n",
                  game.n, game.cpu / 1e6 / n, game.cpu_max / 1e6, game.wall / 1e6 / n, game.wait / 1e6 / n,
