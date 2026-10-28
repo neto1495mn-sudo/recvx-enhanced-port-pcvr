@@ -178,13 +178,13 @@ void render_loop(void)
 #endif
 #ifdef __ANDROID__
             { extern void and_gq_stage(int); and_gq_stage(3); }
-            { extern void and_pass_trace(int); static unsigned k; if ((k++ % 300) == 150) { and_pass_trace(1); and_trace_exec = 1; } }
+            { extern int and_pass_trace(int); static unsigned k; if ((k++ % 150) == 75) and_trace_exec = and_pass_trace(1); }
 #endif
             gs_frame_begin();
             stream_exec(f);
 #ifdef __ANDROID__
             { extern void and_gq_stage(int); and_gq_stage(-1); }
-            if (and_trace_exec) { extern void and_pass_trace(int); extern void and_pass_trace_log(const char*); and_pass_trace(0); and_pass_trace_log("a game frame"); and_trace_exec = 0; }
+            if (and_trace_exec) { extern int and_pass_trace(int); extern void and_pass_trace_log(const char*); and_pass_trace(0); and_pass_trace_log("a game frame"); and_trace_exec = 0; }
 #endif
             prof_pop();
 #ifdef __ANDROID__

@@ -192,6 +192,7 @@ static void gq_report(void)
 void and_prof_report(void)
 {
     gq_report();
+    { void and_pass_trace_flush(void); and_pass_trace_flush(); }
     static uint64_t last_t, last_proc;
     static const char* const name[AND_N] = { "game-frame drawing", "headset images" };
     uint64_t now = SDL_GetTicksNS(), proc = process_cpu_ns();

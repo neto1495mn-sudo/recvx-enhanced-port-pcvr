@@ -50,15 +50,64 @@ static PFN_glDrawArrays r_DrawArrays; static PFN_glClear r_Clear;
 static int mine(void);
 #define TRN 64
 static struct { GLuint fbo; unsigned draws, verts, clears, blits; } tr[TRN];
-static int tr_n, tr_on;
-void and_pass_trace(int on) { if (on) tr_n = 0; tr_on = on; }
+static int tr_n, tr_on, tr_pending;
+/* GPU time per pass (the owner: more GPU detail, even if it costs): a timer query from each target switch to the next,
+   on the traced eye / game frame only; read when available (and_pass_trace_times), no new trace before */
+typedef void (GLAPIENTRY *PFN_TrGenQ)(GLsizei, GLuint*); typedef void (GLAPIENTRY *PFN_TrBeginQ)(GLenum, GLuint);
+typedef void (GLAPIENTRY *PFN_TrEndQ)(GLenum); typedef void (GLAPIENTRY *PFN_TrGetQ)(GLuint, GLenum, GLuint*);
+static PFN_TrBeginQ trq_begin; static PFN_TrEndQ trq_end; static PFN_TrGetQ trq_get;
+static GLuint trq[TRN];
+static int trq_ok = -1, trq_active;
+static void trq_init(void)
+{
+    PFN_TrGenQ gen = (PFN_TrGenQ)SDL_GL_GetProcAddress("glGenQueries");
+    trq_begin = (PFN_TrBeginQ)SDL_GL_GetProcAddress("glBeginQuery"); trq_end = (PFN_TrEndQ)SDL_GL_GetProcAddress("glEndQuery");
+    trq_get = (PFN_TrGetQ)SDL_GL_GetProcAddress("glGetQueryObjectuiv");
+    trq_ok = gen && trq_begin && trq_end && trq_get && SDL_GL_ExtensionSupported("GL_EXT_disjoint_timer_query");
+    if (trq_ok) gen(TRN, trq);
+    host_log("android: GPU time per pass (traced eye / game frame) %s\n", trq_ok ? "on" : "not available");
+}
+static void trq_stop(void) { if (trq_active) { trq_end(0x88BF /* TIME_ELAPSED */); trq_active = 0; } }
+int and_pass_trace(int on)
+{
+    if (on) {
+        if (tr_pending || tr_on) return 0;
+        if (trq_ok < 0) trq_init();
+        tr_n = 0; tr_on = 1;
+        return 1;
+    }
+    if (!tr_on) return 0;
+    if (trq_ok > 0) trq_stop();
+    tr_on = 0; tr_pending = tr_n > 0;
+    return 1;
+}
+/* the traced passes' GPU ms: 1 when all are in (the trace is then done), 0 not yet */
+int and_pass_trace_times(double* ms, int max)
+{
+    if (!tr_pending) return 0;
+    for (int i = 0; i < tr_n && i < max; i++) {
+        GLuint avail = 0, ns = 0;
+        if (trq_ok <= 0) { ms[i] = -1.0; continue; }
+        trq_get(trq[i], 0x8867 /* RESULT_AVAILABLE */, &avail);
+        if (!avail) return 0;
+        trq_get(trq[i], 0x8866 /* RESULT */, &ns);
+        ms[i] = ns / 1e6;
+    }
+    tr_pending = 0;
+    return 1;
+}
 int and_pass_trace_take(GLuint* fbo, unsigned (*cnt)[4], int max)
 {
     int n = tr_n < max ? tr_n : max;
     for (int i = 0; i < n; i++) { fbo[i] = tr[i].fbo; cnt[i][0] = tr[i].draws; cnt[i][1] = tr[i].verts; cnt[i][2] = tr[i].clears; cnt[i][3] = tr[i].blits; }
     return n;
 }
-static void tr_new(GLuint f) { if (tr_on && mine() && tr_n < TRN) { tr[tr_n].fbo = f; tr[tr_n].draws = tr[tr_n].verts = tr[tr_n].clears = tr[tr_n].blits = 0; tr_n++; } }
+static void tr_new(GLuint f)
+{
+    if (!tr_on || !mine() || tr_n >= TRN) return;
+    if (trq_ok > 0) { trq_stop(); trq_begin(0x88BF, trq[tr_n]); trq_active = 1; }
+    tr[tr_n].fbo = f; tr[tr_n].draws = tr[tr_n].verts = tr[tr_n].clears = tr[tr_n].blits = 0; tr_n++;
+}
 #define TR_CUR (tr_on && tr_n > 0 && mine() ? &tr[tr_n - 1] : NULL)
 static void GLAPIENTRY c_DrawArrays(GLenum m, GLint first, GLsizei n) { if (TR_CUR) { TR_CUR->draws++; TR_CUR->verts += (unsigned)n; } r_DrawArrays(m, first, n); }
 static void GLAPIENTRY c_Clear(GLbitfield b) { if (TR_CUR) TR_CUR->clears++; r_Clear(b); }

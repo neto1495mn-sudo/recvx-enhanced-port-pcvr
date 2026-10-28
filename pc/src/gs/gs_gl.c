@@ -1530,6 +1530,22 @@ void gs_replay_begin(void)
         sh->tex = tex; sh->fbo = fbo;
         src = rt == disp ? img[sti].fbo : fbo;
         if (how == FIRST_NONE && (rt == disp || i == disp_end)) how = FIRST_READ;   /* presented */
+#ifdef __ANDROID__
+        if (how == FIRST_READ || how == FIRST_COVER) {
+            /* Android (Quest): what the replay target held is not needed - the copy below rewrites all of it (READ) or
+               all but the area the first draw covers (COVER) - told to the tiled GPU, so it does not load the whole
+               1832x1024 target from memory for the copy's pass */
+            typedef void (GLAPIENTRY *PFN_Inv)(GLenum, GLsizei, const GLenum*);
+            static PFN_Inv inv;
+            static int inv_init;
+            if (!inv_init) { inv_init = 1; inv = (PFN_Inv)SDL_GL_GetProcAddress("glInvalidateFramebuffer"); host_log("android: replay targets invalidated before their copy %s\n", inv ? "on" : "not available"); }
+            if (inv) {
+                const GLenum att = GL_COLOR_ATTACHMENT0;
+                glBindFramebuffer(GL_DRAW_FRAMEBUFFER, rt->fbo);
+                inv(GL_DRAW_FRAMEBUFFER, 1, &att);
+            }
+        }
+#endif
         if (how == FIRST_READ) blit_color(src, rt->fbo, rt->pw, rt->ph);
         else if (how == FIRST_COVER) {
             int x0 = first[i].x0, y0 = first[i].y0, x1 = first[i].x1, y1 = first[i].y1;
@@ -1548,28 +1564,44 @@ void gs_replay_begin(void)
 
 #ifdef __ANDROID__
 static int and_tr_active;   /* an eye's GPU passes are being traced */
-/* the pass trace (gl_cache.c) logged with what each target is */
+/* the pass trace (gl_cache.c): what each target is noted now, logged with the passes' GPU times once they are in
+   (and_pass_trace_flush, once a second) */
+static char and_tr_what[48], and_tr_desc[64][40];
+static unsigned and_tr_cnt[64][4];
+static int and_tr_n = -1;
 void and_pass_trace_log(const char* what)
 {
     extern int and_pass_trace_take(GLuint*, unsigned (*)[4], int);
     GLuint fb[64];
-    unsigned c[64][4];
-    char line[2048];
-    int n = and_pass_trace_take(fb, c, 64), o = 0;
-    for (int i = 0; i < n && o < (int)sizeof(line) - 96; i++) {
-        char d[48];
+    int n = and_pass_trace_take(fb, and_tr_cnt, 64);
+    for (int i = 0; i < n; i++) {
+        char* d = and_tr_desc[i];
         int k;
         d[0] = 0;
         for (k = 0; k < MAX_RT && !d[0]; k++) {
-            if (rts[k].used && rts[k].fbo == fb[i]) SDL_snprintf(d, sizeof(d), "rt%d fbp %u %dx%d", k, rts[k].fbp, rts[k].pw, rts[k].ph);
-            else if (shadow[k].fbo == fb[i] && shadow[k].tex) SDL_snprintf(d, sizeof(d), "shadow%d %dx%d", k, shadow[k].pw, shadow[k].ph);
+            if (rts[k].used && rts[k].fbo == fb[i]) SDL_snprintf(d, 40, "rt%d fbp %u", k, rts[k].fbp);
+            else if (shadow[k].fbo == fb[i] && shadow[k].tex) SDL_snprintf(d, 40, "shadow%d", k);
         }
-        if (!d[0]) for (k = 0; k < 2; k++) if (img[k].fbo == fb[i] && img[k].tex) SDL_snprintf(d, sizeof(d), "snapshot%d %dx%d", k, img[k].pw, img[k].ph);
-        if (!d[0]) SDL_snprintf(d, sizeof(d), fb[i] ? "fbo %u" : "window", fb[i]);
-        o += SDL_snprintf(line + o, sizeof(line) - (size_t)o, "%s[%s: %u draws %u verts%s%s]", i ? " " : "", d, c[i][0], c[i][1],
-                          c[i][2] ? " clear" : "", c[i][3] ? " blit" : "");
+        if (!d[0]) for (k = 0; k < 2; k++) if (img[k].fbo == fb[i] && img[k].tex) SDL_snprintf(d, 40, "snapshot%d", k);
+        if (!d[0]) SDL_snprintf(d, 40, fb[i] ? "fbo %u" : "window", fb[i]);
     }
-    host_log("android: GPU passes of %s (%d): %s\n", what, n, line);
+    SDL_strlcpy(and_tr_what, what, sizeof(and_tr_what));
+    and_tr_n = n;
+}
+void and_pass_trace_flush(void)
+{
+    extern int and_pass_trace_times(double*, int);
+    double ms[64], tot = 0.0;
+    char line[2600];
+    int o = 0;
+    if (and_tr_n < 0 || !and_pass_trace_times(ms, 64)) return;
+    for (int i = 0; i < and_tr_n && o < (int)sizeof(line) - 120; i++) {
+        tot += ms[i] > 0 ? ms[i] : 0;
+        o += SDL_snprintf(line + o, sizeof(line) - (size_t)o, "%s[%s: %.2f ms, %u draws %u verts%s%s]", i ? " " : "", and_tr_desc[i], ms[i],
+                          and_tr_cnt[i][0], and_tr_cnt[i][1], and_tr_cnt[i][2] ? " clear" : "", and_tr_cnt[i][3] ? " blit" : "");
+    }
+    host_log("android: GPU passes of %s (%d, %.2f ms on the GPU): %s\n", and_tr_what, and_tr_n, tot, line);
+    and_tr_n = -1;
 }
 #endif
 #ifdef __ANDROID__
@@ -3613,8 +3645,8 @@ static int present_vr_stereo_(const struct Frame* cur, float t)
             static RenderTarget rec_rts[MAX_RT];
             static Shadow rec_shadow[MAX_RT];
             static unsigned n_reissue, n_full, n_logged;
-            static unsigned and_tr_n;
-            if (e == 0 && (and_tr_n++ % 400) == 200) { extern void and_pass_trace(int); and_pass_trace(1); and_tr_active = 1; }
+            static unsigned and_tr_n2;
+            if (e == 0 && (and_tr_n2++ % 200) == 100) { extern int and_pass_trace(int); and_tr_active = and_pass_trace(1); }
             if (e == 1 && and_rec_ok && g_vr_one_replay) {
                 const GLint locs[5] = { u_vr_dst, u_vr_m0, u_vr_m1, u_vr_m2, u_vr_m3 };
                 const float vals[5][4] = { { vr_u.dst[0], vr_u.dst[1], vr_u.dst[2], vr_u.dst[3] }, { vr_u.m[0], vr_u.m[1], vr_u.m[2], vr_u.m[3] },
@@ -3709,7 +3741,7 @@ static int present_vr_stereo_(const struct Frame* cur, float t)
 #endif
 #ifdef __ANDROID__
         { extern void and_gq_stage(int); and_gq_stage(-1); }
-        if (and_tr_active) { extern void and_pass_trace(int); and_pass_trace(0); and_pass_trace_log("an eye (replay + eye image)"); and_tr_active = 0; }
+        if (and_tr_active) { extern int and_pass_trace(int); and_pass_trace(0); and_pass_trace_log("an eye (replay + eye image)"); and_tr_active = 0; }
 #endif
         glFlush();   /* vr99: the eye's work to the GPU now, not all at the hand-off (xrEndFrame waits less) */
         xr_eye_release(e);
