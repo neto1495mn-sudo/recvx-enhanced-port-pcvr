@@ -1820,6 +1820,10 @@ static int and_mv_target(int i, int pw, int ph)   /* slot i's 2-layer target of 
     glGenTextures(1, &t->tex);
     glBindTexture(0x8C1A /* GL_TEXTURE_2D_ARRAY */, t->tex);
     and_ts3d(0x8C1A, 1, GL_RGBA16F, pw, ph, 2);
+    if (and_fov > 0) {   /* foveated, per layer at that eye's lens centre (and_mv_foveate) */
+        glTexParameteri(0x8C1A, AND_FOV_BITS, 0x1 | 0x2);
+        glTexParameterf(0x8C1A, AND_FOV_MIN, 0.5f);
+    }
     glTexParameteri(0x8C1A, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(0x8C1A, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(0x8C1A, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
@@ -1916,6 +1920,21 @@ static void and_mv_attach_depth(GLuint fbo, uint32_t zbp, int pw, int ph)
     if (i == nat) { if (nat == 16) { nat = 0; i = 0; } nat++; }
     at[i].fbo = fbo; at[i].dt = and_mvz[z].tex;
     and_mvnat = nat;
+}
+/* the multiview targets' foveation: each layer's full-detail centre where that eye looks straight ahead (its frustum
+   is not centred), less detail towards the edges. The log: the views where the rate fell (45-55 images a second) had the
+   scene's pass at 6-9 ms on the GPU against 3.5-4.5 ms (fewer vertices - the pixels: effects, smoke, overlays) */
+static void and_mv_foveate(void)
+{
+    if (and_fov <= 0) return;
+    for (int i = 0; i < MAX_RT; i++) {
+        if (!and_mvt[i].tex || !rts[i].used || rts[i].vw <= 0) continue;
+        for (int k = 0; k < 2; k++) {
+            float fx = (and_mv_dst[k * 4 + 0] + (float)g_margin_x) / (float)rts[i].vw * 2.0f - 1.0f;
+            float fy = and_mv_dst[k * 4 + 1] / (float)rts[i].vh * 2.0f - 1.0f;
+            and_fovp(and_mvt[i].tex, (GLuint)k, 0, fx, fy, 2.0f, 1.5f, 0.3f);
+        }
+    }
 }
 static void and_mv_set_eye_uniforms(void)   /* (gs_flush, multiview program bound) */
 {
@@ -4299,6 +4318,7 @@ static int present_vr_stereo_(const struct Frame* cur, float t)
                 }
                 and_mv_bad = 0; and_mv_why = NULL;
                 memset(uknown, 0, sizeof(uknown)); clip_on = -1; fb_forget();
+                and_mv_foveate();
                 and_mv_use(1);
                 if (chars) VR_TM(0, stream_replay_chars(cur, t, chT));
                 else VR_TM(0, stream_replay_exact(cur));
