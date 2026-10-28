@@ -87,11 +87,9 @@ static void gpu_poll(int k)
 
 void and_gpu_begin(int k)
 {
-    if (gpu_ok < 0) {   /* off: reading the queries back each frame can make the driver submit (the profiler: __ioctl 12-33%);
-                           the GPU was measured (~10-30% busy) - RECVX_GPU_TIMERS=1 (env.txt) turns them on again */
-        if (SDL_getenv("RECVX_GPU_TIMERS")) gpu_init();
-        else { gpu_ok = 0; host_log("android: GPU timer queries off\n"); }
-    }
+    static unsigned every[AND_N];
+    if (gpu_ok < 0) gpu_init();
+    if ((every[k]++ & 7) != 0) return;   /* 1 in 8 measured: reading queries back each frame can make the driver submit */
     if (!gpu_ok || q_active[k] >= 0) return;
     gpu_poll(k);
     for (int i = 0; i < NQ; i++)
@@ -123,6 +121,10 @@ void and_game_frame(uint64_t wall_ns, uint64_t cpu_ns, uint64_t wait_ns)
     SDL_UnlockSpinlock(&game_lock);
 }
 
+/* gs_gl.c draws these in the headset: CPU % of one core (the process), ms a game frame / a headset image; GPU busy %,
+   ms a game frame / a headset image */
+volatile float g_and_hud[6];
+
 void and_prof_report(void)
 {
     static uint64_t last_t, last_proc;
@@ -139,6 +141,10 @@ void and_prof_report(void)
                  a->gpu / 1e6 / ng, a->gpu_max / 1e6, a->ngpu, a->gpu_lost,
                  a->ngpu ? 100.0 * (double)a->gpu / ng * a->n / (secs * 1e9) : 0.0, a->draws / n, a->prims / n);
         if (k == AND_EXEC) exec_avg = a->wall / 1e6 / n;
+        g_and_hud[1 + k] = a->n ? (float)(a->cpu / 1e6 / n) : 0.0f;
+        g_and_hud[4 + k] = a->ngpu ? (float)(a->gpu / 1e6 / ng) : 0.0f;
+        if (k == AND_EXEC) g_and_hud[3] = 0.0f;
+        if (a->ngpu) g_and_hud[3] += (float)(100.0 * (double)a->gpu / ng * a->n / (secs * 1e9));
         *a = (Acc){ 0 };
     }
     {
@@ -156,6 +162,7 @@ void and_prof_report(void)
           host_log("android: GL state calls last second: %u skipped as repeated, %u passed to the driver\n", sk, pa); }
         { void gs_upload_stats(unsigned*, unsigned*); unsigned uh, um; gs_upload_stats(&uh, &um);
           host_log("android: texture upload chunks last second: %u skipped (same data, memory untouched), %u run\n", uh, um); }
+        g_and_hud[0] = last_proc ? (float)(100.0 * (double)(proc - last_proc) / (secs * 1e9)) : 0.0f;
         host_log("android: cpu/gpu game thread: %u frames, cpu avg %.1f max %.1f ms, wall avg %.1f ms, waiting for the render thread avg %.1f ms; "
                  "process cpu %.0f%% of one core; effect polygons split %u\n",
                  game.n, game.cpu / 1e6 / n, game.cpu_max / 1e6, game.wall / 1e6 / n, game.wait / 1e6 / n,

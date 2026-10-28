@@ -82,28 +82,47 @@ int g_vr_one_replay = 0;   /* off: on the Quest it was not faster (38.7 vs 44 im
 /* Android (Quest): the frame rates in the picture (the owner follows them in the headset) - two numbers drawn with
    scissored clears (no shader, no font): images the headset got per second, game frames per second. Green: full
    rate, yellow: some lost, red: slow. x, y: lower left in the bound framebuffer; h: its height (the size) */
+static void and_text(int x, int y, int px, const char* str, float r, float g, float b)   /* 3x5 glyphs by scissored clears */
+{
+    static const char chars[] = "0123456789.CG%";
+    static const uint16_t font[] = { 0x7B6F, 0x2C97, 0x73E7, 0x73CF, 0x5BC9, 0x79CF, 0x79EF, 0x7249, 0x7BEF, 0x7BCF,
+                                     0x0002, 0x7927, 0x796F, 0x52A5 };
+    glClearColor(r, g, b, 1);
+    for (int cx = x; *str; str++, cx += 4 * px) {
+        const char* f = strchr(chars, *str);
+        if (!f || !*str) continue;
+        for (int rr = 0; rr < 5; rr++)
+            for (int c = 0; c < 3; c++)
+                if (font[f - chars] >> (14 - rr * 3 - c) & 1) { glScissor(cx + c * px, y + (4 - rr) * px, px, px); glClear(GL_COLOR_BUFFER_BIT); }
+    }
+}
 static void and_fps_draw(int x, int y, int h)
 {
-    static const uint16_t font[10] = {   /* 3x5, rows top to bottom, 3 bits each (bit 2 = left) */
-        0x7B6F, 0x2C97, 0x73E7, 0x73CF, 0x5BC9, 0x79CF, 0x79EF, 0x7249, 0x7BEF, 0x7BCF };
-    int px = h / 170 > 2 ? h / 170 : 2, cx = x;
-    char buf[16];
-    int n = snprintf(buf, sizeof(buf), "%d %d", g_and_fps_headset, g_and_fps_game);
+    extern volatile float g_and_hud[6];   /* android_prof.c */
+    int px = h / 170 > 2 ? h / 170 : 2, lh = 7 * px;
+    char l0[16], l1[16], l2[32], l3[32];
+    int hv = g_and_fps_headset, gv = g_and_fps_game, n0, n1;
+    snprintf(l0, sizeof(l0), "%d", hv);
+    snprintf(l1, sizeof(l1), "%d", gv);
+    snprintf(l2, sizeof(l2), "C %.0f%% %.1f %.1f", g_and_hud[0], g_and_hud[1], g_and_hud[2]);
+    snprintf(l3, sizeof(l3), "G %.0f%% %.1f %.1f", g_and_hud[3], g_and_hud[4], g_and_hud[5]);
+    n0 = (int)strlen(l0); n1 = (int)strlen(l1);
     glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
     glEnable(GL_SCISSOR_TEST);
-    glScissor(x - px, y - px, n * 4 * px + px, 7 * px);
-    glClearColor(0, 0, 0, 1);
-    glClear(GL_COLOR_BUFFER_BIT);
-    for (int i = 0, field = 0; i < n; i++, cx += 4 * px) {
-        int v = field ? g_and_fps_game : g_and_fps_headset;
-        int good = field ? v >= 28 : v >= 65, ok = field ? v >= 20 : v >= 45;
-        if (buf[i] == ' ') { field = 1; continue; }
-        if (buf[i] < '0' || buf[i] > '9') continue;
-        glClearColor(good ? 0.2f : 1.0f, good || ok ? 1.0f : 0.25f, 0.2f, 1);
-        for (int r = 0; r < 5; r++)
-            for (int c = 0; c < 3; c++)
-                if (font[buf[i] - '0'] >> (14 - r * 3 - c) & 1) { glScissor(cx + c * px, y + (4 - r) * px, px, px); glClear(GL_COLOR_BUFFER_BIT); }
+    {   /* the background: the widest line */
+        int wl = (int)(strlen(l2) > strlen(l3) ? strlen(l2) : strlen(l3)), w0 = n0 + 1 + n1;
+        glScissor(x - px, y - 2 * lh - px, (wl > w0 ? wl : w0) * 4 * px + px, 3 * lh);
+        glClearColor(0, 0, 0, 1);
+        glClear(GL_COLOR_BUFFER_BIT);
     }
+    {   /* frame rates: green full, yellow some lost, red slow */
+        int good = hv >= 65, ok = hv >= 45;
+        and_text(x, y, px, l0, good ? 0.2f : 1.0f, good || ok ? 1.0f : 0.25f, 0.2f);
+        good = gv >= 28; ok = gv >= 20;
+        and_text(x + (n0 + 1) * 4 * px, y, px, l1, good ? 0.2f : 1.0f, good || ok ? 1.0f : 0.25f, 0.2f);
+    }
+    and_text(x, y - lh, px, l2, 0.85f, 0.85f, 1.0f);   /* CPU: % of one core, ms a game frame, ms a headset image */
+    and_text(x, y - 2 * lh, px, l3, 1.0f, 0.85f, 0.6f);   /* GPU: busy %, ms a game frame, ms a headset image */
     glDisable(GL_SCISSOR_TEST);
 }
 #endif
