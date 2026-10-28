@@ -632,14 +632,22 @@ static long inst_pair(const Frame* p, const Inst* a, const Frame* c, const Inst*
     uint32_t j = 0;
     for (uint32_t k = 0; k < b->ng; k++) {
         const Group* g = &c->g[b->g0 + k];
+#ifdef __ANDROID__
+        /* Android (Quest): the score from at most ~16 vertices a group - the profiler showed inst_pair at up to 28% of the
+           render thread (every instance of a mesh scored against every candidate, all vertices); the pairs themselves
+           (strip, order, key) do not depend on it */
+        uint32_t step = g->nv > 32 ? g->nv / 16 : 1, ns = (g->nv + step - 1) / step;
+#else
+        const uint32_t step = 1, ns = g->nv;
+#endif
         pair[k] = -1;
-        total += g->nv;
+        total += ns;
         for (uint32_t jj = j; jj < a->ng && jj < j + 64; jj++) {
             const Group* h = &p->g[a->g0 + jj];
             if (h->strip != g->strip || h->ord != g->ord) continue;
             if (h->key0 == g->key0 && h->nv == g->nv) {
                 pair[k] = (int32_t)(a->g0 + jj);
-                for (uint32_t v = 0; v < g->nv; v++) {
+                for (uint32_t v = 0; v < g->nv; v += step) {
                     uint64_t pa = gpos(p, h, v), pb = gpos(c, g, v);
                     long d;
                     if (pa == NO_POS || pb == NO_POS) { total--; n--; continue; }   /* no screen position: not judged */
@@ -647,7 +655,7 @@ static long inst_pair(const Frame* p, const Inst* a, const Frame* c, const Inst*
                     sum += d < 2 * JUMP ? d : 2 * JUMP;
                     near += d <= ((g->key0 & NATIVE_KEY) && !(b->mesh & 1) ? NATIVE_JUMP : JUMP);   /* effects: JUMP (a slot reused within a frame) */
                 }
-                n += g->nv;
+                n += ns;
             }
             j = jj + 1;
             break;
