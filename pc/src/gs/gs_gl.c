@@ -1564,6 +1564,22 @@ void gs_replay_begin(void)
 
 #ifdef __ANDROID__
 static int and_tr_active;   /* an eye's GPU passes are being traced */
+/* Android (Quest): an eye's replay ends with a full-target copy of the drawn picture into the display target (one sprite,
+   PS2_swap: 0.5 ms of GPU an eye for one draw - the 1832x1024 target written and stored). When that copy changes no
+   colour (checked below), it is held back and the eye image reads the source target itself; anything drawn after it in
+   the replay makes the copy first (and_defer_do) */
+static RenderTarget *and_defer_src, *and_defer_dst;
+static unsigned and_defer_n, and_defer_no[9];
+static void and_defer_do(void)
+{
+    RenderTarget *s = and_defer_src, *d = and_defer_dst;
+    and_defer_src = and_defer_dst = NULL;
+    if (!s || !d) return;
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, s->fbo);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, d->fbo);
+    glDisable(GL_SCISSOR_TEST);
+    glBlitFramebuffer(0, 0, s->pw, s->ph, 0, 0, d->pw, d->ph, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+}
 /* the pass trace (gl_cache.c): what each target is noted now, logged with the passes' GPU times once they are in
    (and_pass_trace_flush, once a second) */
 static char and_tr_what[48], and_tr_desc[64][40];
@@ -1627,6 +1643,9 @@ void gs_flush(void)
     if (gs_flush_blocked) return;
     uint64_t test;
     if (!batch_valid || vcount == 0) { vcount = 0; nsruns = 0; return; }
+#ifdef __ANDROID__
+    if (and_defer_dst) and_defer_do();   /* something drawn after the held-back copy: the copy first */
+#endif
     stat_flushes++;
 #ifdef __ANDROID__
     g_and_stall.draws++;
@@ -1749,6 +1768,11 @@ void gs_flush(void)
 #endif
     /* texture */
     tme = (st->prim >> 4) & 1;
+#ifdef __ANDROID__
+    RenderTarget* and_srt = NULL;
+    float and_ox = 0.0f, and_oy = 0.0f;
+    int and_is16 = 0;
+#endif
     {
         static int notex = -1;   /* read once: an environment lookup per draw */
         if (notex < 0) notex = SDL_getenv("RECVX_DBG_NOTEX") != NULL;
@@ -1778,6 +1802,9 @@ void gs_flush(void)
             }
         }
         rt_touch(srt);
+#ifdef __ANDROID__
+        and_srt = srt; and_ox = ox; and_oy = oy; and_is16 = is16;
+#endif
         GLint filt = ((st->ctx.tex1 >> 5) & 1) ? GL_LINEAR : GL_NEAREST;
         int wms = st->ctx.clamp & 3, wmt = (st->ctx.clamp >> 2) & 3, hdk = 0;
         glActiveTexture(GL_TEXTURE0);
@@ -1832,6 +1859,48 @@ void gs_flush(void)
     uni1i(u_ate, (int)(test & 1));
     uni1i(u_atst, (int)((test >> 1) & 7));
     uni1f(u_aref, (float)((test >> 4) & 0xFF));
+#ifdef __ANDROID__
+    if (gs_replaying && vr_u.on && tme && vcount == 6 && !nsruns) {
+        /* the copy that changes no colour: a sprite sampling another target of the same size texel for pixel (FST,
+           positions = texture coordinates + the target offset), DECAL or MODULATE by 128, no fog, no alpha test, no
+           destination alpha test, all colour channels written, and no blending or one that gives the source
+           ((Cs - Cd) * 128/128 + Cd); covering the whole width and at least 448 lines */
+        uint64_t al = st->ctx.alpha, tex0 = st->ctx.tex0;
+        int tfx = (int)((tex0 >> 35) & 3), a = al & 3, b = (al >> 2) & 3, c = (al >> 4) & 3, d = (al >> 6) & 3, why = 0;
+        int abe = (st->prim >> 6) & 1, wms = st->ctx.clamp & 3, wmt = (st->ctx.clamp >> 2) & 3;
+        float mx0 = 1e9f, mx1 = -1e9f, my0 = 1e9f, my1 = -1e9f;
+        if (!and_srt || and_srt == cur_rt || and_is16) why = 1;
+        else if (and_srt->pw != cur_rt->pw || and_srt->ph != cur_rt->ph || and_srt->vw != cur_rt->vw) why = 2;
+        else if (!((st->prim >> 8) & 1) || wms >= 2 || wmt >= 2) why = 3;
+        else if (tfx > 1 || ((st->prim >> 5) & 1) || ((test & 1) && ((test >> 1) & 7) != 1) || ((test >> 14) & 1) || (fbmsk & 0xFFFFFF)) why = 4;
+        else if (abe && !(a == b && d == 0) && !(a == 0 && b == 1 && c == 2 && d == 1 && ((al >> 32) & 0xFF) == 128)) why = 5;
+        else {
+            for (int k = 0; k < 6; k++) {
+                const GlVertex* v = &vbuf[k];
+                if (v->w != 1.0f || fabsf(v->s + and_ox - v->x) > 0.01f || fabsf(v->t + and_oy - v->y) > 0.01f) { why = 6; break; }
+                if (tfx == 0 && (fabsf(v->r * 255.0f - 128.0f) > 0.01f || fabsf(v->g * 255.0f - 128.0f) > 0.01f || fabsf(v->b * 255.0f - 128.0f) > 0.01f)) { why = 7; break; }
+                mx0 = fminf(mx0, v->x); mx1 = fmaxf(mx1, v->x); my0 = fminf(my0, v->y); my1 = fmaxf(my1, v->y);
+            }
+            if (!why && (mx0 > -(float)g_margin_x + 0.01f || mx1 < (float)(cur_rt->vw - g_margin_x) - 0.01f || my0 > 0.01f || my1 < 448.0f)) why = 8;
+        }
+        if (!why) {
+            and_defer_src = and_srt; and_defer_dst = cur_rt; and_defer_n++;
+            vcount = 0; nsruns = 0;
+            return;
+        }
+        if (cur_rt->fbp == gs.disp_fbp) {   /* (a draw into the display target not taken: why, for the log) */
+            and_defer_no[why]++;
+            static int nl;
+            if (nl < 6) {
+                nl++;
+                host_log("android: display copy not held back (%d): tfx %d abe %d alpha %llx fst %d test %llx fbmsk %x src %p is16 %d ox %.1f oy %.1f "
+                         "v0 x %.1f y %.1f s %.1f t %.1f rgb %.3f %.3f %.3f, x %.1f..%.1f y %.1f..%.1f margin %d vw %d\n",
+                         why, tfx, abe, (unsigned long long)al, (int)((st->prim >> 8) & 1), (unsigned long long)test, fbmsk, (void*)and_srt, and_is16,
+                         and_ox, and_oy, vbuf[0].x, vbuf[0].y, vbuf[0].s, vbuf[0].t, vbuf[0].r, vbuf[0].g, vbuf[0].b, mx0, mx1, my0, my1, g_margin_x, cur_rt->vw);
+            }
+        }
+    }
+#endif
 
 #ifdef __ANDROID__
     g_and_sub = 6;   /* (profiler stage: vertex upload) */
@@ -3631,6 +3700,9 @@ static int present_vr_stereo_(const struct Frame* cur, float t)
             vr_u.hud[2] = g_vr_hud_y / 100.0f * vr_u.zs;   /* V.y is down: up is subtracted */
         } else vr_u.hud[0] = vr_u.hud[1] = vr_u.hud[2] = 0.0f;
         vr_u.on = 1;
+#ifdef __ANDROID__
+        and_defer_src = and_defer_dst = NULL;   /* (a copy held back by an earlier replay is not this one's) */
+#endif
         {
             static unsigned nlog;
             int logit = e == 0 && nlog < 40 && (frame_no % 90) == 0;
@@ -3689,6 +3761,18 @@ static int present_vr_stereo_(const struct Frame* cur, float t)
         }
         vr_u.on = 0;
         rt = rt_find(gs.disp_fbp, gs.disp_fbw ? gs.disp_fbw : 10);
+#ifdef __ANDROID__
+        GLuint and_eye_src = rt ? rt->tex : 0;
+        if (and_defer_dst && and_defer_dst == rt) { and_eye_src = and_defer_src->tex; and_defer_src = and_defer_dst = NULL; }
+        else if (and_defer_dst) and_defer_do();
+        {
+            static unsigned nlog;
+            if ((nlog++ % 2000) == 10)
+                host_log("android: display copy held back (eye image read from the drawn target) %u times; not: other target %u, size %u, coordinates mode %u, "
+                         "colour/fog/tests %u, blending %u, not texel for pixel %u, colour not 128 %u, not covering %u\n",
+                         and_defer_n, and_defer_no[1], and_defer_no[2], and_defer_no[3], and_defer_no[4], and_defer_no[5], and_defer_no[6], and_defer_no[7], and_defer_no[8]);
+        }
+#endif
         VR_TM(1, tex = xr_eye_target(e, w, h));
         if (!rt || !tex) {
             static int nfail;
@@ -3701,7 +3785,12 @@ static int present_vr_stereo_(const struct Frame* cur, float t)
 #ifdef __ANDROID__
             { extern void and_gq_stage(int); and_gq_stage(2); }
 #endif
-            VR_TM(2, draw_area_to(rt->tex, rt->vw, rt->vh, w, h); draw_lasers(v, M, E, w, h, rt); draw_box(v, M, E, w, h, rt); draw_markers(v, M, E, w, h); draw_vignette(E, w, h); hold_keep_and_dim(e, w, h, vr_fbo));
+#ifdef __ANDROID__
+            GLuint and_area_tex = and_eye_src;
+#else
+            GLuint and_area_tex = rt->tex;
+#endif
+            VR_TM(2, draw_area_to(and_area_tex, rt->vw, rt->vh, w, h); draw_lasers(v, M, E, w, h, rt); draw_box(v, M, E, w, h, rt); draw_markers(v, M, E, w, h); draw_vignette(E, w, h); hold_keep_and_dim(e, w, h, vr_fbo));
 #ifdef __ANDROID__
             glBindFramebuffer(GL_FRAMEBUFFER, vr_fbo);
             glViewport(0, 0, w, h);
