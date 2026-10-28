@@ -50,6 +50,11 @@ static unsigned and_rt_skipped;
 static uint16_t and_rt_unread[16];
 static uint32_t and_rt_unread_fbp[16];
 static unsigned and_rt_exec_skipped;
+/* option 1 (log only for now): could an executed frame skip its drawing? (in VR its picture is not shown: the eyes
+   draw again) - what read its targets: draws sampling a target (other than the display copy), read backs into GS
+   memory (StoreImage), captures (StoreRenderTex) */
+static unsigned and_rd_tex, and_rd_disp, and_rd_mem, and_rd_cap;
+static unsigned and_x_frames, and_x_free, and_x_tex, and_x_mem, and_x_cap;
 #endif
 typedef struct {
     int used;
@@ -92,7 +97,10 @@ static unsigned and_waits; static uint64_t and_wait_ns;   /* (the ring's waits: 
 static void and_persistent_init(void);
 volatile int g_and_fps_headset, g_and_fps_game;   /* render.c, once a second: images to the headset, game frames */
 int g_and_ab;   /* render.c: A/B test mode - bit 0 no window swap, bit 1 no per-eye glFlush */
-int g_vr_one_replay = 0;   /* off: on the Quest it was not faster (38.7 vs 44 images/s) and grates/glass went missing - the right eye re-issues the left eye's recorded GL calls (gl_record.c); 0: both eyes replay */
+int g_vr_one_replay = 1;   /* the right eye re-issues the left eye's recorded GL calls (gl_record.c); 0: both eyes replay. (Off before: 38.7 vs 44
+                              images/s while the GPU was the limit; now the CPU is - ~8 ms an image in RM_0080, most of it the second eye's
+                              replay - and the grates/glass are missing with it off too. The CPU work of a replay is the same for both eyes:
+                              the characters' transform chT is made once per image, the eye only in uniforms u_vr_dst/u_vr_m0..3) */
 /* Android (Quest): the frame rates in the picture (the owner follows them in the headset) - two numbers drawn with
    scissored clears (no shader, no font): images the headset got per second, game frames per second. Green: full
    rate, yellow: some lost, red: slow. x, y: lower left in the bound framebuffer; h: its height (the size) */
@@ -1840,6 +1848,7 @@ void gs_flush(void)
         rt_touch(srt);
 #ifdef __ANDROID__
         and_srt = srt; and_ox = ox; and_oy = oy; and_is16 = is16;
+        if (!gs_replaying && srt && srt != cur_rt) { if (cur_rt->fbp == gs.disp_fbp) and_rd_disp++; else and_rd_tex++; }
 #endif
         GLint filt = ((st->ctx.tex1 >> 5) & 1) ? GL_LINEAR : GL_NEAREST;
         int wms = st->ctx.clamp & 3, wmt = (st->ctx.clamp >> 2) & 3, hdk = 0;
@@ -2622,6 +2631,9 @@ void gs_rt_to_mem(uint32_t bp, uint32_t bw, uint32_t psm, uint32_t x, uint32_t y
     t1 = SDL_GetTicks();
 #endif
     rt_touch(rt);
+#ifdef __ANDROID__
+    if (!gs_replaying) and_rd_mem++;
+#endif
     sx = (int)((x + g_margin_x) * g_scale); sy = (int)(y * g_scale);
     sw = (int)(w * g_scale); sh = (int)(h * g_scale);
     if (sx + sw > rt->pw) sw = rt->pw - sx;
@@ -2678,6 +2690,9 @@ unsigned int gs_capture_rt(uint32_t fbp, uint32_t fbw, uint32_t w, uint32_t h, i
     int cw = 0, ch = 0, pw = (int)(gw * g_scale), ph = (int)(h * g_scale);
     gs_flush();
     rt_touch(rt);
+#ifdef __ANDROID__
+    if (!gs_replaying) and_rd_cap++;
+#endif
     ensure_target(&tex, &fbo, &cw, &ch, pw, ph);
     glDisable(GL_SCISSOR_TEST);
     glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
@@ -2803,6 +2818,7 @@ void gs_frame_begin(void)
     snapshot_valid = 0;   /* no replays of the previous frame while this one is half executed (download) */
 #ifdef __ANDROID__
     memset(and_rt_drawn, 0, sizeof(and_rt_drawn)); memset(and_rt_used, 0, sizeof(and_rt_used));
+    and_rd_tex = and_rd_disp = and_rd_mem = and_rd_cap = 0;
 #endif
     memset(first, 0, sizeof(first));
     gs_set_scale(gs_wanted_scale());
@@ -2853,6 +2869,14 @@ void gs_frame_executed(int interpolate)
             else if (and_rt_used[i]) and_rt_unread[i] = 0;
             if (and_rt_skip[i] && o < 140) o += SDL_snprintf(b + o, sizeof(b) - (size_t)o, " fbp %u", rts[i].fbp);
         }
+        and_x_frames++;
+        if (!and_rd_tex && !and_rd_mem && !and_rd_cap) and_x_free++;
+        if (and_rd_tex) and_x_tex++;
+        if (and_rd_mem) and_x_mem++;
+        if (and_rd_cap) and_x_cap++;
+        if ((nlog % 300) == 30)
+            host_log("android: option 1 (game frames not drawn in VR): of %u game frames %u read no target but the display copy; %u had draws sampling a "
+                     "target, %u read backs into GS memory, %u captures\n", and_x_frames, and_x_free, and_x_tex, and_x_mem, and_x_cap);
         if ((nlog++ % 900) == 30) host_log("android: targets drawn and never read this frame (not drawn in the eyes):%s; eye draws skipped so far %u, "
                                           "game frame draws skipped (unread 5 s) %u\n", o ? b : " none", and_rt_skipped, and_rt_exec_skipped);
     }
@@ -3786,6 +3810,7 @@ static int present_vr_stereo_(const struct Frame* cur, float t)
             static RenderTarget rec_rts[MAX_RT];
             static Shadow rec_shadow[MAX_RT];
             static unsigned n_reissue, n_full, n_logged;
+            static RenderTarget *and_rec_defer_src, *and_rec_defer_dst;
             static unsigned and_tr_n2;
             if (e == 0 && (and_tr_n2++ % 200) == 100) { extern int and_pass_trace(int); and_tr_active = and_pass_trace(1); }
             if (e == 1 && and_rec_ok && g_vr_one_replay) {
@@ -3796,6 +3821,7 @@ static int present_vr_stereo_(const struct Frame* cur, float t)
                 memcpy(rts, rec_rts, sizeof(rts)); memcpy(shadow, rec_shadow, sizeof(shadow));   /* the targets as the left eye's replay left them */
                 VR_TM(0, glrec_replay(locs, vals, 5));
                 memset(uknown, 0, sizeof(uknown)); clip_on = -1; fb_forget();   /* (GL state now the recording's end, not the caches') */
+                and_defer_src = and_rec_defer_src; and_defer_dst = and_rec_defer_dst;   /* (the left eye held its display copy back: so does this one) */
                 n_reissue++;
             } else {
                 int rec = e == 0 && g_vr_one_replay;
@@ -3809,6 +3835,7 @@ static int present_vr_stereo_(const struct Frame* cur, float t)
                 else VR_TM(0, stream_replay_exact(cur));
                 if (rec) {
                     and_rec_ok = glrec_end();
+                    and_rec_defer_src = and_defer_src; and_rec_defer_dst = and_defer_dst;
                     if (and_rec_ok) { memcpy(rec_rts, rts, sizeof(rts)); memcpy(rec_shadow, shadow, sizeof(shadow)); rt_restore_deleted = 0; }
                     else if (n_logged < 20) { n_logged++; host_log("android: one replay for both eyes: not this image (%s)\n", glrec_why()); }
                 }
