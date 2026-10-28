@@ -81,20 +81,20 @@ static int and_gate_usable(void)
     extern int g_vr_stereo;
     return xr_active() && g_vr_stereo && g_config.interpolate && and_s_prev && and_s_cur > and_s_prev && and_s_cur - and_s_prev < 100000000ull;
 }
-/* D: the next frame must be there when an image needs it. Changing D moves the game time shown (up: back, down: ahead),
-   so it is kept still: it starts at the largest ahead (drawn before seen) + 6 ms + a frame, goes up 2 ms each time an image
-   needed a frame that was not there, and down 1 ms after 10 s without that (the motion log with D following the ahead:
-   86-115 ms, ~25% of the images stopped, ~26% jumped) */
-static unsigned and_need_miss, and_t_low, and_t_high, and_forced_pop;
-static uint64_t and_d_calm;
+/* D: the next frame must be there when an image needs it - drawn (ahead) before it is seen, the frame executed (~6 ms)
+   and one frame of game time: the largest ahead seen lately (slowly forgotten) + 6 ms + a frame */
 static void and_track_d(double x, double now_ns)
 {
-    double ahead = x - now_ns;
-    if (ahead > 0.0 && ahead < 200e6 && ahead > and_ahead_pk) and_ahead_pk = ahead;
-    if (and_d <= 0.0) { and_d = and_ahead_pk + 6e6 + (double)(and_s_cur - and_s_prev); and_d_calm = (uint64_t)now_ns; }
-    else if ((uint64_t)now_ns - and_d_calm > 10000000000ull) { and_d -= 1e6; and_d_calm = (uint64_t)now_ns; }
+    double ahead = x - now_ns, want;
+    if (ahead > 0.0 && ahead < 200e6) {
+        if (ahead > and_ahead_pk) and_ahead_pk = ahead;
+        else and_ahead_pk -= (and_ahead_pk - ahead) * 0.002;
+    }
+    want = and_ahead_pk + 6e6 + (double)(and_s_cur - and_s_prev);
+    if (and_d <= 0.0 || want > and_d + 200e6 || want < and_d - 200e6) and_d = want;
+    else if (want > and_d) and_d += (want - and_d) * 0.5;
+    else and_d -= (and_d - want) * 0.01;
 }
-static void and_d_missed(double now_ns) { if (and_d < 150e6) and_d += 2e6; and_d_calm = (uint64_t)now_ns; and_need_miss++; }
 static unsigned and_t_new;               /* images interpolated by display/submit times */   /* images: no interpolation (the frame itself), t held at 1, t in between */
 static int and_trace_exec;   /* this game frame's GPU passes are traced (gl_cache.c) */
 /* game frame pacing: intervals between game frames as the game thread finished them (sub) and as the render thread
@@ -154,10 +154,7 @@ void render_loop(void)
             if (x > 0.0 && stream_queued() < 2 && x - and_d < (double)and_s_cur) and_gate = 1;
         }
         if (and_gate) { f = NULL; and_gated_n++; }
-        else if (cur && and_d > 0.0 && and_gate_usable()) {   /* (needed: before the image, whatever and_hold says) */
-            if (stream_queued() >= 2) and_forced_pop++;
-            f = stream_pop(0);
-        }
+        else if (cur && and_d > 0.0 && and_gate_usable()) f = stream_pop(0);   /* (needed: before the image, whatever and_hold says) */
         else
         f = and_hold ? NULL : stream_pop(!cur ? 20 : pace_until > now ? (int)((pace_until - now) / 1000000) : 0);
 #else
@@ -199,9 +196,8 @@ void render_loop(void)
                 host_log("android: motion images last second: %u without interpolation (the game frame itself), %u interpolated but at t = 1 (the next frame "
                          "not there yet), %u in between; %u timed by the display and the game's frame times (delay %.1f ms)\n", mo_nointerp, mo_tclamp, mo_tmid,
                          and_t_new, and_d / 1e6);
-                host_log("android: game frames held until an image needed them: %u loops; images before their pair (t < 0) %u, after it (t > 1: the frame "
-                         "needed was not there, D up) %u; frames taken because 2 were waiting %u\n", and_gated_n, and_t_low, and_t_high, and_forced_pop);
-                mo_nointerp = mo_tclamp = mo_tmid = 0; and_t_new = 0; and_gated_n = 0; and_t_low = and_t_high = and_forced_pop = 0;
+                host_log("android: game frames held until an image needed them: %u loops\n", and_gated_n);
+                mo_nointerp = mo_tclamp = mo_tmid = 0; and_t_new = 0; and_gated_n = 0;
                 mo_n = mo_stop = mo_slow = mo_ok = mo_fast = mo_gap = 0; mo_rmin = 1e9; mo_rmax = 0;
                 xr_timing_log();
                 if (pc_n) host_log("android: game frame pacing last second: %u frames; from the game thread %u late %u bunched (max %.1f ms), "
@@ -379,8 +375,8 @@ void render_loop(void)
                 if (x > 0.0) {
                     and_track_d(x, (double)now);
                     t = (float)((x - and_d - (double)and_s_prev) / (double)(and_s_cur - and_s_prev));
-                    if (t < 0.0f) { t = 0.0f; and_t_low++; }
-                    if (t > 1.0f) { t = 1.0f; and_t_high++; and_d_missed((double)now); }   /* (the next frame was needed and not there) */
+                    if (t < 0.0f) t = 0.0f;
+                    if (t > 1.0f) t = 1.0f;
                     and_x_last = x;
                     and_t_new++;
                 }
