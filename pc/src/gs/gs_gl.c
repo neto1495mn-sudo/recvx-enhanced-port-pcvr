@@ -1819,7 +1819,8 @@ void gs_draw_primitive(int type, const GsVertex* v, int count, const GsContext* 
             static uint32_t seen[64];
             static int nseen;
             int fx = g_vr_fx_fix && z1 > 100.0f && !gs_raw_ui && !prim_layer;
-            if (vr_u.on && !gs_replaying && !gs_raw_vr && !gs_vu1_vr && !fx && !prim_tall && nseen < 64) {
+            (void)gs_replaying;
+            if (vr_u.on && !gs_raw_vr && !gs_vu1_vr && !fx && !prim_tall && nseen < 64) {   /* (vr_u.on: an eye's replay) */
                 uint32_t key = (uint32_t)(c->tex0 & 0x3FFF) | ((uint32_t)type << 16) | (((prim >> 4) & 1) << 20);
                 int k = 0;
                 while (k < nseen && seen[k] != key) k++;

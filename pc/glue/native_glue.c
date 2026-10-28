@@ -262,22 +262,25 @@ uint32_t pc_native_prim(unsigned int prim, const unsigned int* dp, int n, int cl
 #ifdef __ANDROID__
     if (!clip_3d_on && n > 0 && !(v[0].cull & 0x60)) {   /* Android (Quest) diagnosis: 2D going onto the VR panel (yellow with vr_debug_cores) -
                                                             a lit window's panes were among them; which game function, its depths */
-        static unsigned nl;
+        static unsigned nl, tick;
         static uint32_t seen[64];
-        uint32_t ra = (uint32_t)(uintptr_t)__builtin_return_address(0);
-        int k = 0;
-        while (k < 64 && seen[k] && seen[k] != ra) k++;
-        if (k < 64 && !seen[k] && nl < 60) {   /* each calling site once */
+        if (!(++tick & 15) && nl < 60) {   /* (1 in 16: the stack walk is not free) */
             extern void and_callers(char* out, size_t n, int skip);
             char who[300], b[400];
-            int m = 0;
-            seen[k] = ra; nl++;
+            int m = 0, k = 0;
+            uint32_t h = 2166136261u;
             and_callers(who, sizeof(who), 0);
+            for (const char* c = who; *c; c++) h = (h ^ (uint8_t)*c) * 16777619u;   /* each call chain once, */
+            h ^= (and_z[0] >= -1.0001f) ? 1u : and_sz[0] <= 100.0f ? 2u : 3u;          /* and per depth class */
+            while (k < 64 && seen[k] && seen[k] != h) k++;
+            if (k == 64 || seen[k]) goto panel_done;
+            seen[k] = h; nl++;
             for (int i = 0; i < n && i < 4 && m < (int)sizeof(b) - 64; i++)
                 m += snprintf(b + m, sizeof(b) - m, " [x %.0f y %.0f z %.4f depth %.1f]", v[i].x, v[i].y, and_z[i], and_sz[i]);
             host_log("android: panel 2D polygon (%d corners, prim %x) from %s:%s\n", n, prim, who, b);
         }
     }
+panel_done:
 #endif
     return native_defer(prim, v, n, deferred ? pc_cur_mesh : 0, pc_cur_mesh & 1 ? pc_cur_strip++ : pc_cur_strip);   /* an effect's polygons by number */
 }
@@ -319,20 +322,23 @@ uint32_t pc_native_prim_raw(unsigned int prim, const unsigned int* dp, int n, in
     }
 #ifdef __ANDROID__
     if (!clip_3d_on && n > 0 && v[0].ui) {   /* Android diagnosis: sprites/lines going onto the VR panel, as in pc_native_prim */
-        static unsigned nl;
+        static unsigned nl, tick;
         static uint32_t seen[64];
-        uint32_t ra = (uint32_t)(uintptr_t)__builtin_return_address(0);
-        int k = 0;
-        while (k < 64 && seen[k] && seen[k] != ra) k++;
-        if (k < 64 && !seen[k] && nl < 40) {
+        if (!(++tick & 15) && nl < 40) {
             extern void and_callers(char* out, size_t n, int skip);
             char who[300];
             const float* f2 = (const float*)(dp - 12 * n + 8);   /* (the first vertex's X Y Z F) */
-            seen[k] = ra; nl++;
+            uint32_t h = 2166136261u;
+            int k = 0;
             and_callers(who, sizeof(who), 0);
+            for (const char* c = who; *c; c++) h = (h ^ (uint8_t)*c) * 16777619u;
+            while (k < 64 && seen[k] && seen[k] != h) k++;
+            if (k == 64 || seen[k]) goto raw_done;
+            seen[k] = h; nl++;
             host_log("android: panel 2D sprite/line (%d vertices, prim %x) from %s: x %.0f y %.0f z %.4f\n", n, prim, who, f2[0], f2[1], f2[2]);
         }
     }
+raw_done:
 #endif
     return native_defer_raw(prim, v, n);
 }
