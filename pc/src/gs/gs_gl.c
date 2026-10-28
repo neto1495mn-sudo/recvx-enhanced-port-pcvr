@@ -40,6 +40,16 @@ static int psm_is16(uint32_t psm) { return psm == PSMCT16 || psm == PSMCT16S || 
 #ifdef __ANDROID__
 static void and_foveate(GLuint tex);   /* (foveated render targets, below) */
 static int and_fov_next;
+/* multiview (both eyes in one replay, GL_OVR_multiview2): below, after and_defer_do */
+static int and_mv_on, and_mv_bad;
+static const char* and_mv_why;
+static void and_mv_mark_bad(const char* why) { if (!and_mv_bad) and_mv_why = why; and_mv_bad = 1; }
+static int and_mv_slot_of(const void* rt);
+static void and_mv_blit_into(int slot, GLuint src_fbo, int x0, int y0, int x1, int y1);
+static void and_mv_invalidate(int slot);
+static GLuint and_mv_depth(uint32_t zbp, int pw, int ph, int layer);
+static void and_mv_attach_depth(GLuint fbo, uint32_t zbp, int pw, int ph);
+static void and_mv_set_eye_uniforms(void);
 /* targets drawn in the executed frame and read after (sampled, copied, read back) in it; the ones drawn and never read
    nor shown (the shadow target fbp 380: a pass of its own in each eye, and the scene's target loaded again after it)
    are not drawn in the eyes' replays - what a replay draws there is thrown away (rt_restore) */
@@ -423,8 +433,24 @@ float gs_picture(float c)
 #ifdef __ANDROID__
 /* Android (Quest): the GLSL 3.30 core sources as GLSL ES 3.20 - their "#version 330 core" line replaced; default
    precisions (ES has none for floats in fragment shaders); gl_ClipDistance from EXT_clip_cull_distance */
+static int es_mv;   /* the next compile is the multiview vertex shader (num_views 2, the eye uniforms per view) */
 static const char* es_source(const char* src, int frag, char* buf, size_t n)
 {
+    if (es_mv && !frag) {
+        static const char* vhm = "#version 320 es\n#extension GL_EXT_clip_cull_distance : enable\n#extension GL_OVR_multiview2 : require\n"
+                                 "layout(num_views = 2) in;\nprecision highp float;\nprecision highp int;\n";
+        static const char* from = "uniform vec4 u_vr_src, u_vr_dst, u_vr_m0, u_vr_m1, u_vr_m2, u_vr_m3;";
+        static const char* to = "uniform vec4 u_vr_src; uniform vec4 u_vr_dstv[2], u_vr_m0v[2], u_vr_m1v[2], u_vr_m2v[2], u_vr_m3v[2];\n"
+                                "#define u_vr_dst u_vr_dstv[gl_ViewID_OVR]\n#define u_vr_m0 u_vr_m0v[gl_ViewID_OVR]\n#define u_vr_m1 u_vr_m1v[gl_ViewID_OVR]\n"
+                                "#define u_vr_m2 u_vr_m2v[gl_ViewID_OVR]\n#define u_vr_m3 u_vr_m3v[gl_ViewID_OVR]\n";
+        const char* body = src;
+        const char* at;
+        if (!strncmp(src, "#version 330 core\n", 18)) body = src + 18;
+        at = strstr(body, from);
+        if (!at) { snprintf(buf, n, "%s%s", vhm, body); return buf; }   /* (fails to compile: multiview off) */
+        snprintf(buf, n, "%s%.*s%s%s", vhm, (int)(at - body), body, to, at + strlen(from));
+        return buf;
+    }
     static const char* vh = "#version 320 es\n#extension GL_EXT_clip_cull_distance : enable\nprecision highp float;\nprecision highp int;\n";
     static const char* fh = "#version 320 es\nprecision highp float;\nprecision highp int;\nprecision highp sampler2D;\n";
     const char* body = src;
@@ -434,6 +460,9 @@ static const char* es_source(const char* src, int frag, char* buf, size_t n)
 }
 #endif
 
+#ifdef __ANDROID__
+static int compile_soft;   /* a failed compile returns 0 (logged) instead of stopping (the multiview program) */
+#endif
 static GLuint compile(const char* vs, const char* fs)
 {
     GLuint p = glCreateProgram(), s[2];
@@ -451,12 +480,18 @@ static GLuint compile(const char* vs, const char* fs)
         glShaderSource(s[i], 1, &src[i], NULL);
         glCompileShader(s[i]);
         glGetShaderiv(s[i], GL_COMPILE_STATUS, &ok);
+#ifdef __ANDROID__
+        if (!ok && compile_soft) { char log[2048]; glGetShaderInfoLog(s[i], sizeof(log), NULL, log); host_log("android: shader not compiled: %s\n", log); return 0; }
+#endif
         if (!ok) { char log[2048]; glGetShaderInfoLog(s[i], sizeof(log), NULL, log); host_fatal("shader: %s", log); }
         glAttachShader(p, s[i]);
     }
     glLinkProgram(p);
     {
         GLint ok; glGetProgramiv(p, GL_LINK_STATUS, &ok);
+#ifdef __ANDROID__
+        if (!ok && compile_soft) { char log[2048]; glGetProgramInfoLog(p, sizeof(log), NULL, log); host_log("android: program not linked: %s\n", log); return 0; }
+#endif
         if (!ok) { char log[2048]; glGetProgramInfoLog(p, sizeof(log), NULL, log); host_fatal("link: %s", log); }
     }
     glDeleteShader(s[0]); glDeleteShader(s[1]);
@@ -687,6 +722,12 @@ static RenderTarget* rt_get(uint32_t fbp, uint32_t fbw, uint32_t psm)
         if (rt->stale) { rt->stale = 0; rt->psm = psm; rt->pending_reload = 1; }
         return rt;
     }
+#ifdef __ANDROID__
+    if (and_mv_on) {   /* multiview replay: no target is made (the image is drawn again the old way, gs_flush skips the rest) */
+        and_mv_mark_bad("a target made during the replay");
+        for (int i = 0; i < MAX_RT; i++) if (rts[i].used) return &rts[i];
+    }
+#endif
     for (int i = 0; i < MAX_RT; i++) if (!rts[i].used) { rt = &rts[i]; break; }
     if (!rt) { /* evict LRU */
         rt = &rts[0];
@@ -1432,6 +1473,9 @@ static void reload_replay(RenderTarget* rt, uint32_t epoch)
     for (int i = 0; i < nreloads; i++) {
         Reload* r = &reloads[i];
         if (r->applied || r->fbp != rt->fbp || r->epoch > epoch || r->pw != rt->pw || r->ph != rt->ph) continue;
+#ifdef __ANDROID__
+        if (and_mv_on) { and_mv_blit_into(and_mv_slot_of(rt), r->fbo, 0, 0, rt->pw, rt->ph); r->applied = 1; continue; }   /* (both layers) */
+#endif
         blit_color(r->fbo, rt->fbo, rt->pw, rt->ph);
         r->applied = 1;
     }
@@ -1555,6 +1599,26 @@ void gs_replay_begin(void)
         GLuint tex, fbo, src;
         int how = first[i].how;
         if (!rt->used) continue;
+#ifdef __ANDROID__
+        if (and_mv_on) {   /* multiview: the replay draws into slot i's 2-layer target; the executed frame's stays in rts_snap */
+            int a = how;
+            extern int and_mv_target_pub(int, int, int);
+            src = rt == disp ? img[sti].fbo : rt->fbo;
+            if (a == FIRST_NONE && (rt == disp || i == disp_end)) a = FIRST_READ;
+            and_mv_target_pub(i, rt->pw, rt->ph);
+            if (a == FIRST_READ || a == FIRST_COVER) and_mv_invalidate(i);
+            if (a == FIRST_READ) and_mv_blit_into(i, src, 0, 0, rt->pw, rt->ph);
+            else if (a == FIRST_COVER) {
+                int x0 = first[i].x0, y0 = first[i].y0, x1 = first[i].x1, y1 = first[i].y1;
+                and_mv_blit_into(i, src, 0, 0, rt->pw, y0);
+                and_mv_blit_into(i, src, 0, y1, rt->pw, rt->ph);
+                and_mv_blit_into(i, src, 0, y0, x0, y1);
+                and_mv_blit_into(i, src, x1, y0, rt->pw, y1);
+            }
+            { extern GLuint and_mv_tex_pub(int, int); rt->tex = and_mv_tex_pub(i, 0); rt->fbo = and_mv_tex_pub(i, 1); }
+            continue;
+        }
+#endif
         if (sh->pw != rt->pw || sh->ph != rt->ph || !sh->tex) shadow_ensure(i);
         tex = rt->tex; fbo = rt->fbo;   /* swap: the executed frame's target waits in shadow[] */
         rt->tex = sh->tex; rt->fbo = sh->fbo;
@@ -1641,15 +1705,252 @@ void and_flush_why_log(void)
         memset(and_flush_why[r], 0, sizeof(and_flush_why[r])); and_flush_epoch_only[r] = 0;
     }
 }
+static int and_mv_defer_copy(const RenderTarget* s, const RenderTarget* d);
 static void and_defer_do(void)
 {
     RenderTarget *s = and_defer_src, *d = and_defer_dst;
     and_defer_src = and_defer_dst = NULL;
     if (!s || !d) return;
+    if (and_mv_defer_copy(s, d)) return;   /* (multiview targets: layer for layer) */
     glBindFramebuffer(GL_READ_FRAMEBUFFER, s->fbo);
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, d->fbo);
     glDisable(GL_SCISSOR_TEST);
     glBlitFramebuffer(0, 0, s->pw, s->ph, 0, 0, d->pw, d->ph, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+}
+/* ---- multiview: both eyes drawn by one replay (GL_OVR_multiview2) ----
+   The replay's draws go into 2-layer array targets, one layer per eye; the vertex shader takes the eye's matrix and frustum
+   by gl_ViewID_OVR (u_vr_dstv / u_vr_m0v..3v). The CPU work of the replay and the GL driver's per draw cost are paid once
+   for both eyes (the log: the driver ~37% of a headset image's CPU, ~300 draws an eye). Restores and reloads are copied
+   into both layers; the eye images read their layer through a texture view. Anything a replay does that this does not
+   cover (a draw sampling a target, a target made during the replay, an incomplete framebuffer) marks the image: it is
+   drawn again the old way and multiview rests for a while. */
+typedef void (GLAPIENTRY *PFN_AndMvFbTex)(GLenum, GLenum, GLuint, GLint, GLint, GLsizei);
+typedef void (GLAPIENTRY *PFN_AndTexStorage3D)(GLenum, GLsizei, GLenum, GLsizei, GLsizei, GLsizei);
+typedef void (GLAPIENTRY *PFN_AndFbTexLayer)(GLenum, GLenum, GLuint, GLint, GLint);
+typedef void (GLAPIENTRY *PFN_AndTexView)(GLuint, GLenum, GLuint, GLenum, GLuint, GLuint, GLuint, GLuint);
+typedef void (GLAPIENTRY *PFN_AndU4fv)(GLint, GLsizei, const GLfloat*);
+typedef void (GLAPIENTRY *PFN_AndInv)(GLenum, GLsizei, const GLenum*);
+static PFN_AndMvFbTex and_mvfb; static PFN_AndTexStorage3D and_ts3d; static PFN_AndFbTexLayer and_fblayer; static PFN_AndTexView and_tview;
+static PFN_AndU4fv and_u4fv; static PFN_AndInv and_inv;
+static int and_mv_state;          /* 0 not tried, 1 ready, -1 not available */
+static unsigned and_mv_rest;      /* images to draw the old way before trying again */
+static unsigned and_mv_images, and_mv_fallbacks;
+static GLuint prog_main, prog_mv;
+#define AND_ULIST(X) X(rt_size) X(rt_margin) X(tme) X(tfx) X(tcc) X(fst) X(texsize) X(fge) X(fogcol) X(ate) X(atst) X(aref) \
+    X(tex) X(tex_alpha_scale) X(texofs) X(premul) X(zscale) X(clamp_mode) X(clamp_vals) X(afail_pass) X(rt16) X(dbg) \
+    X(vr_on) X(vr_src) X(vr_dst) X(vr_m0) X(vr_m1) X(vr_m2) X(vr_m3) X(vr_zab) X(vr_zs) X(vr_hud)
+#define AND_UPTR(n) &u_##n,
+#define AND_UNAME(n) "u_" #n,
+static GLint* const and_uptr[] = { AND_ULIST(AND_UPTR) };
+static const char* const and_uname[] = { AND_ULIST(AND_UNAME) };
+#define AND_NU ((int)(sizeof(and_uptr) / sizeof(and_uptr[0])))
+static GLint and_loc_main[AND_NU], and_loc_mv[AND_NU];
+static float and_mv_dst[8], and_mv_m[4][8];   /* per eye: u_vr_dst and the 4 columns of u_vr_m, eye 0 then eye 1 */
+static int and_mv_udirty;
+typedef struct { GLuint tex, fbo, lfbo[2], view[2]; int pw, ph; } AndMvT;
+static AndMvT and_mvt[MAX_RT];
+typedef struct { GLuint tex, view[2]; uint32_t zbp; int pw, ph; uint64_t last; } AndMvZ;
+static AndMvZ and_mvz[8];
+static uint64_t and_mvz_clock;
+static GLuint and_mvat[16][2];   /* multiview framebuffer -> its depth array attached (forgotten when either is made again) */
+static int and_mvnat;
+
+static GLuint and_mv_dview;   /* the eye image's depth (lasers, box) when multiview drew it */
+static int and_mv_enabled = 1;
+static int and_mv_init(void);
+static int and_mv_try(void) { if (!and_mv_enabled) return 0; if (and_mv_rest) { and_mv_rest--; return 0; } return and_mv_init(); }
+static int and_mv_init(void)
+{
+    const char* ext = (const char*)glGetString(0x1F03 /* GL_EXTENSIONS */);
+    if (and_mv_state) return and_mv_state > 0;
+    and_mv_state = -1;
+    and_mvfb = (PFN_AndMvFbTex)SDL_GL_GetProcAddress("glFramebufferTextureMultiviewOVR");
+    and_ts3d = (PFN_AndTexStorage3D)SDL_GL_GetProcAddress("glTexStorage3D");
+    and_fblayer = (PFN_AndFbTexLayer)SDL_GL_GetProcAddress("glFramebufferTextureLayer");
+    and_tview = (PFN_AndTexView)SDL_GL_GetProcAddress("glTextureViewOES");
+    if (!and_tview) and_tview = (PFN_AndTexView)SDL_GL_GetProcAddress("glTextureViewEXT");
+    and_u4fv = (PFN_AndU4fv)SDL_GL_GetProcAddress("glUniform4fv");
+    and_inv = (PFN_AndInv)SDL_GL_GetProcAddress("glInvalidateFramebuffer");
+    if (!ext || !SDL_strstr(ext, "GL_OVR_multiview2") || !and_mvfb || !and_ts3d || !and_fblayer || !and_tview || !and_u4fv) {
+        host_log("android: multiview not available (extension %s, entry points %d%d%d%d%d)\n", ext && SDL_strstr(ext, "GL_OVR_multiview2") ? "yes" : "no",
+                 !!and_mvfb, !!and_ts3d, !!and_fblayer, !!and_tview, !!and_u4fv);
+        return 0;
+    }
+    prog_main = prog;
+    for (int k = 0; k < AND_NU; k++) and_loc_main[k] = *and_uptr[k];
+    compile_soft = 1; es_mv = 1;
+    prog_mv = compile(vs_src, fs_src);
+    compile_soft = 0; es_mv = 0;
+    if (!prog_mv) { host_log("android: multiview off (its shader did not compile)\n"); return 0; }
+    for (int k = 0; k < AND_NU; k++) {
+        const char* nm = and_uname[k];
+        char b[32];
+        if (!strcmp(nm, "u_vr_dst") || !strncmp(nm, "u_vr_m", 6)) { SDL_snprintf(b, sizeof(b), "%sv", nm); nm = b; }
+        and_loc_mv[k] = glGetUniformLocation(prog_mv, nm);
+    }
+    and_mv_state = 1;
+    host_log("android: multiview ready (both eyes in one replay)\n");
+    return 1;
+}
+static void and_mv_use(int on)   /* the program and its uniform locations for the draws: multiview or not */
+{
+    const GLint* loc = on ? and_loc_mv : and_loc_main;
+    for (int k = 0; k < AND_NU; k++) *and_uptr[k] = loc[k];
+    prog = on ? prog_mv : prog_main;
+    memset(uknown, 0, sizeof(uknown));   /* (the uniform cache was the other program's) */
+    and_mv_on = on;
+    and_mv_udirty = 1;
+}
+static int and_mv_slot_of(const void* rtp)
+{
+    const RenderTarget* rt = (const RenderTarget*)rtp;
+    int i = (int)(rt - rts);
+    return i >= 0 && i < MAX_RT ? i : -1;
+}
+static int and_mv_target(int i, int pw, int ph)   /* slot i's 2-layer target of that size (1: ready) */
+{
+    AndMvT* t = &and_mvt[i];
+    if (t->tex && t->pw == pw && t->ph == ph) return 1;
+    if (t->tex) { glDeleteTextures(2, t->view); glDeleteTextures(1, &t->tex); glDeleteFramebuffers(1, &t->fbo); glDeleteFramebuffers(2, t->lfbo); fb_forget(); }
+    memset(t, 0, sizeof(*t));
+    and_mvnat = 0;
+    glGenTextures(1, &t->tex);
+    glBindTexture(0x8C1A /* GL_TEXTURE_2D_ARRAY */, t->tex);
+    and_ts3d(0x8C1A, 1, GL_RGBA16F, pw, ph, 2);
+    glTexParameteri(0x8C1A, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(0x8C1A, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(0x8C1A, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(0x8C1A, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glGenFramebuffers(1, &t->fbo);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, t->fbo);
+    and_mvfb(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, t->tex, 0, 0, 2);
+    glGenFramebuffers(2, t->lfbo);
+    glGenTextures(2, t->view);
+    for (int k = 0; k < 2; k++) {
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, t->lfbo[k]);
+        and_fblayer(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, t->tex, 0, k);
+        glDisable(GL_SCISSOR_TEST);
+        glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+        glClearColor(0, 0, 0, 0);
+        glClear(GL_COLOR_BUFFER_BIT);
+        and_tview(t->view[k], GL_TEXTURE_2D, t->tex, GL_RGBA16F, 0, 1, (GLuint)k, 1);
+        glBindTexture(GL_TEXTURE_2D, t->view[k]);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    }
+    t->pw = pw; t->ph = ph;
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    {
+        static int nl;
+        if (nl++ < 8) host_log("android: multiview target for slot %d: %dx%d x 2 layers\n", i, pw, ph);
+    }
+    return 1;
+}
+static void and_mv_blit_into(int slot, GLuint src_fbo, int x0, int y0, int x1, int y1)   /* both layers of slot get src's area */
+{
+    if (x1 <= x0 || y1 <= y0) return;
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, src_fbo);
+    glDisable(GL_SCISSOR_TEST);
+    for (int k = 0; k < 2; k++) {
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, and_mvt[slot].lfbo[k]);
+        glBlitFramebuffer(x0, y0, x1, y1, x0, y0, x1, y1, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+    }
+}
+static void and_mv_invalidate(int slot)
+{
+    const GLenum att = GL_COLOR_ATTACHMENT0;
+    if (!and_inv) return;
+    for (int k = 0; k < 2; k++) { glBindFramebuffer(GL_DRAW_FRAMEBUFFER, and_mvt[slot].lfbo[k]); and_inv(GL_DRAW_FRAMEBUFFER, 1, &att); }
+}
+static int and_mvz_find(uint32_t zbp, int pw, int ph)   /* the 2-layer depth for zbp (made when missing) */
+{
+    int e = 0;
+    and_mvz_clock++;
+    for (int i = 0; i < 8; i++) if (and_mvz[i].tex && and_mvz[i].zbp == zbp && and_mvz[i].pw == pw && and_mvz[i].ph == ph) { and_mvz[i].last = and_mvz_clock; return i; }
+    for (int i = 0; i < 8; i++)
+        if (!and_mvz[i].tex) { e = i; break; }
+        else if (and_mvz[i].last < and_mvz[e].last) e = i;
+    if (and_mvz[e].tex) { glDeleteTextures(2, and_mvz[e].view); glDeleteTextures(1, &and_mvz[e].tex); fb_forget(); }
+    memset(&and_mvz[e], 0, sizeof(and_mvz[e]));
+    and_mvnat = 0;
+    glGenTextures(1, &and_mvz[e].tex);
+    glBindTexture(0x8C1A, and_mvz[e].tex);
+    and_ts3d(0x8C1A, 1, GL_DEPTH_COMPONENT32F, pw, ph, 2);
+    glTexParameteri(0x8C1A, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(0x8C1A, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glGenTextures(2, and_mvz[e].view);
+    for (int k = 0; k < 2; k++) {
+        and_tview(and_mvz[e].view[k], GL_TEXTURE_2D, and_mvz[e].tex, GL_DEPTH_COMPONENT32F, 0, 1, (GLuint)k, 1);
+        glBindTexture(GL_TEXTURE_2D, and_mvz[e].view[k]);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    }
+    and_mvz[e].zbp = zbp; and_mvz[e].pw = pw; and_mvz[e].ph = ph; and_mvz[e].last = and_mvz_clock;
+    return e;
+}
+static GLuint and_mv_depth(uint32_t zbp, int pw, int ph, int layer)   /* (the eye images' lasers and box: that eye's depth) */
+{
+    for (int i = 0; i < 8; i++) if (and_mvz[i].tex && and_mvz[i].zbp == zbp && and_mvz[i].pw == pw && and_mvz[i].ph == ph) return and_mvz[i].view[layer];
+    return 0;
+}
+static void and_mv_attach_depth(GLuint fbo, uint32_t zbp, int pw, int ph)
+{
+    struct { GLuint fbo, dt; }* at = (void*)and_mvat;
+    int z = and_mvz_find(zbp, pw, ph), i, nat = and_mvnat;
+    for (i = 0; i < nat && at[i].fbo != fbo; i++) {}
+    if (i < nat && at[i].dt == and_mvz[z].tex) return;
+    and_mvfb(GL_DRAW_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, and_mvz[z].tex, 0, 0, 2);
+    {
+        static int nchk;
+        if (nchk < 8) {
+            GLenum st = glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER);
+            nchk++;
+            if (st != 0x8CD5) { host_log("android: multiview framebuffer incomplete (0x%x): multiview off\n", (unsigned)st); and_mv_mark_bad("framebuffer incomplete"); and_mv_state = -1; }
+        }
+    }
+    if (i == nat) { if (nat == 16) { nat = 0; i = 0; } nat++; }
+    at[i].fbo = fbo; at[i].dt = and_mvz[z].tex;
+    and_mvnat = nat;
+}
+static void and_mv_set_eye_uniforms(void)   /* (gs_flush, multiview program bound) */
+{
+    if (!and_mv_udirty) return;
+    and_u4fv(u_vr_dst, 2, and_mv_dst);
+    and_u4fv(u_vr_m0, 2, and_mv_m[0]); and_u4fv(u_vr_m1, 2, and_mv_m[1]);
+    and_u4fv(u_vr_m2, 2, and_mv_m[2]); and_u4fv(u_vr_m3, 2, and_mv_m[3]);
+    and_mv_udirty = 0;
+}
+/* after the multiview replay (both eye images made): the executed frame's targets back, the multiview ones kept for
+   the next image; targets the replay made are dropped (as rt_restore) */
+int and_mv_target_pub(int i, int pw, int ph) { return and_mv_target(i, pw, ph); }
+static int and_mv_defer_copy(const RenderTarget* s, const RenderTarget* d)
+{
+    int ss = and_mv_slot_of(s), ds = and_mv_slot_of(d);
+    if (ss < 0 || ds < 0 || !and_mvt[ss].tex || s->tex != and_mvt[ss].tex || d->tex != and_mvt[ds].tex) return 0;
+    glDisable(GL_SCISSOR_TEST);
+    for (int k = 0; k < 2; k++) {
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, and_mvt[ss].lfbo[k]);
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, and_mvt[ds].lfbo[k]);
+        glBlitFramebuffer(0, 0, and_mvt[ss].pw, and_mvt[ss].ph, 0, 0, and_mvt[ds].pw, and_mvt[ds].ph, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+    }
+    return 1;
+}
+GLuint and_mv_tex_pub(int i, int which) { return which ? and_mvt[i].fbo : and_mvt[i].tex; }
+static void and_mv_restore(void)
+{
+    for (int i = 0; i < MAX_RT; i++) {
+        RenderTarget* r = &rts[i];
+        const RenderTarget* sn = &rts_snap[i];
+        if (!sn->used) {
+            if (r->used) { glDeleteTextures(1, &r->tex); glDeleteFramebuffers(1, &r->fbo); fb_forget(); memset(r, 0, sizeof(*r)); }
+            continue;
+        }
+        if (r->used && r->tex != and_mvt[i].tex) { glDeleteTextures(1, &r->tex); glDeleteFramebuffers(1, &r->fbo); fb_forget(); }   /* (evicted and made again) */
+        *r = *sn;
+    }
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 /* the pass trace (gl_cache.c): what each target is noted now, logged with the passes' GPU times once they are in
    (and_pass_trace_flush, once a second) */
@@ -1734,6 +2035,7 @@ void gs_flush(void)
     uint64_t test;
     if (!batch_valid || vcount == 0) { vcount = 0; nsruns = 0; return; }
 #ifdef __ANDROID__
+    if (and_mv_on && and_mv_bad) { vcount = 0; nsruns = 0; return; }   /* (this image is drawn again the old way) */
     if (and_defer_dst) and_defer_do();   /* something drawn after the held-back copy: the copy first */
 #endif
     stat_flushes++;
@@ -1748,6 +2050,10 @@ void gs_flush(void)
 #endif
     cur_rt = rt_get(fbp, fbw, fpsm);
 #ifdef __ANDROID__
+    if (and_mv_on) {   /* multiview: the replay's targets are the 2-layer ones; one made now is not */
+        extern GLuint and_mv_tex_pub(int, int);
+        if (cur_rt->tex != and_mv_tex_pub((int)(cur_rt - rts), 0)) { and_mv_mark_bad("a target made during the replay"); vcount = 0; nsruns = 0; return; }
+    }
     if (!gs_replaying) {
         int ci = (int)(cur_rt - rts);
         if (and_rt_unread_fbp[ci] != cur_rt->fbp) { and_rt_unread_fbp[ci] = cur_rt->fbp; and_rt_unread[ci] = 0; }   /* (another target in the slot) */
@@ -1769,6 +2075,10 @@ void gs_flush(void)
 #endif
     if (!gs_replaying && first[cur_rt - rts].how == FIRST_NONE) rt_first_draw(cur_rt, st, fbw, fpsm);
     glBindFramebuffer(GL_FRAMEBUFFER, cur_rt->fbo);
+#ifdef __ANDROID__
+    if (and_mv_on) and_mv_attach_depth(cur_rt->fbo, st->ctx.zbuf & 0x1FF, cur_rt->pw, cur_rt->ph);
+    else
+#endif
     {
         uint32_t zbp = st->ctx.zbuf & 0x1FF;
         GLuint dt = depth_for(zbp, cur_rt->pw, cur_rt->ph);
@@ -1827,11 +2137,18 @@ void gs_flush(void)
     uni1i(u_vr_on, vr_u.on);
     if (vr_u.on) {
         uni4f(u_vr_src, vr_u.src[0], vr_u.src[1], vr_u.src[2], vr_u.src[3]);
+#ifdef __ANDROID__
+        if (and_mv_on) and_mv_set_eye_uniforms();   /* (both eyes' matrix and frustum, by view) */
+        else {
+#endif
         uni4f(u_vr_dst, vr_u.dst[0], vr_u.dst[1], vr_u.dst[2], vr_u.dst[3]);
         uni4f(u_vr_m0, vr_u.m[0], vr_u.m[1], vr_u.m[2], vr_u.m[3]);
         uni4f(u_vr_m1, vr_u.m[4], vr_u.m[5], vr_u.m[6], vr_u.m[7]);
         uni4f(u_vr_m2, vr_u.m[8], vr_u.m[9], vr_u.m[10], vr_u.m[11]);
         uni4f(u_vr_m3, vr_u.m[12], vr_u.m[13], vr_u.m[14], vr_u.m[15]);
+#ifdef __ANDROID__
+        }
+#endif
         uni2f(u_vr_zab, vr_u.zab[0], vr_u.zab[1]);
         uni1f(u_vr_zs, vr_u.zs);
         uni4f(u_vr_hud, vr_u.hud[0], vr_u.hud[1], vr_u.hud[2], 0.0f);
@@ -1910,6 +2227,9 @@ void gs_flush(void)
                    replay (it would resolve against the state the frame left; replays load no CLUT) */
             if (gs_replaying && m) {
                 srt = m->rt >= 0 ? &rts[m->rt] : NULL;
+#ifdef __ANDROID__
+                if (and_mv_on && srt && srt != cur_rt) { and_mv_mark_bad("a draw samples a target"); vcount = 0; nsruns = 0; return; }
+#endif
                 ox = m->ox; oy = m->oy; is16 = m->is16;
                 replay_memo = m;
             } else {
@@ -3303,6 +3623,9 @@ static void draw_lasers(const VrView* v, const float M[16], const VrEye* E, int 
     glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ZERO, GL_ONE);
     glUseProgram(lz_prog);
     for (int i = 0; i < 8 && rt; i++) if (dz[i].tex && dz[i].zbp == rt->zbp && dz[i].pw == rt->pw && dz[i].ph == rt->ph) dtex = dz[i].tex;   /* the eye's depth (the replay's) */
+#ifdef __ANDROID__
+    if (and_mv_dview) dtex = and_mv_dview;   /* (multiview: the eye's layer) */
+#endif
     {
         uint32_t zpsm = (uint32_t)((gs.ctx[0].zbuf >> 24) & 0xF);
         float zmax = zpsm == 0 ? 4294967296.0f : zpsm == 1 ? 16777216.0f : 65536.0f;
@@ -3439,6 +3762,9 @@ static void draw_box(const VrView* v, const float M[16], const VrEye* E, int w, 
         ub_btex = glGetUniformLocation(bx_prog, "u_btex"); ub_bt = glGetUniformLocation(bx_prog, "u_bt");
     }
     for (int i = 0; i < 8 && rt; i++) if (dz[i].tex && dz[i].zbp == rt->zbp && dz[i].pw == rt->pw && dz[i].ph == rt->ph) dtex = dz[i].tex;
+#ifdef __ANDROID__
+    if (and_mv_dview) dtex = and_mv_dview;   /* (multiview: the eye's layer) */
+#endif
     glViewport(0, 0, w, h);
     glDisable(GL_BLEND);
     clip_distances(1);
@@ -3892,6 +4218,9 @@ static int present_vr_stereo_(const struct Frame* cur, float t)
     }
     if (!vr_fbo) glGenFramebuffers(1, &vr_fbo);
     gs_flush();
+#ifdef __ANDROID__
+    int and_mv_done = 0;   /* this image's replay drew both eyes (multiview) */
+#endif
     for (int e = 0; e < 2 && ok; e++) {
         const VrEye* E = xr_frame_eye(e);
         float iE[16], M[16], l = E->l, r = E->r, u = E->u, d = E->d;
@@ -3919,7 +4248,7 @@ static int present_vr_stereo_(const struct Frame* cur, float t)
         } else vr_u.hud[0] = vr_u.hud[1] = vr_u.hud[2] = 0.0f;
         vr_u.on = 1;
 #ifdef __ANDROID__
-        and_defer_src = and_defer_dst = NULL;   /* (a copy held back by an earlier replay is not this one's) */
+        if (!and_mv_done) and_defer_src = and_defer_dst = NULL;   /* (a copy held back by an earlier replay is not this one's) */
 #endif
         {
             static unsigned nlog;
@@ -3938,7 +4267,39 @@ static int present_vr_stereo_(const struct Frame* cur, float t)
             static RenderTarget *and_rec_defer_src, *and_rec_defer_dst;
             static unsigned and_tr_n2;
             if (e == 0 && (and_tr_n2++ % 200) == 100) { extern int and_pass_trace(int); and_tr_active = and_pass_trace(1); }
-            if (e == 1 && and_rec_ok && g_vr_one_replay) {
+            if (e == 0 && and_mv_try()) {   /* multiview: one replay draws both eyes */
+                for (int k = 0; k < 2; k++) {
+                    const VrEye* Ek = xr_frame_eye(k);
+                    float iEk[16], Mk[16];
+                    vr_mat_rigid_inverse_pose(iEk, &Ek->pose);
+                    vr_mat_mul(Mk, iEk, A);
+                    for (int q = 0; q < 4; q++) { Mk[q * 4 + 1] = -Mk[q * 4 + 1]; Mk[q * 4 + 2] = -Mk[q * 4 + 2]; }
+                    and_mv_dst[k * 4 + 0] = -(float)g_margin_x + dw * (-Ek->l) / (Ek->r - Ek->l);
+                    and_mv_dst[k * 4 + 1] = 480.0f * Ek->u / (Ek->u - Ek->d);
+                    and_mv_dst[k * 4 + 2] = dw / (Ek->r - Ek->l);
+                    and_mv_dst[k * 4 + 3] = 480.0f / (Ek->u - Ek->d);
+                    for (int c = 0; c < 4; c++) for (int j = 0; j < 4; j++) and_mv_m[c][k * 4 + j] = Mk[c * 4 + j];
+                }
+                and_mv_bad = 0; and_mv_why = NULL;
+                memset(uknown, 0, sizeof(uknown)); clip_on = -1; fb_forget();
+                and_mv_use(1);
+                if (chars) VR_TM(0, stream_replay_chars(cur, t, chT));
+                else VR_TM(0, stream_replay_exact(cur));
+                and_mv_use(0);
+                and_mv_images++;
+                if (!and_mv_bad) and_mv_done = 1;
+                else {   /* not covered: this image the old way, multiview rests 10 s */
+                    static unsigned nl;
+                    and_mv_restore();
+                    and_defer_src = and_defer_dst = NULL;
+                    memset(uknown, 0, sizeof(uknown)); clip_on = -1; fb_forget();
+                    and_mv_fallbacks++; and_mv_rest = 720;
+                    if (nl++ < 30) host_log("android: multiview: image drawn the old way (%s), multiview rests 10 s\n", and_mv_why ? and_mv_why : "?");
+                }
+                if ((and_mv_images % 3000) == 1) host_log("android: multiview: %u images, %u drawn the old way\n", and_mv_images, and_mv_fallbacks);
+            }
+            if (and_mv_done) {}   /* (both eyes drawn) */
+            else if (e == 1 && and_rec_ok && g_vr_one_replay) {
                 const GLint locs[5] = { u_vr_dst, u_vr_m0, u_vr_m1, u_vr_m2, u_vr_m3 };
                 const float vals[5][4] = { { vr_u.dst[0], vr_u.dst[1], vr_u.dst[2], vr_u.dst[3] }, { vr_u.m[0], vr_u.m[1], vr_u.m[2], vr_u.m[3] },
                                            { vr_u.m[4], vr_u.m[5], vr_u.m[6], vr_u.m[7] }, { vr_u.m[8], vr_u.m[9], vr_u.m[10], vr_u.m[11] },
@@ -3984,6 +4345,15 @@ static int present_vr_stereo_(const struct Frame* cur, float t)
         rt = rt_find(gs.disp_fbp, gs.disp_fbw ? gs.disp_fbw : 10);
 #ifdef __ANDROID__
         GLuint and_eye_src = rt ? rt->tex : 0;
+        and_mv_dview = 0;
+        if (and_mv_done && rt) {   /* multiview: the eye's layer of the drawn target (or of the held back copy's source) */
+            const RenderTarget* sr = and_defer_dst && and_defer_dst == rt ? and_defer_src : rt;
+            int sl = and_mv_slot_of(sr);
+            if (and_defer_dst && and_defer_dst != rt) and_defer_do();
+            and_eye_src = sl >= 0 ? and_mvt[sl].view[e] : 0;
+            and_mv_dview = and_mv_depth(rt->zbp, rt->pw, rt->ph, e);
+            if (e == 1) and_defer_src = and_defer_dst = NULL;
+        } else
         if (and_defer_dst && and_defer_dst == rt) { and_eye_src = and_defer_src->tex; and_defer_src = and_defer_dst = NULL; }
         else if (and_defer_dst) and_defer_do();
         {
@@ -4055,6 +4425,10 @@ static int present_vr_stereo_(const struct Frame* cur, float t)
 #endif
         glFlush();   /* vr99: the eye's work to the GPU now, not all at the hand-off (xrEndFrame waits less) */
         xr_eye_release(e);
+#ifdef __ANDROID__
+        if (and_mv_done) { if (e == 1) and_mv_restore(); }   /* (eye 1 uses the same replay: restored after it) */
+        else
+#endif
         rt_restore();
 #ifdef __ANDROID__
         if (rt_restore_deleted && and_rec_ok) {
