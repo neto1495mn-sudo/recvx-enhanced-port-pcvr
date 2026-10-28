@@ -58,6 +58,7 @@ static unsigned hb_presents, hb_skip_partial, hb_skip_queued, hb_forced;
    spread evenly. stops: no game time advanced; slow/fast: under 0.6 / over 1.5 of the ideal; gaps: a headset refresh
    with no new image (the previous one shown again) */
 static unsigned mo_stop, mo_slow, mo_ok, mo_fast, mo_gap, mo_n;
+static unsigned mo_nointerp, mo_tclamp, mo_tmid;   /* images: no interpolation (the frame itself), t held at 1, t in between */
 static int and_trace_exec;   /* this game frame's GPU passes are traced (gl_cache.c) */
 /* game frame pacing: intervals between game frames as the game thread finished them (sub) and as the render thread
    finished executing them (exe): count, late (> 1.5 periods), bunched (< 0.5 period), max */
@@ -84,6 +85,9 @@ void render_loop(void)
     prof_thread(PROF_RIDLE);
 #ifdef __ANDROID__
     { void and_sampler_thread(int); and_sampler_thread(0); }   /* android_sampler.c */
+#endif
+#ifdef __ANDROID__
+    host_log("android: render loop built " __DATE__ " " __TIME__ "\n");   /* (render.c changes with most commits: the build's age) */
 #endif
     for (;;) {
         Frame* f;
@@ -142,6 +146,9 @@ void render_loop(void)
                 if (mo_n) host_log("android: motion last second: %u images; game time per image vs display time: %u stopped, %u slow, %u even, %u fast "
                                    "(ratio %.2f..%.2f); %u headset refreshes skipped before an image\n",
                                    mo_n, mo_stop, mo_slow, mo_ok, mo_fast, mo_rmin, mo_rmax, mo_gap);
+                host_log("android: motion images last second: %u without interpolation (the game frame itself), %u interpolated but at t = 1 (the next frame "
+                         "not there yet), %u in between\n", mo_nointerp, mo_tclamp, mo_tmid);
+                mo_nointerp = mo_tclamp = mo_tmid = 0;
                 mo_n = mo_stop = mo_slow = mo_ok = mo_fast = mo_gap = 0; mo_rmin = 1e9; mo_rmax = 0;
                 xr_timing_log();
                 if (pc_n) host_log("android: game frame pacing last second: %u frames; from the game thread %u late %u bunched (max %.1f ms), "
@@ -353,6 +360,9 @@ void render_loop(void)
                 static double mo_g0;
                 int64_t disp = xr_display_time_ns();
                 double g = (double)gs_frame_count() - 1.0 + (interp ? (t < 0.0f ? 0.0 : t > 1.0f ? 1.0 : t) : 1.0), xp = xr_display_hz() > 1.0 ? 1e9 / xr_display_hz() : 13.9e6;
+                if (!interp) mo_nointerp++;
+                else if (t >= 0.999f) mo_tclamp++;
+                else mo_tmid++;
                 if (mo_d0 && disp > mo_d0 && period > 1e6) {
                     double dd = (double)(disp - mo_d0), r = (g - mo_g0) / (dd / period);
                     mo_n++;
