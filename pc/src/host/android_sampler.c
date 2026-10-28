@@ -284,13 +284,14 @@ void and_sampler_report(void)
         }
         if (!nph) continue;
         if (ph) {   /* the flush stages of this phase (gs_gl.c g_and_sub), the driver time they caused included */
-            static const char* const st[8] = { "outside gs_flush", "targets", "scissor/box", "program+uniforms", "depth/mask/blend",
-                                               "texture", "vertex upload", "draw calls" };
-            unsigned cs[8] = { 0 };
-            char sl[512];
+            static const char* const st[11] = { "outside gs_flush", "targets", "scissor/box", "program+uniforms", "depth/mask/blend",
+                                                "texture (other)", "vertex upload", "draw calls", "texture: page hashing",
+                                                "texture: cache lookup", "texture: decode+upload" };
+            unsigned cs[16] = { 0 };
+            char sl[640];
             int q = 0;
-            for (unsigned i = 0; i < n; i++) if ((pcopy[i] & 3) == ph) cs[(pcopy[i] >> 2) & 7]++;
-            for (int k = 0; k < 8; k++) q += snprintf(sl + q, sizeof(sl) - q, " %s %.0f%%;", st[k], 100.0 * cs[k] / nph);
+            for (unsigned i = 0; i < n; i++) if ((pcopy[i] & 3) == ph) cs[(pcopy[i] >> 2) & 15]++;
+            for (int k = 0; k < 11; k++) q += snprintf(sl + q, sizeof(sl) - q, " %s %.0f%%;", st[k], 100.0 * cs[k] / nph);
             host_log("android: profile render thread, %s by flush stage:%s\n", ph == 1 ? "executing game frames" : "headset images", sl);
         }
         qsort(bins, nb, sizeof(Bin), by_n);

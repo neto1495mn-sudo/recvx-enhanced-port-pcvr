@@ -143,9 +143,29 @@ static uint64_t page_hash_get(uint32_t p)
 {
     if (!page_hash_init) { memset(page_dirty, 1, sizeof(page_dirty)); page_hash_init = 1; }
     if (page_dirty[p]) {
+#ifdef __ANDROID__
+        /* Android (Quest): 32-bit multiplies in 4 independent lanes - the 64-bit multiply per word is several instructions
+           on 32-bit ARM, and every page an upload changed is hashed again at its next texture lookup (the texture stage:
+           33-42% of a game frame). 1.5x faster on ARM (qemu); every single-byte change of a page changes it. */
+        const uint32_t* w = (const uint32_t*)(gs_mem + (size_t)p * 8192);
+        uint32_t ha = 0x9E3779B1u ^ p, hb = 0x85EBCA77u, hc = 0xC2B2AE3Du, hd = 0x27D4EB2Fu ^ (p * 0x01000193u);
+#define AROT(x, r) (((x) << (r)) | ((x) >> (32 - (r))))
+        for (int i = 0; i < 2048; i += 4) {
+            ha = (ha ^ w[i]) * 0x9E3779B1u; ha = AROT(ha, 13);
+            hb = (hb ^ w[i + 1]) * 0x85EBCA77u; hb = AROT(hb, 13);
+            hc = (hc ^ w[i + 2]) * 0xC2B2AE3Du; hc = AROT(hc, 13);
+            hd = (hd ^ w[i + 3]) * 0x27D4EB2Fu; hd = AROT(hd, 13);
+        }
+        ha ^= AROT(hc, 7) * 0x9E3779B1u; hb ^= AROT(hd, 11) * 0x85EBCA77u;
+#undef AROT
+        ha ^= ha >> 15; ha *= 0x2C1B3C6Du; ha ^= ha >> 12;
+        hb ^= hb >> 15; hb *= 0x297A2D39u; hb ^= hb >> 12;
+        uint64_t h = ((uint64_t)ha << 32 | hb) ^ ((uint64_t)hc << 17) ^ hd;
+#else
         const uint64_t* w = (const uint64_t*)(gs_mem + (size_t)p * 8192);
         uint64_t h = 0x9E3779B97F4A7C15ull ^ p;
         for (int i = 0; i < 1024; i++) { h ^= w[i]; h *= 0x100000001B3ull; h ^= h >> 29; }
+#endif
         page_hash[p] = h;
         page_dirty[p] = 0;
     }
@@ -923,7 +943,13 @@ static GLuint tex_get(uint64_t tex0, uint64_t texa, int* out_w, int* out_h, floa
     if (page1 >= 512) page1 = 511;
     ntex_before_access(page0, page1);   /* a texture overlapping a bound native slot */
     ntex_before_access(((tex0 >> 37) & 0x3FFF) / 32, ((tex0 >> 37) & 0x3FFF) / 32 + 1);
+#ifdef __ANDROID__
+    g_and_sub = 8;   /* (profiler: page hashing) */
+#endif
     for (uint32_t p = page0; p <= page1; p++) content = (content ^ page_hash_get(p)) * 0x9E3779B97F4A7C15ull + p;
+#ifdef __ANDROID__
+    g_and_sub = 9;   /* (profiler: texture cache lookup) */
+#endif
 
 #ifdef __ANDROID__
     /* Android (Quest): a direct index into texcache by the lookup's key, checked - the 512 entries were scanned each draw */
@@ -963,6 +989,7 @@ static GLuint tex_get(uint64_t tex0, uint64_t texa, int* out_w, int* out_h, floa
         uint32_t* px = malloc(w * h * 4);
 #ifdef __ANDROID__
         uint64_t and_t0 = SDL_GetTicksNS();
+        g_and_sub = 10;   /* (profiler: texture decode and upload) */
 #endif
         stat_decodes++; stat_decode_px += w * h;
         gs_decode_texture(tex0, texa, w, h, px);
