@@ -1601,6 +1601,25 @@ static int and_tr_active;   /* an eye's GPU passes are being traced */
    the replay makes the copy first (and_defer_do) */
 static RenderTarget *and_defer_src, *and_defer_dst;
 static unsigned and_defer_n, and_defer_no[9];
+/* draws ended by a state change, per cause (0 executed frame, 1 replays): logged by and_flush_why_log */
+static unsigned and_flush_why[2][14], and_flush_epoch_only[2];
+void and_flush_why_log(void)
+{
+    static const char* const nm[14] = { "buffer full", "points/lines/triangles", "PRIM bits", "texture (TEX0)", "texture upload in between (epoch)",
+                                        "blend (ALPHA)", "tests (TEST)", "target (FRAME)", "depth (ZBUF)", "scissor", "XYOFFSET",
+                                        "TEX1/CLAMP", "TEXA/FOGCOL/PABE", "other" };
+    for (int r = 0; r < 2; r++) {
+        char b[700];
+        int o = 0;
+        unsigned tot = 0;
+        for (int k = 0; k < 14; k++) tot += and_flush_why[r][k];
+        for (int k = 0; k < 14; k++)
+            if (and_flush_why[r][k]) o += SDL_snprintf(b + o, sizeof(b) - (size_t)o, "%s%s %u", o ? ", " : "", nm[k], and_flush_why[r][k]);
+        host_log("android: draws ended by a state change last second (%s): %u - %s; epoch with all else the same %u\n",
+                 r ? "the eyes' replays" : "game frames", tot, o ? b : "none", and_flush_epoch_only[r]);
+        memset(and_flush_why[r], 0, sizeof(and_flush_why[r])); and_flush_epoch_only[r] = 0;
+    }
+}
 static void and_defer_do(void)
 {
     RenderTarget *s = and_defer_src, *d = and_defer_dst;
@@ -2182,6 +2201,17 @@ static void batch_for(int type, const GsVertex* v, int count, const GsContext* c
     if (!(st.prim & (1 << 4))) { st.ctx.tex0 = 0; st.ctx.tex1 = 0; st.ctx.clamp = 0; }
     st.epoch = gs_tex_epoch;
     if (!batch_valid || memcmp(&st, &batch_state, sizeof(st)) != 0 || mode != batch_mode || vcount + 6 > MAX_VERTS) {
+#ifdef __ANDROID__
+        if (batch_valid && vcount) {   /* why a draw ends here (draws are the GL driver's cost: ~37% of a headset image's CPU) */
+            const DrawState* o = &batch_state;
+            int k = vcount + 6 > MAX_VERTS ? 0 : mode != batch_mode ? 1 : st.prim != o->prim ? 2 : st.ctx.tex0 != o->ctx.tex0 ? 3 :
+                    st.epoch != o->epoch ? 4 : st.ctx.alpha != o->ctx.alpha ? 5 : st.ctx.test != o->ctx.test ? 6 : st.ctx.frame != o->ctx.frame ? 7 :
+                    st.ctx.zbuf != o->ctx.zbuf ? 8 : st.ctx.scissor != o->ctx.scissor ? 9 : st.ctx.xyoffset != o->ctx.xyoffset ? 10 :
+                    st.ctx.tex1 != o->ctx.tex1 || st.ctx.clamp != o->ctx.clamp ? 11 : st.texa != o->texa || st.fogcol != o->fogcol || st.pabe != o->pabe ? 12 : 13;
+            and_flush_why[gs_replaying ? 1 : 0][k]++;
+            if (k == 4 && st.ctx.tex0 == o->ctx.tex0 && !memcmp(&st.ctx, &o->ctx, sizeof(st.ctx))) and_flush_epoch_only[gs_replaying ? 1 : 0]++;
+        }
+#endif
         gs_flush();
         batch_state = st; batch_valid = 1; batch_mode = mode;
         batch_sprite_first = type == 6 && !(st.ctx.test & 1) && !(st.ctx.frame >> 32);
