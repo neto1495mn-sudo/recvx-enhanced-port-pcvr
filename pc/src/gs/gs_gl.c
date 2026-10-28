@@ -1811,7 +1811,20 @@ void gs_draw_primitive(int type, const GsVertex* v, int count, const GsContext* 
         float z0 = v[0].z, z1 = v[0].z;
         for (int i = 1; i < count; i++) { z0 = fminf(z0, v[i].z); z1 = fmaxf(z1, v[i].z); }
         prim_big = (x1 - x0) > 320.0f || (y1 - y0) > 240.0f;
+#ifdef __ANDROID__
+        /* Android (Quest): flat at one depth is a screen layer only at an overlay's depth - window panes seen straight on
+           (big triangles at one world depth, 9374..11463 in the log) went onto the VR panel (yellow) as layers */
+        prim_layer = prim_big && (((x1 - x0) >= 600.0f && (y1 - y0) >= 400.0f) || ((z1 - z0) <= 0.002f * fabsf(z1) + 1.0f && z1 <= 100.0f));
+        {
+            static unsigned nl;
+            if (!prim_layer && prim_big && (z1 - z0) <= 0.002f * fabsf(z1) + 1.0f && nl < 10) {
+                nl++;
+                host_log("android: big flat primitive at a world depth kept in the world (was a screen layer): x %.0f..%.0f y %.0f..%.0f depth %.1f\n", x0, x1, y0, y1, z1);
+            }
+        }
+#else
         prim_layer = prim_big && (((x1 - x0) >= 600.0f && (y1 - y0) >= 400.0f) || (z1 - z0) <= 0.002f * fabsf(z1) + 1.0f);
+#endif
         prim_tall = (y1 - y0) > 240.0f && (prim_layer || z1 <= 100.0f);
 #ifdef __ANDROID__
         {   /* Android (Quest) diagnosis: GS-register primitives that go onto the VR panel (yellow with vr_debug_cores) -
