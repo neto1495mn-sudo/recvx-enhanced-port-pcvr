@@ -162,8 +162,9 @@ void and_prof_report(void)
         unsigned n = game.n ? game.n : 1;
         { void and_glcache_stats(unsigned*, unsigned*); unsigned sk, pa; and_glcache_stats(&sk, &pa);
           host_log("android: GL state calls last second: %u skipped as repeated, %u passed to the driver\n", sk, pa); }
-        { void gs_upload_fmt_bytes(unsigned*); unsigned ub[4]; gs_upload_fmt_bytes(ub);
-          host_log("android: texture uploads last second in whole blocks: CT32 %u KB, CT16 %u KB, T8 %u KB, T4 %u KB\n", ub[0] >> 10, ub[1] >> 10, ub[2] >> 10, ub[3] >> 10); }
+        { void gs_upload_fmt_bytes(unsigned*); unsigned ub[5]; gs_upload_fmt_bytes(ub);
+          host_log("android: texture uploads last second in whole blocks: CT32 %u KB (content changed %u KB), CT16 %u KB, T8 %u KB, T4 %u KB\n",
+                   ub[0] >> 10, ub[4] >> 10, ub[1] >> 10, ub[2] >> 10, ub[3] >> 10); }
         g_and_hud[0] = last_proc ? (float)(100.0 * (double)(proc - last_proc) / (secs * 1e9)) : 0.0f;
         host_log("android: cpu/gpu game thread: %u frames, cpu avg %.1f max %.1f ms, wall avg %.1f ms, waiting for the render thread avg %.1f ms; "
                  "process cpu %.0f%% of one core; effect polygons split %u\n",

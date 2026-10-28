@@ -20,7 +20,10 @@ static uint8_t blk_clean[GS_MEM_SIZE / 256];
 #if defined(__ARM_NEON) && !defined(RECVX_HASH_SCALAR)
 #include <arm_neon.h>
 #endif
-static inline uint64_t hash256(const uint8_t* p8, uint32_t b)
+#ifdef __ANDROID__
+__attribute__((noinline))   /* (its own name in the sampling profiler: how much of the uploads is the hashing) */
+#endif
+static uint64_t hash256(const uint8_t* p8, uint32_t b)
 {
     uint32_t a = 0x9E3779B1u ^ b, c = 0x85EBCA77u, d = 0xC2B2AE3Du, e = 0x27D4EB2Fu ^ (b * 0x01000193u);
 #define HROT(x, r) (((x) << (r)) | ((x) >> (32 - (r))))
@@ -294,9 +297,10 @@ static inline void write_tracked(int psm, uint32_t bp, uint32_t bw, uint32_t x, 
 #include <pthread.h>
 #include <semaphore.h>
 typedef struct { int fmt; const uint8_t* src; uint32_t rrw, dbp, bw, dsax, y0, nr; const uint8_t (*bt32)[8]; const uint8_t (*bt16)[4];
-                 uint64_t pages[512 / 64]; int changed; } UpRows;
-static unsigned up_bytes[4];   /* uploaded in whole block rows per format (CT32, CT16, T8, T4), for the log */
-void gs_upload_fmt_bytes(unsigned* out) { for (int k = 0; k < 4; k++) { out[k] = up_bytes[k]; up_bytes[k] = 0; } }
+                 uint64_t pages[512 / 64]; int changed; unsigned nchg; } UpRows;
+static unsigned up_bytes[4], up_chg;   /* uploaded in whole block rows per format (CT32, CT16, T8, T4), and of the CT32
+                                          blocks the ones whose content changed (bytes), for the log */
+void gs_upload_fmt_bytes(unsigned* out) { for (int k = 0; k < 4; k++) { out[k] = up_bytes[k]; up_bytes[k] = 0; } out[4] = up_chg; up_chg = 0; }
 #define JMARK(j_, a_) do { uint32_t pg_ = ((a_) >> 13) & 511; (j_)->pages[pg_ >> 6] |= 1ull << (pg_ & 63); } while (0)
 static void up_rows(UpRows* j)
 {
@@ -306,17 +310,44 @@ static void up_rows(UpRows* j)
             const uint8_t* s = j->src + (size_t)r * rrw * 32;
             uint32_t y0 = j->y0 + r * 8;
             for (uint32_t bx = 0; bx < rrw; bx += 8) {
-                uint32_t blk[64], a = addr32(j->bt32, j->dbp, bw, j->dsax + bx, y0);
+                uint32_t a = addr32(j->bt32, j->dbp, bw, j->dsax + bx, y0);
                 /* columnTable32: rows 2k and 2k+1 interleaved two pixels at a time from word 16k - eight-byte copies, no
                    table (checked: (y/2)*16 + (x/2)*4 + (y%2)*2 + x%2 for all 64 entries) */
+#if defined(__ARM_NEON) && !defined(RECVX_HASH_SCALAR)
+                {   /* one pass: the new block straight into memory, compared with the old on the way (no staging copy,
+                       no second compare pass) */
+                    uint8_t* d = gs_memp + a;
+                    uint8x16_t df = vdupq_n_u8(0);
+                    for (uint32_t k = 0; k < 4; k++) {
+                        const uint8_t* ra = s + ((size_t)(2 * k) * rrw + bx) * 4;
+                        const uint8_t* rb = ra + (size_t)rrw * 4;
+                        uint8_t* dk = d + 64 * k;
+                        uint8x16_t A0 = vld1q_u8(ra), A1 = vld1q_u8(ra + 16), B0 = vld1q_u8(rb), B1 = vld1q_u8(rb + 16);
+                        uint8x16_t o0 = vcombine_u8(vget_low_u8(A0), vget_low_u8(B0)), o1 = vcombine_u8(vget_high_u8(A0), vget_high_u8(B0));
+                        uint8x16_t o2 = vcombine_u8(vget_low_u8(A1), vget_low_u8(B1)), o3 = vcombine_u8(vget_high_u8(A1), vget_high_u8(B1));
+                        df = vorrq_u8(df, vorrq_u8(vorrq_u8(veorq_u8(vld1q_u8(dk), o0), veorq_u8(vld1q_u8(dk + 16), o1)),
+                                                   vorrq_u8(veorq_u8(vld1q_u8(dk + 32), o2), veorq_u8(vld1q_u8(dk + 48), o3))));
+                        vst1q_u8(dk, o0); vst1q_u8(dk + 16, o1); vst1q_u8(dk + 32, o2); vst1q_u8(dk + 48, o3);
+                    }
+                    {
+                        uint32x4_t w = vreinterpretq_u32_u8(df);
+                        uint32x2_t m = vorr_u32(vget_low_u32(w), vget_high_u32(w));
+                        if (vget_lane_u32(m, 0) | vget_lane_u32(m, 1)) { j->changed = 1; j->nchg++; BLK_SET(a, d); }
+                    }
+                    JMARK(j, a);
+                    continue;
+                }
+#else
+                uint32_t blk[64];
                 for (uint32_t k = 0; k < 4; k++) {
                     const uint8_t* ra = s + ((size_t)(2 * k) * rrw + bx) * 4;
                     const uint8_t* rb = ra + (size_t)rrw * 4;
                     uint8_t* o = (uint8_t*)&blk[16 * k];
                     for (uint32_t q = 0; q < 4; q++) { memcpy(o + q * 16, ra + q * 8, 8); memcpy(o + q * 16 + 8, rb + q * 8, 8); }
                 }
-                if (memcmp(gs_memp + a, blk, 256)) { memcpy(gs_memp + a, blk, 256); j->changed = 1; BLK_SET(a, blk); }
+                if (memcmp(gs_memp + a, blk, 256)) { memcpy(gs_memp + a, blk, 256); j->changed = 1; j->nchg++; BLK_SET(a, blk); }
                 JMARK(j, a);
+#endif
             }
         } else if (j->fmt == 1) {   /* CT16 family: 16x8 blocks */
             const uint8_t* s = j->src + (size_t)r * rrw * 16;
@@ -407,8 +438,9 @@ static int up_block_rows(const uint8_t* src, uint32_t bytes, uint32_t* pi, int d
             up_rows(&a);
             sem_wait(&up_done);
             for (int w = 0; w < 8; w++) a.pages[w] |= b.pages[w];
-            a.changed |= b.changed;
+            a.changed |= b.changed; a.nchg += b.nchg;
         } else up_rows(&a);
+        if (fmt == 0) up_chg += a.nchg * 256;
         for (int w = 0; w < 8; w++) { xfer_pages[w] |= a.pages[w]; chunk_pages[w] |= a.pages[w]; }
         if (a.changed) xfer_changed = CHUNK_CHANGED;
     }
