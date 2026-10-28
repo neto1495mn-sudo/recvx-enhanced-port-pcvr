@@ -230,6 +230,8 @@ void and_prof_report(void)
           host_log("android: GPU passes last second: target switches game frames %u, headset images %u, other %u; blits game frames %u (%.1f Mpixels), "
                    "headset images %u (%.1f Mpixels), other %u (%.1f Mpixels)\n", sw[1], sw[2], sw[0], bn[1], bp[1] / 1e6, bn[2], bp[2] / 1e6, bn[0], bp[0] / 1e6); }
         { void ntex_stats_log(void); ntex_stats_log(); }
+        { void gs_clut_stats(unsigned*, unsigned*); unsigned sk, ld; gs_clut_stats(&sk, &ld);
+          host_log("android: CLUT loads last second: %u from GS memory, %u skipped (the same CLUT, its memory unchanged)\n", ld, sk); }
         { void gs_upload_fmt_bytes(unsigned*); unsigned ub[5]; gs_upload_fmt_bytes(ub);
           host_log("android: texture uploads last second in whole blocks: CT32 %u KB (content changed %u KB), CT16 %u KB, T8 %u KB, T4 %u KB\n",
                    ub[0] >> 10, ub[4] >> 10, ub[1] >> 10, ub[2] >> 10, ub[3] >> 10); }

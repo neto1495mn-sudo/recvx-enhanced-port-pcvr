@@ -504,9 +504,29 @@ int ntex_lookup(uint64_t tex0, uint64_t texa, unsigned int* out_tex, int* out_w,
     }
     pal = palette_hash(tex0, texa);
     use_clock++;
+#ifdef __ANDROID__
+    /* Android (Quest): the decode last found for this id/key/palette remembered by a hash (checked before use: a freed
+       or reused entry just misses) - the scan of all 4096 entries was ~9% of a game frame's execution */
+    static int16_t memo[4096];
+    uint64_t hk = (uint64_t)a->id * 0x9E3779B97F4A7C15ull ^ key * 0xC2B2AE3D27D4EB4Full ^ (uint64_t)pal * 0x165667B19E3779F9ull ^
+                  (psm != PSMCT16 && psm != PSMCT24 ? 0 : texa * 0x27D4EB2F165667C5ull);
+    unsigned hs = (unsigned)((hk ^ (hk >> 29) ^ (hk >> 47)) & 4095);
+    {
+        int i = memo[hs] - 1;
+        if (i >= 0) {
+            NTex* t = &ntex[i];
+            if (t->used && t->id == a->id && t->key == key && t->pal == pal && (psm != PSMCT16 && psm != PSMCT24 ? 1 : t->texa == texa)) {
+                t->last = use_clock; *out_tex = t->tex; *out_w = t->w; *out_h = t->h; return t->hd ? 3 : 1;
+            }
+        }
+    }
+#endif
     for (int i = 0; i < MAX_NTEX; i++) {
         NTex* t = &ntex[i];
         if (t->used && t->id == a->id && t->key == key && t->pal == pal && (psm != PSMCT16 && psm != PSMCT24 ? 1 : t->texa == texa)) {
+#ifdef __ANDROID__
+            memo[hs] = (int16_t)(i + 1);
+#endif
             t->last = use_clock; *out_tex = t->tex; *out_w = t->w; *out_h = t->h; return t->hd ? 3 : 1;
         }
     }
@@ -531,6 +551,9 @@ int ntex_lookup(uint64_t tex0, uint64_t texa, unsigned int* out_tex, int* out_w,
 #endif
     if (!e->tex) return 0;
     e->used = 1; e->id = a->id; e->key = key; e->texa = texa; e->pal = pal; e->last = use_clock;
+#ifdef __ANDROID__
+    memo[hs] = (int16_t)(e - ntex + 1);
+#endif
     if (!e->hd) ntex_bytes += (uint64_t)e->w * e->h * 4;
     *out_tex = e->tex; *out_w = e->w; *out_h = e->h;
     return e->hd ? 3 : 1;

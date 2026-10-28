@@ -17,6 +17,7 @@ static uint32_t wgen = 1, page_wgen[512];   /* write generation per 8 KB page (g
    threads store their own blocks' bytes, no shared words) */
 static uint64_t blk_hash[GS_MEM_SIZE / 256];
 static uint8_t blk_clean[GS_MEM_SIZE / 256];
+static uint32_t blk_wgen[GS_MEM_SIZE / 256];   /* writes per block (gs_clut_load: its source unchanged since it last loaded) */
 #if defined(__ARM_NEON) && !defined(RECVX_HASH_SCALAR)
 #include <arm_neon.h>
 #endif
@@ -67,9 +68,9 @@ static uint64_t hash256(const uint8_t* p8, uint32_t b)
     c ^= c >> 15; c *= 0x297A2D39u; c ^= c >> 12;
     return ((uint64_t)a << 32 | c) ^ ((uint64_t)d << 17) ^ e;
 }
-#define BLK_DIRTY(byte_a) do { if (gs_memp == gs_mem) blk_clean[((byte_a) >> 8) & (GS_MEM_SIZE / 256 - 1)] = 0; } while (0)
+#define BLK_DIRTY(byte_a) do { if (gs_memp == gs_mem) { uint32_t b_ = ((byte_a) >> 8) & (GS_MEM_SIZE / 256 - 1); blk_clean[b_] = 0; blk_wgen[b_]++; } } while (0)
 #define BLK_SET(byte_a, data) do { if (gs_memp == gs_mem) { uint32_t b_ = ((byte_a) >> 8) & (GS_MEM_SIZE / 256 - 1); \
-                                    blk_hash[b_] = hash256((const uint8_t*)(data), b_); blk_clean[b_] = 1; } } while (0)
+                                    blk_hash[b_] = hash256((const uint8_t*)(data), b_); blk_clean[b_] = 1; blk_wgen[b_]++; } } while (0)
 /* gs_gl.c page_hash_get: the hash of 8 KB page p from its blocks' */
 uint64_t gs_page_hash(uint32_t p)
 {
@@ -737,6 +738,13 @@ static uint32_t clut_gen = 1;   /* changes whenever clut_buf may have (gs_gl.c c
 uint32_t gs_clut_gen(void) { return clut_gen; }
 
 /* memory position of CLUT entry i in CSM1 storage */
+#ifdef __ANDROID__
+static int clut_last_ok;
+static uint32_t clut_last_cbp, clut_last_cpsm, clut_last_csa, clut_last_g;
+static int clut_last_n;
+static unsigned clut_skipped, clut_loaded;
+void gs_clut_stats(unsigned* skipped, unsigned* loaded) { *skipped = clut_skipped; *loaded = clut_loaded; clut_skipped = clut_loaded = 0; }
+#endif
 void gs_clut_state_save(uint8_t* out)
 {
     memcpy(out, clut_buf, sizeof(clut_buf));
@@ -746,6 +754,9 @@ void gs_clut_state_save(uint8_t* out)
 void gs_clut_state_restore(const uint8_t* in)
 {
     clut_gen++;
+#ifdef __ANDROID__
+    clut_last_ok = 0;   /* (the buffer is not the last load's any more) */
+#endif
     memcpy(clut_buf, in, sizeof(clut_buf));
     memcpy(&cbp0, in + sizeof(clut_buf), 4);
     memcpy(&cbp1, in + sizeof(clut_buf) + 4, 4);
@@ -775,9 +786,26 @@ void gs_clut_load(uint64_t tex0)
     case 5: load = cbp != cbp1; cbp1 = cbp; break;
     }
     if (!load) return;
+#ifdef __ANDROID__
+    /* Android (Quest): the same CLUT loaded again from GS memory nobody wrote since (the last load had these
+       parameters and nothing else wrote the CLUT buffer since): the buffer already holds it - the game loads a CLUT at
+       every texture switch (gs_clut_load ~13% of a game frame's execution) */
+    gs_flush();
+    ntex_before_access(cbp / 32, cbp / 32 + 1);
+    {
+        uint32_t b0 = (cbp * 256u >> 8) & (GS_MEM_SIZE / 256 - 1), nb = entries == 16 ? 2 : 8, g = 0;
+        for (uint32_t b = 0; b < nb; b++) g = g * 0x9E3779B1u + blk_wgen[(b0 + b) & (GS_MEM_SIZE / 256 - 1)];
+        if (clut_last_ok && gs_memp == gs_mem && clut_last_cbp == cbp && clut_last_cpsm == cpsm && clut_last_csa == csa &&
+            clut_last_n == entries && clut_last_g == g) { clut_skipped++; return; }
+        clut_last_ok = gs_memp == gs_mem; clut_last_cbp = cbp; clut_last_cpsm = cpsm; clut_last_csa = csa; clut_last_n = entries; clut_last_g = g;
+        clut_loaded++;
+    }
+    clut_gen++;
+#else
     gs_flush();
     clut_gen++;
     ntex_before_access(cbp / 32, cbp / 32 + 1);
+#endif
 #ifdef __ANDROID__
     {   /* Android (Quest): the entries' addresses from a table - within the CLUT they are cbp * 256 plus a fixed offset (the
            profiler: gs_clut_load and gs_read_pixel ~8% of the render thread, 256 address computations a load) */
