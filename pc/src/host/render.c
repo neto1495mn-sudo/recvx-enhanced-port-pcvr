@@ -180,6 +180,15 @@ void render_loop(void)
             { extern void and_gq_stage(int); and_gq_stage(3); }
             { extern int and_pass_trace(int); static unsigned k; if ((k++ % 150) == 75) and_trace_exec = and_pass_trace(1); }
 #endif
+#ifdef __ANDROID__
+            {   /* option 1 (gs_gl.c): in VR, 3 game frames in 4 executed without their draws */
+                extern int g_and_exec_nodraw; extern int gs_exec_nodraw_ok(void);
+                static unsigned k;
+                const VrView* vv = stream_frame_vr(f);
+                g_and_exec_nodraw = 0;
+                if (xr_active() && g_vr_stereo && vv && vv->valid && gs_exec_nodraw_ok()) g_and_exec_nodraw = (k++ & 3) != 0;
+            }
+#endif
             gs_frame_begin();
             stream_exec(f);
 #ifdef __ANDROID__
@@ -218,6 +227,9 @@ void render_loop(void)
                 uint64_t tx = SDL_GetTicksNS() - tx0;
                 if (g_vr_debug_log && tx > 8000000 && nslow < 80) { nslow++; host_log("vr-diag: slow game frame drawing: %.1f ms\n", tx / 1e6); }
             }
+#ifdef __ANDROID__
+            if (stream_is_partial(f)) { extern int g_and_exec_nodraw; g_and_exec_nodraw = 0; }   /* (a download: the rest of the frame drawn) */
+#endif
             if (stream_is_partial(f)) {   /* download sync point */
 #ifdef __ANDROID__
                 hb_skip_partial++;
@@ -257,6 +269,9 @@ void render_loop(void)
             interp = g_config.interpolate && stream_match(cur, f);
             prof_pop();
             gs_frame_executed(interp);
+#ifdef __ANDROID__
+            { extern int g_and_exec_nodraw; g_and_exec_nodraw = 0; }   /* (the frame's last batch was flushed above: draws after it are drawn) */
+#endif
             if (interp && check_replay) gs_replay_check(f);
             stream_release(prev);
             prev = cur;

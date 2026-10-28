@@ -55,6 +55,14 @@ static unsigned and_rt_exec_skipped;
    memory (StoreImage), captures (StoreRenderTex) */
 static unsigned and_rd_tex, and_rd_disp, and_rd_mem, and_rd_cap;
 static unsigned and_x_frames, and_x_free, and_x_tex, and_x_mem, and_x_cap;
+/* option 1 on: in VR, 3 game frames in 4 are executed without their draws (render.c sets g_and_exec_nodraw): their
+   picture is never shown (the eyes draw it again) and nothing read their targets in the log (only the display copy) -
+   textures, CLUTs and reloads still resolve (the replays reuse them). A read of a target (other than the display
+   copy) turns it off for 150 game frames */
+int g_and_exec_nodraw;
+static int and_nodraw_block;
+static unsigned and_nodraw_frames, and_nodraw_draws;
+int gs_exec_nodraw_ok(void) { return !and_nodraw_block; }
 #endif
 typedef struct {
     int used;
@@ -1905,6 +1913,7 @@ void gs_flush(void)
     uni1i(u_atst, (int)((test >> 1) & 7));
     uni1f(u_aref, (float)((test >> 4) & 0xFF));
 #ifdef __ANDROID__
+    if (!gs_replaying && g_and_exec_nodraw) { and_nodraw_draws++; vcount = 0; nsruns = 0; return; }   /* (option 1: resolved, not drawn) */
     if (and_tr_active && and_trd_n < 96) {
         extern int and_pass_trace_index(void);
         AndTrDraw* d = &and_trd[and_trd_n++];
@@ -2870,13 +2879,19 @@ void gs_frame_executed(int interpolate)
             if (and_rt_skip[i] && o < 140) o += SDL_snprintf(b + o, sizeof(b) - (size_t)o, " fbp %u", rts[i].fbp);
         }
         and_x_frames++;
+        if (g_and_exec_nodraw) and_nodraw_frames++;
+        if (and_rd_tex || and_rd_mem || and_rd_cap) {
+            if (!and_nodraw_block) host_log("android: option 1 off for 150 game frames: a target was read (draws %u, read backs %u, captures %u)\n", and_rd_tex, and_rd_mem, and_rd_cap);
+            and_nodraw_block = 150;
+        } else if (and_nodraw_block) and_nodraw_block--;
         if (!and_rd_tex && !and_rd_mem && !and_rd_cap) and_x_free++;
         if (and_rd_tex) and_x_tex++;
         if (and_rd_mem) and_x_mem++;
         if (and_rd_cap) and_x_cap++;
         if ((nlog % 300) == 30)
             host_log("android: option 1 (game frames not drawn in VR): of %u game frames %u read no target but the display copy; %u had draws sampling a "
-                     "target, %u read backs into GS memory, %u captures\n", and_x_frames, and_x_free, and_x_tex, and_x_mem, and_x_cap);
+                     "target, %u read backs into GS memory, %u captures; %u executed without their draws (%u draws not issued)\n",
+                     and_x_frames, and_x_free, and_x_tex, and_x_mem, and_x_cap, and_nodraw_frames, and_nodraw_draws);
         if ((nlog++ % 900) == 30) host_log("android: targets drawn and never read this frame (not drawn in the eyes):%s; eye draws skipped so far %u, "
                                           "game frame draws skipped (unread 5 s) %u\n", o ? b : " none", and_rt_skipped, and_rt_exec_skipped);
     }
