@@ -3209,6 +3209,15 @@ static void hold_keep_and_dim(int e, int w, int h, GLuint cur)
         }
         hold_w = w; hold_h = h; hold_valid = 0;
     }
+#ifdef __ANDROID__
+    /* Android (Quest): kept one headset image in 4 - each copy split the eye's pass on the tiled GPU (the image stored,
+       copied, loaded again for what is drawn after: 26 blits and 5.3 Mpixels an image, most of them this). The kept
+       poses go with the kept images (xr_hold_mark); a room change fades out from up to 3 images (~40 ms) earlier */
+    static int hold_copy, hold_n;
+    if (e == 0) hold_copy = !hold_valid || (hold_n++ & 3) == 0;
+    if (hold_copy && e == 1) { extern void xr_hold_mark(void); xr_hold_mark(); }
+    if (hold_copy)
+#endif
     {   /* copy: the eye framebuffer (bound) -> hold_tex[e] */
         glBindFramebuffer(GL_READ_FRAMEBUFFER, cur);
         glBindFramebuffer(GL_DRAW_FRAMEBUFFER, hold_fbo);

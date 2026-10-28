@@ -165,6 +165,10 @@ static int in_frame;            /* between xrBeginFrame and xrEndFrame */
 static XrView views[2];
 static XrView held_views[2];   /* the poses of the last stereo frame (xr_frame_end_held) */
 static int held_ok;
+#ifdef __ANDROID__
+static int hold_next;   /* this stereo frame's eye images were kept: keep its poses */
+void xr_hold_mark(void) { hold_next = 1; }
+#endif
 static VrEye eyes[2];
 static int eyes_valid;
 
@@ -960,7 +964,13 @@ void xr_frame_end_stereo(void)
     proj.viewCount = 2;
     proj.views = pv;
     layers[0] = (const XrCompositionLayerBaseHeader*)&proj;
-    held_views[0] = views[0]; held_views[1] = views[1]; held_ok = 1;
+#ifdef __ANDROID__
+    if (hold_next)   /* (gs_gl.c keeps the eye images of only some headset images) */
+#endif
+    { held_views[0] = views[0]; held_views[1] = views[1]; held_ok = 1; }
+#ifdef __ANDROID__
+    hold_next = 0;
+#endif
     end_frame(layers, 1);
 }
 
