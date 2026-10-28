@@ -108,7 +108,7 @@ void render_loop(void)
                     if (++ab_secs >= 20) {
                         host_log("android: A/B mode %d (%s): %.1f headset images/s, %.1f game frames/s over %u s\n",
                                  g_and_ab, ab_names[g_and_ab], ab_pres / (double)ab_secs, ab_game / (double)ab_secs, ab_secs);
-                        g_and_ab = (g_and_ab + 1) & 3;
+                        /* (the A/B run showed no clear winner - scene-dependent, eye flush off looked worse: mode 0 kept) */
                         ab_secs = ab_pres = ab_game = 0;
                     }
                 }

@@ -1812,6 +1812,26 @@ void gs_draw_primitive(int type, const GsVertex* v, int count, const GsContext* 
         prim_big = (x1 - x0) > 320.0f || (y1 - y0) > 240.0f;
         prim_layer = prim_big && (((x1 - x0) >= 600.0f && (y1 - y0) >= 400.0f) || (z1 - z0) <= 0.002f * fabsf(z1) + 1.0f);
         prim_tall = (y1 - y0) > 240.0f && (prim_layer || z1 <= 100.0f);
+#ifdef __ANDROID__
+        {   /* Android (Quest) diagnosis: GS-register primitives that go onto the VR panel (yellow with vr_debug_cores) -
+               a window's lit panes did; logged once per texture address, with depths and the marks deciding it */
+            extern int gs_raw_vr, gs_vu1_vr, gs_raw_ui, g_vr_fx_fix, gs_replaying;
+            static uint32_t seen[64];
+            static int nseen;
+            int fx = g_vr_fx_fix && z1 > 100.0f && !gs_raw_ui && !prim_layer;
+            if (vr_u.on && !gs_replaying && !gs_raw_vr && !gs_vu1_vr && !fx && !prim_tall && nseen < 64) {
+                uint32_t key = (uint32_t)(c->tex0 & 0x3FFF) | ((uint32_t)type << 16) | (((prim >> 4) & 1) << 20);
+                int k = 0;
+                while (k < nseen && seen[k] != key) k++;
+                if (k == nseen) {
+                    seen[nseen++] = key;
+                    host_log("android: panel GS primitive type %d (%d vertices, prim %llx, tex %s tbp %u, frame fbp %u): x %.0f..%.0f y %.0f..%.0f "
+                             "depth %.1f..%.1f; raw_ui %d, layer %d\n", type, count, (unsigned long long)prim, (prim >> 4) & 1 ? "on" : "off",
+                             (unsigned)(c->tex0 & 0x3FFF), (unsigned)(c->frame & 0x1FF), x0, x1, y0, y1, z0, z1, gs_raw_ui, prim_layer);
+                }
+            }
+        }
+#endif
     }
     {   /* VR (as native_glue.c): a polygon with corners both in the world (GS depth) and not - the
            others behind or too close to the camera - stretched between the world and the panel: left out */
