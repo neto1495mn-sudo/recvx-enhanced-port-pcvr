@@ -239,6 +239,7 @@ void gs_exec_upload(const uint8_t* src, uint32_t bytes)
                 gs.xfer_y += 8;
             }
         }
+#ifdef __ANDROID__
         /* whole blocks of the 16-, 8- and 4-bit formats the same way (vr: the Quest's CPU spent 15-23% of the render
            thread in these uploads, pixel by pixel): one 256-byte block assembled in swizzled order, compared, stored */
         if ((dpsm == PSMCT16 || dpsm == PSMCT16S || dpsm == PSMZ16 || dpsm == PSMZ16S) && !(dsax & 15) && !(rrw & 15)) {
@@ -296,6 +297,7 @@ void gs_exec_upload(const uint8_t* src, uint32_t bytes)
                 gs.xfer_y += 16;
             }
         }
+#endif
         if (dpsm == PSMCT32 || dpsm == PSMZ32) {
             const uint8_t (*bt)[8] = dpsm == PSMCT32 ? blockTable32 : blockTableZ32;
             while (i + 4 <= bytes && gs.xfer_y < rrh) {
