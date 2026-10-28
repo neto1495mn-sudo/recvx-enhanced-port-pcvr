@@ -48,6 +48,9 @@ double g_vr_frame_ref, g_vr_frame_period = 1001.0 / 30000.0 * 1e9;
 
 #ifdef __ANDROID__
 #include "xr.h"
+/* Android (Quest) diagnosis: once a second, the headset images presented and the loops that skipped the present - a
+   partial frame (download sync point) or an in-between image dropped because the next frame was waiting */
+static unsigned hb_presents, hb_skip_partial, hb_skip_queued;
 #endif
 
 void render_loop(void)
@@ -83,6 +86,8 @@ void render_loop(void)
             if (now - hb_t >= 1000000000ull) {
                 VrInput in;
                 int have = xr_input(&in);
+                host_log("android: last second %u presents, skipped %u partial, %u queued\n", hb_presents, hb_skip_partial, hb_skip_queued);
+                hb_presents = hb_skip_partial = hb_skip_queued = 0;
                 host_log("android: last second %u game frames, %u loops; buttons %x sticks %.1f %.1f / %.1f %.1f triggers %.1f %.1f grips %.1f %.1f%s\n",
                          hb_frames, hb_loops, have ? in.buttons : 0, have ? in.lx : 0, have ? in.ly : 0, have ? in.rx : 0, have ? in.ry : 0,
                          have ? in.ltrig : 0, have ? in.rtrig : 0, have ? in.lgrip : 0, have ? in.rgrip : 0, have ? "" : " (no controller input)");
@@ -120,7 +125,12 @@ void render_loop(void)
                 uint64_t tx = SDL_GetTicksNS() - tx0;
                 if (g_vr_debug_log && tx > 8000000 && nslow < 80) { nslow++; host_log("vr-diag: slow game frame drawing: %.1f ms\n", tx / 1e6); }
             }
-            if (stream_is_partial(f)) { stream_release(f); continue; }   /* download sync point */
+            if (stream_is_partial(f)) {   /* download sync point */
+#ifdef __ANDROID__
+                hb_skip_partial++;
+#endif
+                stream_release(f); continue;
+            }
             now = SDL_GetTicksNS();
             if (arrived) {
                 double d = (double)(now - arrived);
@@ -165,7 +175,13 @@ void render_loop(void)
             else t = (float)((double)(now - arrived) / period);
             /* the next game frame is already waiting (the game runs below its rate): an
                in-between image of this one would only delay it (a whole replay of the scene) */
-            if (t < 1.0f && fixed_t <= 0.0f && stream_queued()) { if (xr_active()) vr_skip++; continue; }
+            if (t < 1.0f && fixed_t <= 0.0f && stream_queued()) {
+                if (xr_active()) vr_skip++;
+#ifdef __ANDROID__
+                hb_skip_queued++;
+#endif
+                continue;
+            }
             if (xr_active() && ++vr_np >= 900) {   /* vr72 diagnosis (vr_debug_log): headset images skipped because the next game frame was already waiting */
                 extern int g_vr_debug_log; void host_log(const char*, ...);
                 if (g_vr_debug_log) host_log("vr-diag: render loop: game frame %.1f ms (avg), in-between images skipped (next frame waiting) %u of %u\n", period * 1e-6, vr_skip, vr_np);
@@ -176,6 +192,9 @@ void render_loop(void)
                 int fl = stream_point_at(interp ? prev : NULL, cur, t, &x, &y);
                 overlay_point(fl, x, y);            }
             swap = gs_present(cur, t);
+#ifdef __ANDROID__
+            hb_presents++;
+#endif
             shown++;
             if (trace) fprintf(trace, "%llu %.3f %llu %llu\n", (unsigned long long)gs_frame_count(), t, (unsigned long long)(now / 1000),
                                (unsigned long long)(swap / 1000));
