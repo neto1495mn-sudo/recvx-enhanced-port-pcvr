@@ -239,6 +239,63 @@ void gs_exec_upload(const uint8_t* src, uint32_t bytes)
                 gs.xfer_y += 8;
             }
         }
+        /* whole blocks of the 16-, 8- and 4-bit formats the same way (vr: the Quest's CPU spent 15-23% of the render
+           thread in these uploads, pixel by pixel): one 256-byte block assembled in swizzled order, compared, stored */
+        if ((dpsm == PSMCT16 || dpsm == PSMCT16S || dpsm == PSMZ16 || dpsm == PSMZ16S) && !(dsax & 15) && !(rrw & 15)) {
+            const uint8_t (*bt)[4] = bt16(dpsm);
+            while (gs.xfer_x == 0 && !((dsay + gs.xfer_y) & 7) && rrh - gs.xfer_y >= 8 && bytes - i >= rrw * 16) {
+                uint32_t y0 = dsay + gs.xfer_y;
+                for (uint32_t bx = 0; bx < rrw; bx += 16) {
+                    uint16_t blk[128];
+                    uint32_t a = addr16(bt, dbp, bw, dsax + bx, y0) - columnTable16[0][0] * 2;   /* block base */
+                    for (uint32_t yy = 0; yy < 8; yy++)
+                        for (uint32_t xx = 0; xx < 16; xx++)
+                            memcpy(&blk[columnTable16[yy][xx]], src + i + ((size_t)yy * rrw + bx + xx) * 2, 2);
+                    if (memcmp(gs_memp + a, blk, 256)) { memcpy(gs_memp + a, blk, 256); xfer_changed = 1; }
+                    MARK(a);
+                }
+                i += rrw * 16;
+                gs.xfer_y += 8;
+            }
+        }
+        if (dpsm == PSMT8 && !(dsax & 15) && !(rrw & 15)) {
+            while (gs.xfer_x == 0 && !((dsay + gs.xfer_y) & 15) && rrh - gs.xfer_y >= 16 && bytes - i >= rrw * 16) {
+                uint32_t y0 = dsay + gs.xfer_y;
+                for (uint32_t bx = 0; bx < rrw; bx += 16) {
+                    uint8_t blk[256];
+                    uint32_t a = addr8(dbp, bw, dsax + bx, y0) - columnTable8[0][0];
+                    for (uint32_t yy = 0; yy < 16; yy++) {
+                        const uint8_t* row = src + i + (size_t)yy * rrw + bx;
+                        for (uint32_t xx = 0; xx < 16; xx++) blk[columnTable8[yy][xx]] = row[xx];
+                    }
+                    if (memcmp(gs_memp + a, blk, 256)) { memcpy(gs_memp + a, blk, 256); xfer_changed = 1; }
+                    MARK(a);
+                }
+                i += rrw * 16;
+                gs.xfer_y += 16;
+            }
+        }
+        if (dpsm == PSMT4 && !(dsax & 31) && !(rrw & 31)) {
+            while (gs.xfer_x == 0 && !gs.xfer_pending_bits && !((dsay + gs.xfer_y) & 15) && rrh - gs.xfer_y >= 16 && bytes - i >= rrw * 8) {
+                uint32_t y0 = dsay + gs.xfer_y;
+                for (uint32_t bx = 0; bx < rrw; bx += 32) {
+                    uint8_t blk[256];
+                    uint32_t a = (addr4(dbp, bw, dsax + bx, y0) - columnTable4[0][0]) >> 1;   /* (nibble address: the block's byte) */
+                    memset(blk, 0, sizeof(blk));
+                    for (uint32_t yy = 0; yy < 16; yy++) {
+                        const uint8_t* row = src + i + ((size_t)yy * rrw + bx) / 2;
+                        for (uint32_t xx = 0; xx < 32; xx++) {
+                            uint32_t o = columnTable4[yy][xx], v = (row[xx >> 1] >> ((xx & 1) * 4)) & 15;   /* low nibble first */
+                            blk[o >> 1] |= (uint8_t)(v << ((o & 1) * 4));
+                        }
+                    }
+                    if (memcmp(gs_memp + a, blk, 256)) { memcpy(gs_memp + a, blk, 256); xfer_changed = 1; }
+                    MARK(a);
+                }
+                i += rrw * 8;
+                gs.xfer_y += 16;
+            }
+        }
         if (dpsm == PSMCT32 || dpsm == PSMZ32) {
             const uint8_t (*bt)[8] = dpsm == PSMCT32 ? blockTable32 : blockTableZ32;
             while (i + 4 <= bytes && gs.xfer_y < rrh) {

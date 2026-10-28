@@ -5,6 +5,7 @@
    the headset but the log. */
 #ifdef __ANDROID__
 #define _GNU_SOURCE
+#include <dlfcn.h>
 #include <elf.h>
 #include <fcntl.h>
 #include <signal.h>
@@ -161,7 +162,19 @@ static const char* name_of(uint32_t pc, int* idx)
         if (best >= 0 && pc < syms[best].hi) { *idx = best; return syms[best].name; }
         return "librecvx.so (no symbol)";
     }
-    for (int i = 0; i < nmaps; i++) if (pc >= maps[i].lo && pc < maps[i].hi) return maps[i].name;
+    for (int i = 0; i < nmaps; i++)
+        if (pc >= maps[i].lo && pc < maps[i].hi) {   /* another library: its exported function if it has one (libc's memcpy...) */
+            static char names[256][96];
+            static int nn;
+            Dl_info di;
+            char nm[96];
+            if (!dladdr((void*)(uintptr_t)pc, &di) || !di.dli_sname) return maps[i].name;
+            snprintf(nm, sizeof(nm), "%s:%s", maps[i].name, di.dli_sname);
+            for (int k = 0; k < nn; k++) if (!strcmp(names[k], nm)) return names[k];
+            if (nn == 256) return maps[i].name;
+            memcpy(names[nn], nm, sizeof(nm));
+            return names[nn++];
+        }
     return "?";
 }
 
