@@ -27,25 +27,38 @@ static uint64_t hash256(const uint8_t* p8, uint32_t b)
 {
     uint32_t a = 0x9E3779B1u ^ b, c = 0x85EBCA77u, d = 0xC2B2AE3Du, e = 0x27D4EB2Fu ^ (b * 0x01000193u);
 #define HROT(x, r) (((x) << (r)) | ((x) >> (32 - (r))))
+    /* 16 lanes in 4 independent chains (64 bytes a step): the multiply's latency no longer serialises the loop (one
+       chain of 4 lanes was ~22% of a game frame's execution); the chains are folded into the 4 lanes at the end */
 #if defined(__ARM_NEON) && !defined(RECVX_HASH_SCALAR)
-    {   /* the 4 lanes in one NEON register: the same values as the scalar loop below */
+    {   /* the same values as the scalar loop below */
         static const uint32_t mk[4] = { 0x9E3779B1u, 0x85EBCA77u, 0xC2B2AE3Du, 0x27D4EB2Fu };
         uint32_t st[4] = { a, c, d, e };
-        uint32x4_t v = vld1q_u32(st), m = vld1q_u32(mk);
-        for (int i = 0; i < 256; i += 16) {
-            v = vmulq_u32(veorq_u32(v, vreinterpretq_u32_u8(vld1q_u8(p8 + i))), m);
-            v = vorrq_u32(vshlq_n_u32(v, 13), vshrq_n_u32(v, 19));
-        }
-        vst1q_u32(st, v);
+        uint32x4_t m = vld1q_u32(mk), v0 = vld1q_u32(st), v1 = veorq_u32(v0, vdupq_n_u32(0x165667B1u)),
+                   v2 = veorq_u32(v0, vdupq_n_u32(0xD3A2646Cu)), v3 = veorq_u32(v0, vdupq_n_u32(0xFD7046C5u));
+#define HSTEP(v, q) v = vmulq_u32(veorq_u32(v, vreinterpretq_u32_u8(vld1q_u8(q))), m); v = vorrq_u32(vshlq_n_u32(v, 13), vshrq_n_u32(v, 19))
+        for (int i = 0; i < 256; i += 64) { HSTEP(v0, p8 + i); HSTEP(v1, p8 + i + 16); HSTEP(v2, p8 + i + 32); HSTEP(v3, p8 + i + 48); }
+#define HFOLD(x) v0 = vmulq_u32(veorq_u32(v0, x), m); v0 = vorrq_u32(vshlq_n_u32(v0, 13), vshrq_n_u32(v0, 19))
+        HFOLD(v1); HFOLD(v2); HFOLD(v3);
+#undef HFOLD
+#undef HSTEP
+        vst1q_u32(st, v0);
         a = st[0]; c = st[1]; d = st[2]; e = st[3];
     }
 #else
-    const uint32_t* w = (const uint32_t*)(const void*)p8;
-    for (int i = 0; i < 64; i += 4) {
-        uint32_t w0, w1, w2, w3;
-        memcpy(&w0, &w[i], 4); memcpy(&w1, &w[i + 1], 4); memcpy(&w2, &w[i + 2], 4); memcpy(&w3, &w[i + 3], 4);
-        a = HROT((a ^ w0) * 0x9E3779B1u, 13); c = HROT((c ^ w1) * 0x85EBCA77u, 13);
-        d = HROT((d ^ w2) * 0xC2B2AE3Du, 13); e = HROT((e ^ w3) * 0x27D4EB2Fu, 13);
+    {
+        static const uint32_t mk[4] = { 0x9E3779B1u, 0x85EBCA77u, 0xC2B2AE3Du, 0x27D4EB2Fu }, sx[4] = { 0, 0x165667B1u, 0xD3A2646Cu, 0xFD7046C5u };
+        uint32_t v[4][4];
+        for (int c4 = 0; c4 < 4; c4++) { v[c4][0] = a ^ sx[c4]; v[c4][1] = c ^ sx[c4]; v[c4][2] = d ^ sx[c4]; v[c4][3] = e ^ sx[c4]; }
+        for (int i = 0; i < 256; i += 64)
+            for (int c4 = 0; c4 < 4; c4++)
+                for (int l = 0; l < 4; l++) {
+                    uint32_t w;
+                    memcpy(&w, p8 + i + 16 * c4 + 4 * l, 4);
+                    v[c4][l] = HROT((v[c4][l] ^ w) * mk[l], 13);
+                }
+        for (int c4 = 1; c4 < 4; c4++)
+            for (int l = 0; l < 4; l++) v[0][l] = HROT((v[0][l] ^ v[c4][l]) * mk[l], 13);
+        a = v[0][0]; c = v[0][1]; d = v[0][2]; e = v[0][3];
     }
 #endif
     a ^= HROT(d, 7) * 0x9E3779B1u; c ^= HROT(e, 11) * 0x85EBCA77u;
