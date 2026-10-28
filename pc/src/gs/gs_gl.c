@@ -1607,13 +1607,16 @@ void gs_replay_begin(void)
             if (a == FIRST_NONE && (rt == disp || i == disp_end)) a = FIRST_READ;
             and_mv_target_pub(i, rt->pw, rt->ph);
             if (a == FIRST_READ || a == FIRST_COVER) and_mv_invalidate(i);
-            if (a == FIRST_READ) and_mv_blit_into(i, src, 0, 0, rt->pw, rt->ph);
-            else if (a == FIRST_COVER) {
-                int x0 = first[i].x0, y0 = first[i].y0, x1 = first[i].x1, y1 = first[i].y1;
-                and_mv_blit_into(i, src, 0, 0, rt->pw, y0);
-                and_mv_blit_into(i, src, 0, y1, rt->pw, rt->ph);
-                and_mv_blit_into(i, src, 0, y0, x0, y1);
-                and_mv_blit_into(i, src, x1, y0, rt->pw, y1);
+            for (int k = 0; k < 2 && (a == FIRST_READ || a == FIRST_COVER); k++) {   /* layer by layer: one pass each on the tiled GPU */
+                extern void and_mv_blit_layer(int, int, GLuint, int, int, int, int);
+                if (a == FIRST_READ) and_mv_blit_layer(i, k, src, 0, 0, rt->pw, rt->ph);
+                else {
+                    int x0 = first[i].x0, y0 = first[i].y0, x1 = first[i].x1, y1 = first[i].y1;
+                    and_mv_blit_layer(i, k, src, 0, 0, rt->pw, y0);
+                    and_mv_blit_layer(i, k, src, 0, y1, rt->pw, rt->ph);
+                    and_mv_blit_layer(i, k, src, 0, y0, x0, y1);
+                    and_mv_blit_layer(i, k, src, x1, y0, rt->pw, y1);
+                }
             }
             { extern GLuint and_mv_tex_pub(int, int); rt->tex = and_mv_tex_pub(i, 0); rt->fbo = and_mv_tex_pub(i, 1); }
             continue;
@@ -1925,6 +1928,14 @@ static void and_mv_set_eye_uniforms(void)   /* (gs_flush, multiview program boun
 /* after the multiview replay (both eye images made): the executed frame's targets back, the multiview ones kept for
    the next image; targets the replay made are dropped (as rt_restore) */
 int and_mv_target_pub(int i, int pw, int ph) { return and_mv_target(i, pw, ph); }
+void and_mv_blit_layer(int slot, int k, GLuint src_fbo, int x0, int y0, int x1, int y1)   /* src's area into layer k of slot */
+{
+    if (x1 <= x0 || y1 <= y0) return;
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, src_fbo);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, and_mvt[slot].lfbo[k]);
+    glDisable(GL_SCISSOR_TEST);
+    glBlitFramebuffer(x0, y0, x1, y1, x0, y0, x1, y1, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+}
 static int and_mv_defer_copy(const RenderTarget* s, const RenderTarget* d)
 {
     int ss = and_mv_slot_of(s), ds = and_mv_slot_of(d);
