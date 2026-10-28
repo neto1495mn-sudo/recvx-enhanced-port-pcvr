@@ -96,6 +96,7 @@ int and_pass_trace_times(double* ms, int max)
     tr_pending = 0;
     return 1;
 }
+int and_pass_trace_index(void) { return tr_on && tr_n > 0 ? tr_n - 1 : -1; }   /* (gs_gl.c: the pass a traced draw is in) */
 int and_pass_trace_take(GLuint* fbo, unsigned (*cnt)[4], int max)
 {
     int n = tr_n < max ? tr_n : max;

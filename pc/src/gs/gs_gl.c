@@ -1585,6 +1585,10 @@ static void and_defer_do(void)
 static char and_tr_what[48], and_tr_desc[64][40];
 static unsigned and_tr_cnt[64][4];
 static int and_tr_n = -1;
+/* the traced eye's draws in its small passes (what they draw and sample: can a pass move or go) */
+typedef struct { int pass; uint32_t fbp; int verts, tme, src, abe, zte, ztst, zmsk; uint64_t alpha; float x0, y0, x1, y1; } AndTrDraw;
+static AndTrDraw and_trd[96], and_trd_saved[96];
+static int and_trd_n, and_trd_saved_n;
 void and_pass_trace_log(const char* what)
 {
     extern int and_pass_trace_take(GLuint*, unsigned (*)[4], int);
@@ -1603,6 +1607,7 @@ void and_pass_trace_log(const char* what)
     }
     SDL_strlcpy(and_tr_what, what, sizeof(and_tr_what));
     and_tr_n = n;
+    memcpy(and_trd_saved, and_trd, sizeof(and_trd)); and_trd_saved_n = and_trd_n; and_trd_n = 0;
 }
 void and_pass_trace_flush(void)
 {
@@ -1617,6 +1622,14 @@ void and_pass_trace_flush(void)
                           and_tr_cnt[i][0], and_tr_cnt[i][1], and_tr_cnt[i][2] ? " clear" : "", and_tr_cnt[i][3] ? " blit" : "");
     }
     host_log("android: GPU passes of %s (%d, %.2f ms on the GPU): %s\n", and_tr_what, and_tr_n, tot, line);
+    for (int i = 0; i < and_trd_saved_n; i++) {   /* the draws of the passes with few of them */
+        const AndTrDraw* d = &and_trd_saved[i];
+        if (d->pass < 0 || d->pass >= and_tr_n || and_tr_cnt[d->pass][0] > 12) continue;
+        host_log("android:   pass %d draw into fbp %u: %d verts, area x %.0f..%.0f y %.0f..%.0f, %s%s, blend %s alpha %llx, depth test %d func %d write %d\n",
+                 d->pass, d->fbp, d->verts, d->x0, d->x1, d->y0, d->y1, d->tme ? "texture " : "no texture", d->tme ? (d->src >= 0 ? "from target" : "from GS memory") : "",
+                 d->abe ? "on" : "off", (unsigned long long)d->alpha, d->zte, d->ztst, !d->zmsk);
+        if (d->tme && d->src >= 0) host_log("android:     (sampled target fbp %d)\n", d->src);
+    }
     and_tr_n = -1;
 }
 #endif
@@ -1860,6 +1873,17 @@ void gs_flush(void)
     uni1i(u_atst, (int)((test >> 1) & 7));
     uni1f(u_aref, (float)((test >> 4) & 0xFF));
 #ifdef __ANDROID__
+    if (and_tr_active && and_trd_n < 96) {
+        extern int and_pass_trace_index(void);
+        AndTrDraw* d = &and_trd[and_trd_n++];
+        d->pass = and_pass_trace_index(); d->fbp = cur_rt->fbp; d->verts = vcount; d->tme = tme; d->src = and_srt ? (int)and_srt->fbp : -1;
+        d->abe = (st->prim >> 6) & 1; d->alpha = st->ctx.alpha; d->zte = (test >> 16) & 1; d->ztst = (test >> 17) & 3; d->zmsk = (st->ctx.zbuf >> 32) & 1;
+        d->x0 = d->y0 = 1e9f; d->x1 = d->y1 = -1e9f;
+        for (int k = 0; k < vcount && k < 4096; k++) {
+            d->x0 = fminf(d->x0, vbuf[k].x / (vbuf[k].w != 0.0f ? vbuf[k].w : 1.0f)); d->x1 = fmaxf(d->x1, vbuf[k].x / (vbuf[k].w != 0.0f ? vbuf[k].w : 1.0f));
+            d->y0 = fminf(d->y0, vbuf[k].y / (vbuf[k].w != 0.0f ? vbuf[k].w : 1.0f)); d->y1 = fmaxf(d->y1, vbuf[k].y / (vbuf[k].w != 0.0f ? vbuf[k].w : 1.0f));
+        }
+    }
     if (gs_replaying && vr_u.on && tme && vcount == 6 && !nsruns) {
         /* the copy that changes no colour: a sprite sampling another target of the same size texel for pixel (FST,
            positions = texture coordinates + the target offset), DECAL or MODULATE by 128, no fog, no alpha test, no
