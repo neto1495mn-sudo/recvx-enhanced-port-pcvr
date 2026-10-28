@@ -155,6 +155,12 @@ static GLuint blit_fbo;
 
 static Chain quad_chain, eye_chain[2];
 static XrFrameState fs;
+#ifdef __ANDROID__
+#include <time.h>
+/* where the headset images wait (the owner's log: the render thread was idle ~70% and still only ~37-60 images a
+   second): sums per second, logged by xr_timing_log */
+static struct { uint64_t wait, wait_max, react, react_max, begin, acq, acq_max, end, end_max, idle, ahead; unsigned n, nw, nacq, noshow, late; } xt;
+#endif
 static int in_frame;            /* between xrBeginFrame and xrEndFrame */
 static XrView views[2];
 static XrView held_views[2];   /* the poses of the last stereo frame (xr_frame_end_held) */
@@ -218,13 +224,27 @@ static GLuint chain_acquire(Chain* c, int w, int h)
     XrSwapchainImageAcquireInfo ai = { XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO };
     XrSwapchainImageWaitInfo wi = { XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO };
     if ((w != c->w || h != c->ht || !c->h) && !chain_make(c, w, h)) return 0;
+#ifdef __ANDROID__
+    uint64_t ta = SDL_GetTicksNS();
+#endif
     if (!xr_ok(xrAcquireSwapchainImage(c->h, &ai, &idx), "xrAcquireSwapchainImage")) return 0;
     wi.timeout = XR_INFINITE_DURATION;
-    if (!xr_ok(xrWaitSwapchainImage(c->h, &wi), "xrWaitSwapchainImage")) {
+    {
+#ifdef __ANDROID__
+        int okw = xr_ok(xrWaitSwapchainImage(c->h, &wi), "xrWaitSwapchainImage");
+        uint64_t d = SDL_GetTicksNS() - ta;
+        xt.nacq++; xt.acq += d; if (d > xt.acq_max) xt.acq_max = d;
+        if (okw) goto acquired;
+#else
+        if (xr_ok(xrWaitSwapchainImage(c->h, &wi), "xrWaitSwapchainImage")) goto acquired;
+#endif
+    }
+    {
         XrSwapchainImageReleaseInfo ri = { XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO };
         xrReleaseSwapchainImage(c->h, &ri);
         return 0;
     }
+acquired:
     c->acquired = 1;
     return c->img[idx].image;
 }
@@ -635,6 +655,7 @@ void xr_recenter(void) { need_center = 1; }
    (72 - 30 = ~42 images a second). Now the waiter blocks there and the render loop executes game frames until it
    says the headset wants an image (xr_frame_ready); xrBeginFrame/xrEndFrame stay on the render thread. OpenXR allows
    xrWaitFrame on another thread; the waiter waits again only after the render thread's xrBeginFrame. */
+static uint64_t w_ready_ns;
 static SDL_Thread* w_thread;
 static SDL_Mutex* w_mx;
 static SDL_Condition* w_cv;
@@ -653,8 +674,11 @@ static int SDLCALL waiter(void* ud)
         {
             XrFrameWaitInfo wi = { XR_TYPE_FRAME_WAIT_INFO };
             XrFrameState f = { XR_TYPE_FRAME_STATE };
+            uint64_t t0 = SDL_GetTicksNS(), dt;
             XrResult r = xrWaitFrame(sess, &wi, &f);
             SDL_LockMutex(w_mx);
+            w_ready_ns = SDL_GetTicksNS(); dt = w_ready_ns - t0;
+            xt.nw++; xt.wait += dt; if (dt > xt.wait_max) xt.wait_max = dt;
             w_fs = f; w_res_ok = XR_SUCCEEDED(r); w_st = 2;
             if (!w_res_ok) { static int nl; if (nl++ < 10) host_log("vr: xrWaitFrame (waiter thread) failed: %d\n", (int)r); }
             SDL_BroadcastCondition(w_cv);
@@ -694,10 +718,22 @@ int xr_frame_ready(void)
 /* render loop: wait up to ms for the headset (returns early when it is ready) */
 void xr_frame_wait_ready(int ms)
 {
+    uint64_t t0 = SDL_GetTicksNS();
     if (!w_thread || !running) { SDL_Delay((Uint32)ms); return; }
     SDL_LockMutex(w_mx);
     if (w_st != 2) SDL_WaitConditionTimeout(w_cv, w_mx, ms);
     SDL_UnlockMutex(w_mx);
+    xt.idle += SDL_GetTicksNS() - t0;
+}
+void xr_timing_log(void)
+{
+    unsigned n = xt.n ? xt.n : 1, nw = xt.nw ? xt.nw : 1, na = xt.nacq ? xt.nacq : 1;
+    host_log("android: headset waits last second: %u images (%u not to be shown, %u began after their display time); xrWaitFrame %u, avg %.1f max %.1f ms; "
+             "ready until the render thread took it avg %.1f max %.1f ms; xrBeginFrame avg %.2f ms; eye image acquire avg %.2f max %.1f ms; "
+             "xrEndFrame avg %.2f max %.1f ms; render loop idle waiting for the headset %.0f ms; display time ahead at begin avg %.1f ms\n",
+             xt.n, xt.noshow, xt.late, xt.nw, xt.wait / 1e6 / nw, xt.wait_max / 1e6, xt.react / 1e6 / n, xt.react_max / 1e6, xt.begin / 1e6 / n,
+             xt.acq / 1e6 / na, xt.acq_max / 1e6, xt.end / 1e6 / n, xt.end_max / 1e6, xt.idle / 1e6, xt.ahead / 1e6 / n);
+    memset(&xt, 0, sizeof(xt));
 }
 #endif
 
@@ -814,12 +850,22 @@ int xr_frame_begin(void)
         if (w_st == 0) SDL_BroadcastCondition(w_cv);
         while (w_st != 2 && running) SDL_WaitConditionTimeout(w_cv, w_mx, 50);
         ok = w_st == 2 && w_res_ok;
+        if (w_st == 2) { uint64_t d = SDL_GetTicksNS() - w_ready_ns; xt.react += d; if (d > xt.react_max) xt.react_max = d; }
         fs = w_fs;
         w_st = 3;   /* taken: the waiter waits again after xrBeginFrame */
         SDL_UnlockMutex(w_mx);
         if (!ok) { SDL_LockMutex(w_mx); w_st = 0; SDL_BroadcastCondition(w_cv); SDL_UnlockMutex(w_mx); return -1; }
         {
+            uint64_t tb = SDL_GetTicksNS();
             int began = xr_ok(xrBeginFrame(sess, &bi), "xrBeginFrame");
+            {
+                struct timespec ts; int64_t mono;
+                clock_gettime(CLOCK_MONOTONIC, &ts);
+                mono = (int64_t)ts.tv_sec * 1000000000ll + ts.tv_nsec;   /* (XrTime on the Quest: the monotonic clock) */
+                xt.n++; xt.begin += SDL_GetTicksNS() - tb;
+                if (!fs.shouldRender) xt.noshow++;
+                if ((int64_t)fs.predictedDisplayTime > mono) xt.ahead += (uint64_t)((int64_t)fs.predictedDisplayTime - mono); else xt.late++;
+            }
             SDL_LockMutex(w_mx); w_st = 0; SDL_BroadcastCondition(w_cv); SDL_UnlockMutex(w_mx);
             if (!began) return -1;
         }
@@ -876,7 +922,15 @@ static void end_frame(const XrCompositionLayerBaseHeader* const* layers, uint32_
     ei.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
     ei.layerCount = n;
     ei.layers = n ? layers : NULL;
+#ifdef __ANDROID__
+    {
+        uint64_t te = SDL_GetTicksNS(), d;
+        xr_ok(xrEndFrame(sess, &ei), "xrEndFrame");
+        d = SDL_GetTicksNS() - te; xt.end += d; if (d > xt.end_max) xt.end_max = d;
+    }
+#else
     xr_ok(xrEndFrame(sess, &ei), "xrEndFrame");
+#endif
     in_frame = 0;
 }
 

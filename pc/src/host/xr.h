@@ -63,6 +63,7 @@ int          xr_frame_begin(void);
 #ifdef __ANDROID__
 int          xr_frame_ready(void);              /* the headset wants an image now (xrWaitFrame on its own thread returned) */
 void         xr_frame_wait_ready(int ms);       /* wait for that up to ms */
+void         xr_timing_log(void);               /* once a second: where the headset images waited */
 #endif
 const VrEye* xr_frame_eye(int e);                 /* after a begin returning 1; poses in local space */
 unsigned int xr_eye_target(int e, int w, int h);  /* acquire eye e's image (w x h); GL texture, 0 on failure */

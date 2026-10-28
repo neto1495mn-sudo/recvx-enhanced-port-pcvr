@@ -141,6 +141,7 @@ void render_loop(void)
                                    "(ratio %.2f..%.2f); %u headset refreshes skipped before an image\n",
                                    mo_n, mo_stop, mo_slow, mo_ok, mo_fast, mo_rmin, mo_rmax, mo_gap);
                 mo_n = mo_stop = mo_slow = mo_ok = mo_fast = mo_gap = 0; mo_rmin = 1e9; mo_rmax = 0;
+                xr_timing_log();
                 if (pc_n) host_log("android: game frame pacing last second: %u frames; from the game thread %u late %u bunched (max %.1f ms), "
                                    "executed on the render thread %u late %u bunched (max %.1f ms)\n",
                                    pc_n, pc_sub_late, pc_sub_bunch, pc_sub_max / 1e6, pc_exe_late, pc_exe_bunch, pc_exe_max / 1e6);
