@@ -253,7 +253,9 @@ void gs_exec_upload(const uint8_t* src, uint32_t bytes)
 {
     uint64_t h;
     UpChunk* e;
-    if (gs_memp != gs_mem || !gs.xfer_active || !(gs.trxreg & 0xFFF) || !bytes) { exec_upload_(src, bytes); return; }
+    /* off: on the Quest only 5-10% of the chunks repeated (the game moves textures around in GS memory) and XXH3 took
+       9% of the render thread - more than the skips saved */
+    if (1 || gs_memp != gs_mem || !gs.xfer_active || !(gs.trxreg & 0xFFF) || !bytes) { exec_upload_(src, bytes); return; }
     h = XXH3_64bits(src, bytes);
     e = &upc[(h ^ gs.bitbltbuf ^ (gs.trxpos * 31) ^ ((uint64_t)gs.xfer_y << 20) ^ gs.xfer_x) & 4095];
     if (e->used && e->h == h && e->bitbltbuf == gs.bitbltbuf && e->trxpos == gs.trxpos && e->trxreg == gs.trxreg &&
