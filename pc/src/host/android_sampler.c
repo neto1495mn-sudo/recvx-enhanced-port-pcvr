@@ -178,6 +178,36 @@ static const char* name_of(uint32_t pc, int* idx)
     return "?";
 }
 
+/* the function holding a code address of librecvx.so (NULL: not one of its functions); loads the symbols on first use */
+const char* and_symbol(uint32_t pc)
+{
+    int idx;
+    const char* nm;
+    if (!sym_state) load_syms();
+    if (sym_state <= 0 || pc < so_lo || pc >= so_hi) return NULL;
+    nm = name_of(pc, &idx);
+    return idx >= 0 ? nm : NULL;
+}
+/* the game functions on the calling thread's stack (code addresses found in its top words): "a < b < c", the
+   innermost first - the callers of a draw (no frame pointers to walk) */
+void and_callers(char* out, size_t n, int skip)
+{
+    uint32_t words[256];
+    const char* last = NULL;
+    size_t k = 0;
+    int found = 0;
+    memcpy(words, __builtin_frame_address(0), sizeof(words));
+    out[0] = 0;
+    for (int i = 0; i < 256 && found < 6 + skip; i++) {
+        const char* nm = and_symbol(words[i] & ~1u);
+        if (!nm || nm == last) continue;
+        last = nm;
+        if (found++ < skip) continue;
+        k += (size_t)snprintf(out + k, k < n ? n - k : 0, "%s%s", k ? " < " : "", nm);
+        if (k >= n) break;
+    }
+}
+
 typedef struct { const char* name; unsigned n; } Bin;
 static int by_n(const void* a, const void* b) { unsigned x = ((const Bin*)a)->n, y = ((const Bin*)b)->n; return x < y ? 1 : x > y ? -1 : 0; }
 

@@ -73,6 +73,7 @@ static void (GLAPIENTRY *and_deletesync)(void*);
 static unsigned and_waits; static uint64_t and_wait_ns;   /* (the ring's waits: logged when one is long) */
 static void and_persistent_init(void);
 volatile int g_and_fps_headset, g_and_fps_game;   /* render.c, once a second: images to the headset, game frames */
+int g_and_ab;   /* render.c: A/B test mode - bit 0 no window swap, bit 1 no per-eye glFlush */
 /* Android (Quest): the frame rates in the picture (the owner follows them in the headset) - two numbers drawn with
    scissored clears (no shader, no font): images the headset got per second, game frames per second. Green: full
    rate, yellow: some lost, red: slow. x, y: lower left in the bound framebuffer; h: its height (the size) */
@@ -3375,6 +3376,9 @@ static int present_vr_stereo_(const struct Frame* cur, float t)
             glBindFramebuffer(GL_FRAMEBUFFER, 0);
             fb_forget();
         } else ok = 0;
+#ifdef __ANDROID__
+        if (!(g_and_ab & 2))   /* A/B test (render.c): the per-eye flush or not (each one a driver submission) */
+#endif
         glFlush();   /* vr99: the eye's work to the GPU now, not all at the hand-off (xrEndFrame waits less) */
         xr_eye_release(e);
         rt_restore();
@@ -3503,6 +3507,9 @@ static uint64_t gs_present_vr(const struct Frame* cur, float t)
     }
     vr_tb[1] = SDL_GetTicksNS() - tb0;   /* vr161 */
     swap = SDL_GetTicksNS();
+#ifdef __ANDROID__
+    if (!(g_and_ab & 1))   /* A/B test (render.c): the window nobody sees on the Quest, swapped or not */
+#endif
     SDL_GL_SwapWindow(g_window);
     swap = SDL_GetTicksNS() - swap;
     {   /* vr73 diagnosis (vr_debug_log): where a headset frame's time goes - the headset's wait, the
