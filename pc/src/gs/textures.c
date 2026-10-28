@@ -80,7 +80,7 @@ static int executing;             /* our own GS writes: not real uploads */
    many slots / queued uploads cover it (most accesses and uploads touch none) */
 static uint16_t alias_at[0x4000];   /* TBP -> slot index + 1 (0: none) */
 static uint16_t al_cnt[512], pd_cnt[512];
-static unsigned st_bind, st_pend_sum, st_pend_max, st_before, st_before_scan, st_exec, st_lookup, st_note, st_note_scan;
+static unsigned st_super, st_bind, st_pend_sum, st_pend_max, st_before, st_before_scan, st_exec, st_lookup, st_note, st_note_scan;
 static void al_pages(const Alias* a, int d) { for (uint32_t p = a->page0; p <= a->page1 && p < 512; p++) al_cnt[p] += d; }
 static void pd_pages(const Pending* q, int d) { for (uint32_t p = q->page0; p <= q->page1 && p < 512; p++) pd_cnt[p] += d; }
 static void idx_rebuild(void)
@@ -94,9 +94,9 @@ void ntex_stats_log(void)
 {
     void host_log(const char*, ...);
     host_log("android: native textures last second: %u binds (queued uploads avg %.1f max %u), %u executed, %u lookups; "
-             "access checks %u (%u scanned the queue), upload checks %u (%u scanned the slots)\n",
-             st_bind, st_bind ? (double)st_pend_sum / st_bind : 0.0, st_pend_max, st_exec, st_lookup, st_before, st_before_scan, st_note, st_note_scan);
-    st_bind = st_pend_sum = st_pend_max = st_before = st_before_scan = st_exec = st_lookup = st_note = st_note_scan = 0;
+             "access checks %u (%u scanned the queue), upload checks %u (%u scanned the slots); %u superseded\n",
+             st_bind, st_bind ? (double)st_pend_sum / st_bind : 0.0, st_pend_max, st_exec, st_lookup, st_before, st_before_scan, st_note, st_note_scan, st_super);
+    st_super = st_bind = st_pend_sum = st_pend_max = st_before = st_before_scan = st_exec = st_lookup = st_note = st_note_scan = 0;
 }
 #endif
 static Alias* alias_find(uint32_t tbp)
@@ -329,6 +329,20 @@ void ntex_bind(uint32_t id, uint32_t tbp, uint32_t cbp)
         run_ops(d, 0, d->clut_end, tbp, cbp);
     }
     /* the image: queued; a queued upload to the same slot, not larger, is superseded */
+#ifdef __ANDROID__
+    /* Android (Quest): also when later queued uploads overlap it - this one is the last writer of all its pages, so
+       its writes are never seen (an access to its pages executes this one too). The queue was always full (256) and
+       each bind ran the overlap check of every later entry for each same-slot entry */
+    {
+        int m = 0;
+        for (int i = 0; i < npending; i++) {
+            if (pending[i].tbp == tbp && pending[i].page1 <= page1) { pd_pages(&pending[i], -1); st_super++; continue; }
+            pending[m++] = pending[i];
+        }
+        npending = m;
+    }
+    if (0)
+#endif
     for (int i = 0; i < npending; i++)
         if (pending[i].tbp == tbp && pending[i].page1 <= page1) {
             int later = 0;   /* unless something queued after it overlaps it */

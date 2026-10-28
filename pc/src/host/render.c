@@ -58,6 +58,10 @@ static unsigned hb_presents, hb_skip_partial, hb_skip_queued, hb_forced;
    spread evenly. stops: no game time advanced; slow/fast: under 0.6 / over 1.5 of the ideal; gaps: a headset refresh
    with no new image (the previous one shown again) */
 static unsigned mo_stop, mo_slow, mo_ok, mo_fast, mo_gap, mo_n;
+/* game frame pacing: intervals between game frames as the game thread finished them (sub) and as the render thread
+   finished executing them (exe): count, late (> 1.5 periods), bunched (< 0.5 period), max */
+static unsigned pc_n, pc_sub_late, pc_sub_bunch, pc_exe_late, pc_exe_bunch;
+static double pc_sub_max, pc_exe_max;
 static double mo_rmin = 1e9, mo_rmax;
 /* the last headset image's time: frames drawn slower than the game's rate (40-55 ms, the message before the lighter)
    always found the next one waiting and skipped every present - the headset got no image and the controllers were
@@ -137,6 +141,10 @@ void render_loop(void)
                                    "(ratio %.2f..%.2f); %u headset refreshes skipped before an image\n",
                                    mo_n, mo_stop, mo_slow, mo_ok, mo_fast, mo_rmin, mo_rmax, mo_gap);
                 mo_n = mo_stop = mo_slow = mo_ok = mo_fast = mo_gap = 0; mo_rmin = 1e9; mo_rmax = 0;
+                if (pc_n) host_log("android: game frame pacing last second: %u frames; from the game thread %u late %u bunched (max %.1f ms), "
+                                   "executed on the render thread %u late %u bunched (max %.1f ms)\n",
+                                   pc_n, pc_sub_late, pc_sub_bunch, pc_sub_max / 1e6, pc_exe_late, pc_exe_bunch, pc_exe_max / 1e6);
+                pc_n = pc_sub_late = pc_sub_bunch = pc_exe_late = pc_exe_bunch = 0; pc_sub_max = pc_exe_max = 0;
                 hb_presents = hb_skip_partial = hb_skip_queued = hb_forced = 0;
                 hb_slow_logged = 0;
                 and_prof_report();
@@ -211,6 +219,22 @@ void render_loop(void)
                 double d = (double)(now - arrived);
                 if (d > 10e6 && d < 100e6) period += 0.1 * (d - period);
             }
+#ifdef __ANDROID__
+            {
+                extern uint64_t stream_frame_submit_ns(const Frame*);
+                static uint64_t pc_sub0, pc_exe0;
+                uint64_t sub = stream_frame_submit_ns(f);
+                if (pc_exe0 && pc_sub0 && sub > pc_sub0) {
+                    double ds = (double)(sub - pc_sub0), de = (double)(now - pc_exe0);
+                    pc_n++;
+                    if (ds > period * 1.5) pc_sub_late++; else if (ds < period * 0.5) pc_sub_bunch++;
+                    if (de > period * 1.5) pc_exe_late++; else if (de < period * 0.5) pc_exe_bunch++;
+                    if (ds > pc_sub_max) pc_sub_max = ds;
+                    if (de > pc_exe_max) pc_exe_max = de;
+                }
+                pc_sub0 = sub; pc_exe0 = now;
+            }
+#endif
             arrived = now;
             shown = 0;
             {   /* vr123 */
@@ -302,7 +326,7 @@ void render_loop(void)
                 static int64_t mo_d0;
                 static double mo_g0;
                 int64_t disp = xr_display_time_ns();
-                double g = (double)gs_frame_count() - 1.0 + (interp ? t : 1.0), xp = xr_display_hz() > 1.0 ? 1e9 / xr_display_hz() : 13.9e6;
+                double g = (double)gs_frame_count() - 1.0 + (interp ? (t < 0.0f ? 0.0 : t > 1.0f ? 1.0 : t) : 1.0), xp = xr_display_hz() > 1.0 ? 1e9 / xr_display_hz() : 13.9e6;
                 if (mo_d0 && disp > mo_d0 && period > 1e6) {
                     double dd = (double)(disp - mo_d0), r = (g - mo_g0) / (dd / period);
                     mo_n++;

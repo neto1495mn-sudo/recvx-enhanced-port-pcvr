@@ -59,6 +59,9 @@ struct Frame {
     uint8_t clut_start[GS_CLUT_STATE_SIZE];
     uint8_t ntex_start[NTEX_STATE_SIZE];
     int new_group;
+#ifdef __ANDROID__
+    uint64_t submit_ns;                      /* when the game thread finished it (motion pacing log) */
+#endif
 };
 
 #define POOL 4
@@ -365,6 +368,9 @@ void stream_submit(void)
     rec->vr = vr_pending;
     vr_pending.valid = 0;
     ndef = ndefv = ndefr = 0;   /* deferred native strips are drawn within their frame */
+#ifdef __ANDROID__
+    rec->submit_ns = SDL_GetTicksNS();
+#endif
     submit(0);
     SDL_AddAtomicInt(&game_frames, 1);
     { extern void glue_debug_frame(uint64_t); glue_debug_frame(stream_game_frames()); }
@@ -386,6 +392,9 @@ void stream_download(void* dst, uint32_t len)
 
 /* ---------------------------------------------------------------- render thread */
 
+#ifdef __ANDROID__
+uint64_t stream_frame_submit_ns(const Frame* f) { return f ? f->submit_ns : 0; }
+#endif
 Frame* stream_pop(int timeout_ms)
 {
     Frame* f = NULL;
