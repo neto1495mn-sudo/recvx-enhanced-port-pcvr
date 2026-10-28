@@ -839,6 +839,15 @@ void gs_notify_mem_write(uint32_t bp, uint32_t bw, int psm, uint32_t x, uint32_t
 
 void gs_notify_pages(const uint64_t* pages, int changed)
 {
+#ifdef __ANDROID__
+    for (uint32_t w = 0; w < 8; w++)   /* Android: only the set bits (the 512-page loop ran on every upload) */
+        for (uint64_t m = pages[w]; m; m &= m - 1) {
+            uint32_t p = w * 64 + (uint32_t)__builtin_ctzll(m);
+            if (changed) page_dirty[p] = 1;
+            rt_invalidate_pages(p, p);
+        }
+    return;
+#endif
     for (uint32_t p = 0; p < 512; p++) {
         if (!((pages[p >> 6] >> (p & 63)) & 1)) continue;
         if (changed) page_dirty[p] = 1;
