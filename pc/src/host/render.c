@@ -175,8 +175,14 @@ void render_loop(void)
 #ifdef __ANDROID__
             { extern volatile int g_and_phase; g_and_phase = 1; }
 #endif
+#ifdef __ANDROID__
+            { extern void and_gq_stage(int); and_gq_stage(3); }
+#endif
             gs_frame_begin();
             stream_exec(f);
+#ifdef __ANDROID__
+            { extern void and_gq_stage(int); and_gq_stage(-1); }
+#endif
             prof_pop();
 #ifdef __ANDROID__
             { extern volatile int g_and_phase; g_and_phase = 0; }

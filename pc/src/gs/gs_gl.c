@@ -1459,6 +1459,10 @@ static void rt_touch(const RenderTarget* rt)
 
 void gs_replay_begin(void)
 {
+#ifdef __ANDROID__
+    extern void and_gq_stage(int); extern volatile int g_and_phase;
+    if (g_and_phase == 2) and_gq_stage(0);
+#endif
     RenderTarget* disp = start_valid ? rt_find(start_fbp, start_fbw) : NULL;
     if (disp && (disp->pw != img[sti].pw || disp->ph != img[sti].ph)) disp = NULL;
     for (int i = 0; i < nreloads; i++) reloads[i].applied = 0;
@@ -1485,6 +1489,9 @@ void gs_replay_begin(void)
     }
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     gt_mark(GT_RB);
+#ifdef __ANDROID__
+    if (g_and_phase == 2) and_gq_stage(1);
+#endif
 }
 
 #ifdef __ANDROID__
@@ -3573,6 +3580,9 @@ static int present_vr_stereo_(const struct Frame* cur, float t)
         if (rt && tex) {
             glBindFramebuffer(GL_FRAMEBUFFER, vr_fbo);
             glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
+#ifdef __ANDROID__
+            { extern void and_gq_stage(int); and_gq_stage(2); }
+#endif
             VR_TM(2, draw_area_to(rt->tex, rt->vw, rt->vh, w, h); draw_lasers(v, M, E, w, h, rt); draw_box(v, M, E, w, h, rt); draw_markers(v, M, E, w, h); draw_vignette(E, w, h); hold_keep_and_dim(e, w, h, vr_fbo));
 #ifdef __ANDROID__
             glBindFramebuffer(GL_FRAMEBUFFER, vr_fbo);
@@ -3610,6 +3620,9 @@ static int present_vr_stereo_(const struct Frame* cur, float t)
         } else ok = 0;
 #ifdef __ANDROID__
         if (!(g_and_ab & 2))   /* A/B test (render.c): the per-eye flush or not (each one a driver submission) */
+#endif
+#ifdef __ANDROID__
+        { extern void and_gq_stage(int); and_gq_stage(-1); }
 #endif
         glFlush();   /* vr99: the eye's work to the GPU now, not all at the hand-off (xrEndFrame waits less) */
         xr_eye_release(e);

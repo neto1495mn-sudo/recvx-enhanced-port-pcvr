@@ -127,8 +127,69 @@ void and_game_frame(uint64_t wall_ns, uint64_t cpu_ns, uint64_t wait_ns)
    ms a game frame / a headset image */
 volatile float g_and_hud[6];
 
+/* GPU time by stage (one log, to see which part of an eye's drawing to cut): sequential timer queries, never nested,
+   results read when available. 0 the targets restored before an eye's replay, 1 the eye's replay, 2 the eye image
+   (resample, lasers, vignette, kept copy), 3 a game frame's drawing */
+#define GQ_N 4
+#define GQ_RING 12
+static unsigned gq[GQ_N][GQ_RING];
+static int gq_pend[GQ_N][GQ_RING], gq_cur = -1, gq_curi, gq_ok = -1;
+static uint64_t gq_sum[GQ_N];
+static unsigned gq_cnt[GQ_N], gq_lost[GQ_N];
+static void gq_poll(int s)
+{
+    for (int i = 0; i < GQ_RING; i++) {
+        unsigned avail = 0, ns = 0;
+        int disjoint = 0;
+        if (!gq_pend[s][i]) continue;
+        getq(gq[s][i], GL_QUERY_RESULT_AVAILABLE_EXT, &avail);
+        if (!avail) continue;
+        getq(gq[s][i], GL_QUERY_RESULT_EXT, &ns);
+        gq_pend[s][i] = 0;
+        getiv(GL_GPU_DISJOINT_EXT, &disjoint);
+        if (disjoint) { gq_lost[s]++; continue; }
+        gq_sum[s] += ns; gq_cnt[s]++;
+    }
+}
+void and_gq_stage(int s)
+{
+    if (gq_ok < 0) {
+        typedef const unsigned char* (*PFN_GetStr)(unsigned);
+        PFN_GetStr getstr = (PFN_GetStr)SDL_GL_GetProcAddress("glGetString");
+        const char* ext = getstr ? (const char*)getstr(0x1F03) : NULL;
+        genq = (PFN_GenQ)SDL_GL_GetProcAddress("glGenQueries"); beginq = (PFN_BeginQ)SDL_GL_GetProcAddress("glBeginQuery");
+        endq = (PFN_EndQ)SDL_GL_GetProcAddress("glEndQuery"); getq = (PFN_GetQOuiv)SDL_GL_GetProcAddress("glGetQueryObjectuiv");
+        getiv = (PFN_GetIv)SDL_GL_GetProcAddress("glGetIntegerv");
+        gq_ok = genq && beginq && endq && getq && getiv && ext && SDL_strstr(ext, "GL_EXT_disjoint_timer_query") && gpu_ok <= 0;
+        if (gq_ok) for (int k = 0; k < GQ_N; k++) genq(GQ_RING, gq[k]);
+        host_log("android: GPU time by stage %s\n", gq_ok ? "on" : "not available");
+    }
+    if (!gq_ok) return;
+    if (gq_cur >= 0) { endq(GL_TIME_ELAPSED_EXT); gq_pend[gq_cur][gq_curi] = 1; gq_cur = -1; }
+    if (s < 0 || s >= GQ_N) return;
+    gq_poll(s);
+    for (int i = 0; i < GQ_RING; i++)
+        if (!gq_pend[s][i]) { beginq(GL_TIME_ELAPSED_EXT, gq[s][i]); gq_cur = s; gq_curi = i; return; }
+    gq_lost[s]++;
+}
+static void gq_report(void)
+{
+    static const char* const nm[GQ_N] = { "targets restored", "eye replay", "eye image", "game frame drawing" };
+    char b[512];
+    int o = 0;
+    if (gq_ok <= 0) return;
+    for (int k = 0; k < GQ_N; k++) {
+        gq_poll(k);
+        o += SDL_snprintf(b + o, sizeof(b) - (size_t)o, "%s%s %.2f ms x %u = %.0f ms (%u lost)", k ? "; " : "", nm[k],
+                          gq_cnt[k] ? gq_sum[k] / 1e6 / gq_cnt[k] : 0.0, gq_cnt[k], gq_sum[k] / 1e6, gq_lost[k]);
+        gq_sum[k] = 0; gq_cnt[k] = gq_lost[k] = 0;
+    }
+    host_log("android: GPU by stage last second: %s\n", b);
+}
+
 void and_prof_report(void)
 {
+    gq_report();
     static uint64_t last_t, last_proc;
     static const char* const name[AND_N] = { "game-frame drawing", "headset images" };
     uint64_t now = SDL_GetTicksNS(), proc = process_cpu_ns();
