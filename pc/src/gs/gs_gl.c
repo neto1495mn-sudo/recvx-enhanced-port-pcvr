@@ -1842,7 +1842,24 @@ void gs_flush(void)
         dbg_tex0 = tex0;
         {   /* replay resources: the executed frame resolves, its replays reuse */
             TexMemo* m = memo_slot(tex0, st->texa, st->epoch, !gs_replaying);
-            if (gs_replaying && (!m || (m->rt >= 0 ? !memo_rt_ok(m) : !m->tex))) { vcount = 0; nsruns = 0; return; }
+            if (gs_replaying && (!m || (m->rt >= 0 ? !memo_rt_ok(m) : !m->tex))) {
+#ifdef __ANDROID__
+                {   /* (grates/glass missing in the eyes: the draws a replay leaves out, by why) */
+                    static unsigned n[3], nl;
+                    static uint64_t seen[24];
+                    int why = !m ? 0 : m->rt >= 0 ? 1 : 2, k;
+                    n[why]++;
+                    for (k = 0; k < 24 && seen[k] && seen[k] != tex0; k++) {}
+                    if (k < 24 && !seen[k] && nl < 24) {
+                        seen[k] = tex0; nl++;
+                        host_log("android: replay leaves a draw out (%s): tex0 %016llx (tbp %u psm %u) into fbp %u, %d verts; so far no memo %u, target gone %u, no texture %u\n",
+                                 why == 0 ? "the executed frame has no record of this texture" : why == 1 ? "its target is gone" : "the executed frame had no texture for it",
+                                 (unsigned long long)tex0, tbp, tpsm, cur_rt->fbp, vcount, n[0], n[1], n[2]);
+                    }
+                }
+#endif
+                vcount = 0; nsruns = 0; return;
+            }
                 /* the executed frame did not draw this (or what it sampled is gone): neither does its
                    replay (it would resolve against the state the frame left; replays load no CLUT) */
             if (gs_replaying && m) {
