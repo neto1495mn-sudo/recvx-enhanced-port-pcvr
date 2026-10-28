@@ -853,6 +853,23 @@ static uint32_t clut_hash(uint64_t tex0)
     if (psm == PSMT8 || psm == PSMT8H) n = 256;
     else if (psm == PSMT4 || psm == PSMT4HL || psm == PSMT4HH) n = 16;
     else return 0;
+#ifdef __ANDROID__
+    /* Android (Quest): remembered while the CLUT has not changed (gs_clut_gen) - each draw decoded and hashed its 256-entry
+       palette (part of gs_flush_, 26-33% of a game frame's execution on the render thread) */
+    {
+        extern uint32_t gs_clut_gen(void);
+        static struct { uint32_t gen, h; uint64_t tex0, texa; } cmemo[256];
+        uint32_t gen = gs_clut_gen(), k = (uint32_t)((tex0 ^ (tex0 >> 29) ^ gs.texa * 31) * 0x9E3779B1u) >> 24;
+        if (cmemo[k].gen == gen && cmemo[k].tex0 == tex0 && cmemo[k].texa == gs.texa) return cmemo[k].h;
+        {
+            extern void gs_get_palette(uint64_t tex0, uint64_t texa, uint32_t* out, int n);
+            gs_get_palette(tex0, gs.texa, tmp, (int)n);
+            for (uint32_t i = 0; i < n; i++) { h ^= tmp[i]; h *= 16777619u; }
+        }
+        cmemo[k].gen = gen; cmemo[k].tex0 = tex0; cmemo[k].texa = gs.texa; cmemo[k].h = h;
+        return h;
+    }
+#endif
     /* hash the decoded palette by decoding a 1-pixel-wide strip is overkill; decode via a fake 16x16 index ramp */
     extern void gs_get_palette(uint64_t tex0, uint64_t texa, uint32_t* out, int n);
     gs_get_palette(tex0, gs.texa, tmp, (int)n);
@@ -887,10 +904,27 @@ static GLuint tex_get(uint64_t tex0, uint64_t texa, int* out_w, int* out_h, floa
     ntex_before_access(((tex0 >> 37) & 0x3FFF) / 32, ((tex0 >> 37) & 0x3FFF) / 32 + 1);
     for (uint32_t p = page0; p <= page1; p++) content = (content ^ page_hash_get(p)) * 0x9E3779B97F4A7C15ull + p;
 
+#ifdef __ANDROID__
+    /* Android (Quest): a direct index into texcache by the lookup's key, checked - the 512 entries were scanned each draw */
+    static int16_t tidx[1024];
+    static int tidx_init;
+    uint32_t tk = (uint32_t)(((key * 0x9E3779B97F4A7C15ull) ^ content ^ ((uint64_t)ch << 17) ^ (psm != PSMCT16 && psm != PSMCT24 ? 0 : texa * 31)) >> 22) & 1023;
+    if (!tidx_init) { memset(tidx, -1, sizeof(tidx)); tidx_init = 1; }
+    if (tidx[tk] >= 0) {
+        TexEntry* t = &texcache[tidx[tk]];
+        if (t->used && t->tex0_key == key && t->content == content && t->clut_hash == ch && (psm != PSMCT16 && psm != PSMCT24 ? 1 : t->texa == texa)) {
+            t->last_use = frame_no; *out_w = t->w; *out_h = t->h; return t->tex;
+        }
+    }
+#endif
     for (int i = 0; i < MAX_TEX; i++) {
         TexEntry* t = &texcache[i];
         if (t->used && t->tex0_key == key && t->content == content && t->clut_hash == ch && (psm != PSMCT16 && psm != PSMCT24 ? 1 : t->texa == texa)) {
-            t->last_use = frame_no; *out_w = t->w; *out_h = t->h; return t->tex;
+            t->last_use = frame_no; *out_w = t->w; *out_h = t->h;
+#ifdef __ANDROID__
+            tidx[tk] = (int16_t)i;
+#endif
+            return t->tex;
         }
     }
     {
@@ -931,6 +965,9 @@ static GLuint tex_get(uint64_t tex0, uint64_t texa, int* out_w, int* out_h, floa
 #endif
     }
 filled:
+#ifdef __ANDROID__
+    tidx[tk] = (int16_t)(e - texcache);
+#endif
     e->used = 1; e->tex0_key = key; e->texa = texa; e->clut_hash = ch; e->page0 = page0; e->page1 = page1;
     e->content = content; e->w = (int)w; e->h = (int)h; e->last_use = frame_no;
     *out_w = e->w; *out_h = e->h;

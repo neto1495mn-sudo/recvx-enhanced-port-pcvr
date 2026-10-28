@@ -495,6 +495,8 @@ uint32_t gs_texel_rgba(int psm, uint32_t v, uint64_t texa) { return to_rgba(psm,
 /* ---------------- CLUT buffer (GS internal, 512 x 16 bit) ---------------- */
 static uint16_t clut_buf[512];
 static uint32_t cbp0, cbp1;
+static uint32_t clut_gen = 1;   /* changes whenever clut_buf may have (gs_gl.c clut_hash's memo) */
+uint32_t gs_clut_gen(void) { return clut_gen; }
 
 /* memory position of CLUT entry i in CSM1 storage */
 void gs_clut_state_save(uint8_t* out)
@@ -505,6 +507,7 @@ void gs_clut_state_save(uint8_t* out)
 }
 void gs_clut_state_restore(const uint8_t* in)
 {
+    clut_gen++;
     memcpy(clut_buf, in, sizeof(clut_buf));
     memcpy(&cbp0, in + sizeof(clut_buf), 4);
     memcpy(&cbp1, in + sizeof(clut_buf) + 4, 4);
@@ -535,6 +538,7 @@ void gs_clut_load(uint64_t tex0)
     }
     if (!load) return;
     gs_flush();
+    clut_gen++;
     ntex_before_access(cbp / 32, cbp / 32 + 1);
 #ifdef __ANDROID__
     {   /* Android (Quest): the entries' addresses from a table - within the CLUT they are cbp * 256 plus a fixed offset (the
