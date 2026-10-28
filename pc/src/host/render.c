@@ -64,6 +64,37 @@ static unsigned mo_stop, mo_slow, mo_ok, mo_fast, mo_gap, mo_n;
 static unsigned mo_nointerp, mo_tclamp, mo_tmid;
 static uint64_t and_s_prev, and_s_cur;   /* submit times of the frames prev/cur (game thread) */
 static double and_d;                     /* display time minus the game time shown (ns) */
+static double and_ahead_pk;              /* the largest (display time - when the image is drawn) lately */
+static double and_x_last;                /* display time of the last image (SDL clock) */
+static unsigned and_gated_n;             /* loops a game frame waited because no image needed it yet */
+/* the display time of the image the headset asks for now, on the SDL clock (0 if none) */
+static double and_disp_next(void)
+{
+    int64_t xd = xr_next_display_time_ns();
+    struct timespec ts;
+    if (xd <= 0) return 0.0;
+    clock_gettime(CLOCK_MONOTONIC, &ts);   /* (OpenXR time on the Quest: the monotonic clock) */
+    return (double)xd - ((double)ts.tv_sec * 1e9 + (double)ts.tv_nsec) + (double)SDL_GetTicksNS();
+}
+static int and_gate_usable(void)
+{
+    extern int g_vr_stereo;
+    return xr_active() && g_vr_stereo && g_config.interpolate && and_s_prev && and_s_cur > and_s_prev && and_s_cur - and_s_prev < 100000000ull;
+}
+/* D: the next frame must be there when an image needs it - drawn (ahead) before it is seen, the frame executed (~6 ms)
+   and one frame of game time: the largest ahead seen lately (slowly forgotten) + 6 ms + a frame */
+static void and_track_d(double x, double now_ns)
+{
+    double ahead = x - now_ns, want;
+    if (ahead > 0.0 && ahead < 200e6) {
+        if (ahead > and_ahead_pk) and_ahead_pk = ahead;
+        else and_ahead_pk -= (and_ahead_pk - ahead) * 0.002;
+    }
+    want = and_ahead_pk + 6e6 + (double)(and_s_cur - and_s_prev);
+    if (and_d <= 0.0 || want > and_d + 200e6 || want < and_d - 200e6) and_d = want;
+    else if (want > and_d) and_d += (want - and_d) * 0.5;
+    else and_d -= (and_d - want) * 0.01;
+}
 static unsigned and_t_new;               /* images interpolated by display/submit times */   /* images: no interpolation (the frame itself), t held at 1, t in between */
 static int and_trace_exec;   /* this game frame's GPU passes are traced (gl_cache.c) */
 /* game frame pacing: intervals between game frames as the game thread finished them (sub) and as the render thread
@@ -115,6 +146,16 @@ void render_loop(void)
             else if (!queued_since) queued_since = tn;
             if (and_hold && queued_since && tn - queued_since > 5000000ull) and_hold = 0;
         }
+        int and_gate = 0;   /* VR interpolation timed by the display: the next frame only when an image needs it */
+        if (cur && and_d > 0.0 && and_gate_usable()) {
+            double x = and_disp_next();
+            double xr = xr_display_hz() > 1.0 ? 1e9 / xr_display_hz() : 13.9e6;
+            if (x <= 0.0) x = and_x_last > 0.0 ? and_x_last + xr : 0.0;   /* (no image asked yet: the next refresh) */
+            if (x > 0.0 && stream_queued() < 2 && x - and_d < (double)and_s_cur) and_gate = 1;
+        }
+        if (and_gate) { f = NULL; and_gated_n++; }
+        else if (cur && and_d > 0.0 && and_gate_usable()) f = stream_pop(0);   /* (needed: before the image, whatever and_hold says) */
+        else
         f = and_hold ? NULL : stream_pop(!cur ? 20 : pace_until > now ? (int)((pace_until - now) / 1000000) : 0);
 #else
         f = stream_pop(!cur ? 20 : pace_until > now ? (int)((pace_until - now) / 1000000) : 0);   /* the rest: SDL_DelayPrecise */
@@ -155,7 +196,8 @@ void render_loop(void)
                 host_log("android: motion images last second: %u without interpolation (the game frame itself), %u interpolated but at t = 1 (the next frame "
                          "not there yet), %u in between; %u timed by the display and the game's frame times (delay %.1f ms)\n", mo_nointerp, mo_tclamp, mo_tmid,
                          and_t_new, and_d / 1e6);
-                mo_nointerp = mo_tclamp = mo_tmid = 0; and_t_new = 0;
+                host_log("android: game frames held until an image needed them: %u loops\n", and_gated_n);
+                mo_nointerp = mo_tclamp = mo_tmid = 0; and_t_new = 0; and_gated_n = 0;
                 mo_n = mo_stop = mo_slow = mo_ok = mo_fast = mo_gap = 0; mo_rmin = 1e9; mo_rmax = 0;
                 xr_timing_log();
                 if (pc_n) host_log("android: game frame pacing last second: %u frames; from the game thread %u late %u bunched (max %.1f ms), "
@@ -298,7 +340,7 @@ void render_loop(void)
         if (!cur) continue;
 #ifdef __ANDROID__
         if (xr_active() && !and_hold && !xr_frame_ready()) {   /* the headset does not want an image yet: game frames meanwhile */
-            if (!stream_queued()) xr_frame_wait_ready(2);
+            if (!stream_queued() || and_gate) xr_frame_wait_ready(2);
             continue;
         }
 #endif
@@ -323,24 +365,19 @@ void render_loop(void)
             else t = (float)((double)(now - arrived) / period);
 #ifdef __ANDROID__
             /* Android (Quest), VR: t from when the image is seen (the headset's display time) and when the game made the two
-               frames (the game thread's submit times, 33.4 ms apart to the 0.1 ms) - not from when this thread executed
-               the frame and when it draws the image, which both jitter (the motion log: ~28% of the images repeated the game
-               time, ~30% jumped, even at 72 images a second). The game time shown is the display time minus a delay D:
-               the largest (display time - newest frame's submit time) seen lately, so the newest frame is there in time */
-            if (interp && fixed_t <= 0.0f && xr_active() && and_s_prev && and_s_cur > and_s_prev && and_s_cur - and_s_prev < 100000000ull) {
-                int64_t xd = xr_next_display_time_ns();
-                if (xd > 0) {
-                    struct timespec ts;
-                    double x, m, p = (double)(and_s_cur - and_s_prev);
-                    clock_gettime(CLOCK_MONOTONIC, &ts);
-                    x = (double)xd - ((double)ts.tv_sec * 1e9 + (double)ts.tv_nsec) + (double)SDL_GetTicksNS();   /* (display time, SDL clock) */
-                    m = x - (double)and_s_cur;
-                    if (and_d <= 0.0 || m > and_d + 200e6 || m < and_d - 200e6) and_d = m;   /* (first, or after a long stop) */
-                    else if (m > and_d) and_d += (m - and_d) * 0.1;   /* (up in steps: a jump up shows the game going back) */
-                    else and_d -= (and_d - m) * 0.002;                /* (slowly back down when the frames come sooner) */
-                    t = (float)(1.0 - (and_d - m) / p);
+               frames (the game thread's submit times, 33.4 ms apart to the 0.1 ms) - not from when this thread executed the
+               frame and when it draws the image, which both jitter (the motion log: ~28% of the images repeated the game
+               time, ~30% jumped, even at 72 images a second). The game time shown is the display time minus a delay D, and
+               the next game frame is executed only when an image needs it (and_gate, the loop's top) - executed sooner it
+               moved the pair the images interpolate between (only two frames are kept) */
+            if (interp && fixed_t <= 0.0f && and_gate_usable()) {
+                double x = and_disp_next();
+                if (x > 0.0) {
+                    and_track_d(x, (double)now);
+                    t = (float)((x - and_d - (double)and_s_prev) / (double)(and_s_cur - and_s_prev));
                     if (t < 0.0f) t = 0.0f;
                     if (t > 1.0f) t = 1.0f;
+                    and_x_last = x;
                     and_t_new++;
                 }
             }
@@ -348,7 +385,7 @@ void render_loop(void)
             /* the next game frame is already waiting (the game runs below its rate): an
                in-between image of this one would only delay it (a whole replay of the scene) */
 #ifdef __ANDROID__
-            if (t < 1.0f && fixed_t <= 0.0f && stream_queued() && !and_hold) {   /* (the headset waiting: its image first) */
+            if (t < 1.0f && fixed_t <= 0.0f && stream_queued() && !and_hold && !and_gate) {   /* (the headset waiting: its image first; gated: the frame waits on purpose) */
 #else
             if (t < 1.0f && fixed_t <= 0.0f && stream_queued()) {
 #endif
@@ -393,7 +430,12 @@ void render_loop(void)
                 static int64_t mo_d0;
                 static double mo_g0;
                 int64_t disp = xr_display_time_ns();
-                double g = (double)gs_frame_count() - 1.0 + (interp ? (t < 0.0f ? 0.0 : t > 1.0f ? 1.0 : t) : 1.0), xp = xr_display_hz() > 1.0 ? 1e9 / xr_display_hz() : 13.9e6;
+                double tc = interp ? (t < 0.0f ? 0.0 : t > 1.0f ? 1.0 : t) : 1.0;
+                /* (the game time shown, in frames: from the game's own frame times when known - the executed count can run
+                   ahead of the frames shown) */
+                double g = and_s_cur && and_s_prev && and_s_cur > and_s_prev && period > 1e6
+                               ? ((double)and_s_prev + tc * (double)(and_s_cur - and_s_prev)) / period
+                               : (double)gs_frame_count() - 1.0 + tc, xp = xr_display_hz() > 1.0 ? 1e9 / xr_display_hz() : 13.9e6;
                 if (!interp) mo_nointerp++;
                 else if (t >= 0.999f) mo_tclamp++;
                 else mo_tmid++;

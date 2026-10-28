@@ -64,7 +64,11 @@ struct Frame {
 #endif
 };
 
+#ifdef __ANDROID__
+#define POOL 6   /* (Quest: the render loop holds a game frame until an image needs it - render.c - so one more waits queued) */
+#else
 #define POOL 4
+#endif
 static Frame frames[POOL];
 static Frame* free_list[POOL]; static int nfree;
 static Frame* queue[POOL]; static int qhead, qlen;
