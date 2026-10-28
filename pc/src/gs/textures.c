@@ -322,6 +322,10 @@ void ntex_bind(uint32_t id, uint32_t tbp, uint32_t cbp)
     Alias* a = NULL;
     uint32_t page0 = tbp / 32, page1;
     if (!d) return;
+#ifdef __ANDROID__
+    if (!gs_replaying)   /* (a replay's draws take their textures from the executed frame's records, not from the slots: ~half
+                            the draws of the eyes were ended here for nothing) */
+#endif
     gs_flush();   /* batched draws resolve their texture when flushed: before the slot changes */
     if (gs_replaying) {   /* textures come from the executed frame: the slot only, no GS memory writes */
         a = alias_find(tbp);

@@ -159,7 +159,15 @@ void gs_upload_image(const uint8_t* src, uint32_t bytes) { stream_image(src, byt
    has (the game rewrites the same TEST, ALPHA, TEX1, ... before most primitives): the batch
    goes on, the same primitives in the same order. Not for a two-pass alpha-test batch, whose
    passes would interleave differently. */
+#ifdef __ANDROID__
+/* Android (Quest): a register write does not end the draw - the next primitive's batch_for compares the whole state the
+   batch was set up with (gs_flush draws from that copy, not from these registers) and ends it only if it differs; a
+   write that changes nothing the batch uses, or is changed back before the next primitive, no longer costs a draw
+   (the log: ~40% of the draws were ended by register writes, the GL driver's cost is per draw) */
+static void flush_for(uint64_t old, uint64_t v) { (void)old; (void)v; if (gs_batch_two_pass()) gs_flush(); }
+#else
 static void flush_for(uint64_t old, uint64_t v) { if (old != v || gs_batch_two_pass()) gs_flush(); }
+#endif
 
 /* render thread: the GS register file */
 int gs_vu1_vr;   /* VR: between the 0x7E markers, the GS vertices came from VU1 programs (3D) */
