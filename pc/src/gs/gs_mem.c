@@ -612,6 +612,50 @@ void gs_decode_texture(uint64_t tex0, uint64_t texa, uint32_t w, uint32_t h, uin
         int n = (psm == PSMT8 || psm == PSMT8H) ? 256 : 16;
         for (int i = 0; i < n; i++) pal[i] = clut_lookup(tex0, texa, (uint32_t)i);
     }
+#ifdef __ANDROID__
+    /* Android (Quest): block by block - the block's address once, the pixels in it from the swizzle tables (each pixel
+       through gs_read_pixel computed its whole address; with the CLUT loads ~7-9% of a game frame's execution) */
+    if ((psm == PSMCT32 || psm == PSMCT16 || psm == PSMCT16S || psm == PSMT8 || psm == PSMT4) &&
+        !columnTable32[0][0] && !columnTable16[0][0] && !columnTable8[0][0] && !columnTable4[0][0]) {
+        uint32_t bw = tbw ? tbw : 1;
+        uint32_t BW = psm == PSMCT32 ? 8 : psm == PSMT4 ? 32 : 16, BH = psm == PSMCT32 || psm == PSMCT16 || psm == PSMCT16S ? 8 : 16;
+        const uint8_t (*b16)[4] = psm == PSMCT16S ? blockTable16S : blockTable16;
+        for (uint32_t by = 0; by < h; by += BH)
+            for (uint32_t bx = 0; bx < w; bx += BW) {
+                uint32_t ym = h - by < BH ? h - by : BH, xm = w - bx < BW ? w - bx : BW;
+                if (psm == PSMCT32) {
+                    uint32_t base = addr32(blockTable32, tbp, bw, bx, by);
+                    for (uint32_t yy = 0; yy < ym; yy++)
+                        for (uint32_t xx = 0; xx < xm; xx++) {
+                            uint32_t v;
+                            memcpy(&v, gs_memp + ((base + columnTable32[yy][xx] * 4u) & (GS_MEM_SIZE - 1)), 4);
+                            out[(by + yy) * w + bx + xx] = to_rgba(psm, v, texa, tcc);
+                        }
+                } else if (psm == PSMCT16 || psm == PSMCT16S) {
+                    uint32_t base = addr16(b16, tbp, bw, bx, by);
+                    for (uint32_t yy = 0; yy < ym; yy++)
+                        for (uint32_t xx = 0; xx < xm; xx++) {
+                            uint16_t v;
+                            memcpy(&v, gs_memp + ((base + columnTable16[yy][xx] * 2u) & (GS_MEM_SIZE - 1)), 2);
+                            out[(by + yy) * w + bx + xx] = to_rgba(psm, v, texa, tcc);
+                        }
+                } else if (psm == PSMT8) {
+                    uint32_t base = addr8(tbp, bw, bx, by);
+                    for (uint32_t yy = 0; yy < ym; yy++)
+                        for (uint32_t xx = 0; xx < xm; xx++)
+                            out[(by + yy) * w + bx + xx] = pal[gs_memp[(base + columnTable8[yy][xx]) & (GS_MEM_SIZE - 1)]];
+                } else {
+                    uint32_t base = addr4(tbp, bw, bx, by);   /* (nibble address) */
+                    for (uint32_t yy = 0; yy < ym; yy++)
+                        for (uint32_t xx = 0; xx < xm; xx++) {
+                            uint32_t a = (base + columnTable4[yy][xx]) & (GS_MEM_SIZE * 2 - 1);
+                            out[(by + yy) * w + bx + xx] = pal[(gs_memp[a >> 1] >> ((a & 1) * 4)) & 15];
+                        }
+                }
+            }
+        return;
+    }
+#endif
     for (uint32_t y = 0; y < h; y++)
         for (uint32_t x = 0; x < w; x++) {
             uint32_t v = gs_read_pixel(psm, tbp, tbw, x, y);
