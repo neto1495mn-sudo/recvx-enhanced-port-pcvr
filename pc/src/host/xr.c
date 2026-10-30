@@ -435,10 +435,11 @@ static void read_actions(XrTime t)
         static Hold hx, hy;
         extern void pc_testsave_request(void);
         extern void pc_quickload_request(void);
+        extern int g_extras_unlocked;   /* settings.c: the developer code (left grip twice, X, Y, X) - the holds are not for the end user */
         uint64_t now = SDL_GetTicksNS();
         Hold* hs[2] = { &hx, &hy };
         const unsigned bits[2] = { VRB_X, VRB_Y };
-        for (int k = 0; k < 2; k++) {
+        for (int k = 0; k < 2 && g_extras_unlocked; k++) {
             Hold* h = hs[k];
             int pr = (in.buttons & bits[k]) != 0;
             if (pr && !h->down) { h->down = 1; h->fired = 0; h->t = now; }
