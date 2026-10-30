@@ -927,9 +927,15 @@ static void l_text(ImDrawList* dl, ImFont* f, float size, ImVec2 p, ImU32 col, c
     ImGui::PopFont();
 }
 
+/* the launcher's card look (the same as the headset's, host/overlay.cpp on the Android build): the Umbrella emblem and the bar-code band cut from the
+   reference card, Chakra Petch (SIL OFL, pc/third_party/ChakraPetch-OFL.txt) for the titles and buttons */
+extern "C" const unsigned char g_launcher_umbrella[], g_launcher_band[], g_launcher_font[];
+extern "C" const int g_launcher_umbrella_size, g_launcher_band_size, g_launcher_font_size;
+extern "C" unsigned char* stbi_load_from_memory(const unsigned char* buffer, int len, int* x, int* y, int* comp, int req_comp);
+
 extern "C" int overlay_launcher(void)
 {
-    static const float LW = 980.0f, LH = 600.0f;
+    static const float LW = 1260.0f, LH = 760.0f;
     const char* turns[] = { "", "15\xC2\xB0", "30\xC2\xB0", "45\xC2\xB0", "60\xC2\xB0", "90\xC2\xB0" };
     static const int turn_v[] = { 0, 15, 30, 45, 60, 90 };
     const char* comforts[3];
@@ -938,8 +944,8 @@ extern "C" int overlay_launcher(void)
     static const int sight_v[] = { 2, 1, 0 };
     bool options = false, show = g_launcher != 0;
     int result = -1, tab = 0;
-    GLuint pic = 0;
-    int pw = 0, ph = 0;
+    GLuint texUmb = 0, texBand = 0;   /* the emblem and the bar-code band */
+    int umbW = 1, umbH = 1, bandW = 1, bandH = 1;
     if (!ready) return 1;
     {   /* fonts: Windows' own (Segoe UI, Bahnschrift), else ImGui's */
         ImGuiIO& io = ImGui::GetIO();
@@ -954,21 +960,25 @@ extern "C" int overlay_launcher(void)
         if (!lf_ui) lf_ui = io.Fonts->AddFontDefault();
         if (!lf_bold) lf_bold = lf_ui;
         if (!lf_title) lf_title = lf_bold;
+        {   /* the titles and buttons: Chakra Petch */
+            ImFontConfig fc;
+            fc.FontDataOwnedByAtlas = false;
+            if (ImFont* cp = io.Fonts->AddFontFromMemoryTTF((void*)g_launcher_font, g_launcher_font_size, 32.0f, &fc, nullptr)) { lf_title = cp; lf_bold = cp; }
+        }
     }
-    {   /* the portrait: launcher.png next to the game */
-        const char* base = SDL_GetBasePath();
-        char path[1024];
-        int n = 0;
-        SDL_snprintf(path, sizeof path, "%slauncher.png", base ? base : "");
-        if (unsigned char* px = stbi_load(path, &pw, &ph, &n, 4)) {
-            glGenTextures(1, &pic);
-            glBindTexture(GL_TEXTURE_2D, pic);
+    {   /* the emblem and the band */
+        struct { const unsigned char* d; int n; GLuint* t; int* w; int* h; } im[2] = { { g_launcher_umbrella, g_launcher_umbrella_size, &texUmb, &umbW, &umbH }, { g_launcher_band, g_launcher_band_size, &texBand, &bandW, &bandH } };
+        for (int k = 0; k < 2; k++) {
+            int nn = 0;
+            unsigned char* px = stbi_load_from_memory(im[k].d, im[k].n, im[k].w, im[k].h, &nn, 4);
+            if (!px) continue;
+            glGenTextures(1, im[k].t);
+            glBindTexture(GL_TEXTURE_2D, *im[k].t);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
             glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
-            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, pw, ph, 0, GL_RGBA, GL_UNSIGNED_BYTE, px);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, *im[k].w, *im[k].h, 0, GL_RGBA, GL_UNSIGNED_BYTE, px);
             stbi_image_free(px);
-            host_log("launcher: picture %s (%dx%d)\n", path, pw, ph);
         }
     }
     SDL_SetWindowTitle(win, "Resident Evil Code: Veronica X - PC Port VR");
@@ -1002,29 +1012,28 @@ extern "C" int overlay_launcher(void)
         ImGui::PopStyleColor();
         ImGui::PopStyleVar(2);
         ImDrawList* dl = ImGui::GetWindowDrawList();
-        float artw = pic ? ds.y * pw / ph : ds.x * 0.42f;   /* the portrait's width at the window's height */
-        float rx = artw - 30.0f;                             /* where the right side's content starts */
-        {   /* the right side: a faint red glow, as from the game's own menus */
+        const float rx = 580.0f;   /* where the right side's content starts (the buttons are at rx + 20) */
+        {   /* a faint red glow behind the middle */
             for (int i = 0; i < 7; i++)
-                dl->AddCircleFilled(ImVec2(ds.x * 0.86f, ds.y * 0.12f), ds.y * (0.75f - i * 0.09f), IM_COL32(110, 8, 12, 6 + i * 3), 64);
+                dl->AddCircleFilled(ImVec2(ds.x * 0.62f, ds.y * 0.5f), 560.0f - i * 70.0f, IM_COL32(110, 8, 14, 6 + i * 3), 64);
         }
-        if (pic) {   /* the portrait, the whole height, fading into the dark at its right edge */
-            dl->AddImage((ImTextureID)(intptr_t)pic, ImVec2(0, 0), ImVec2(artw, ds.y));
-            dl->AddRectFilledMultiColor(ImVec2(artw - 170, 0), ImVec2(artw + 2, ds.y), IM_COL32(11, 10, 13, 0), IM_COL32(11, 10, 13, 255), IM_COL32(11, 10, 13, 255), IM_COL32(11, 10, 13, 0));
-            dl->AddRectFilledMultiColor(ImVec2(0, ds.y - 120), ImVec2(artw, ds.y), IM_COL32(0, 0, 0, 0), IM_COL32(0, 0, 0, 0), IM_COL32(0, 0, 0, 170), IM_COL32(0, 0, 0, 170));
-        } else {   /* no picture: a dark panel with the red glow */
-            dl->AddRectFilledMultiColor(ImVec2(0, 0), ImVec2(artw, ds.y), IM_COL32(30, 6, 8, 255), IM_COL32(11, 10, 13, 255), IM_COL32(11, 10, 13, 255), IM_COL32(45, 8, 10, 255));
+        {   /* the title: RE and PCVR in red, the game's name in white; a hairline under it */
+            float x = 40.0f;
+            l_text(dl, lf_title, 46.0f, ImVec2(x, 22), IM_COL32(224, 48, 56, 255), "RE");
+            ImGui::PushFont(lf_title, 46.0f); x += ImGui::CalcTextSize("RE").x + 20.0f; ImGui::PopFont();
+            l_text(dl, lf_title, 46.0f, ImVec2(x, 22), IM_COL32(245, 240, 235, 255), "CODE: VERONICA X");
+            ImGui::PushFont(lf_title, 46.0f); x += ImGui::CalcTextSize("CODE: VERONICA X").x + 20.0f; ImGui::PopFont();
+            l_text(dl, lf_title, 46.0f, ImVec2(x, 22), IM_COL32(224, 48, 56, 255), "PCVR");
+            dl->AddLine(ImVec2(40, 96), ImVec2(ds.x - 40, 96), IM_COL32(43, 35, 38, 255), 1.0f);
         }
-        {   /* the title (Tomb Raider's logo strip, here on the right) */
-            float x = rx + 20.0f;
-            l_text(dl, lf_ui, 15.0f, ImVec2(x + 2, 38), IM_COL32(190, 182, 175, 255), "RESIDENT EVIL", 6.0f);
-            l_text(dl, lf_title, 50.0f, ImVec2(x, 58), IM_COL32(245, 240, 232, 255), "CODE: VERONICA X");
-            dl->AddRectFilled(ImVec2(x + 2, 120), ImVec2(x + 70, 123), IM_COL32(210, 30, 36, 255));
-            l_text(dl, lf_bold, 20.0f, ImVec2(x + 80, 109), IM_COL32(225, 40, 46, 255), "PC PORT VR", 3.0f);
+        if (texUmb) dl->AddImage((ImTextureID)(intptr_t)texUmb, ImVec2(112, 157), ImVec2(112 + 376, 157 + 376.0f * umbH / umbW));   /* the Umbrella emblem */
+        if (texBand) {   /* the card's "Security Clearance" bar-code band along the bottom */
+            float bw = 640.0f, bh = bw * bandH / bandW;
+            dl->AddImage((ImTextureID)(intptr_t)texBand, ImVec2((ds.x - bw) * 0.5f, ds.y - bh - 44.0f), ImVec2((ds.x + bw) * 0.5f, ds.y - 44.0f));
         }
         {   /* vr134: the language, top right - EN PT ES, the chosen one red and underlined (kept in the ini) */
             static const char* const langs[] = { "EN", "PT", "ES" };
-            float lx = ds.x - 132.0f;
+            float lx = ds.x - 132.0f;   /* (the title ends well before this) */
             ImGui::PushFont(lf_bold, 16.0f);
             for (int k = 0; k < 3; k++) {
                 ImVec2 ts = ImGui::CalcTextSize(langs[k]), lp(lx, 16.0f);
@@ -1038,11 +1047,11 @@ extern "C" int overlay_launcher(void)
             ImGui::PopFont();
         }
         if (!options) {
-            float x = rx + 20.0f, w = ds.x - x - 60.0f;
-            if (l_button(L(L_PLAY), ImVec2(x, 190), ImVec2(w, 74), true, 30.0f) || ImGui::IsKeyPressed(ImGuiKey_Enter)) result = 1;
-            l_text(dl, lf_ui, 15.0f, ImVec2(x + 2, 272), IM_COL32(170, 160, 155, 255), L(L_HINT));
-            if (l_button(L(L_OPTIONS), ImVec2(x, 316), ImVec2((w - 14) * 0.5f, 50), false, 21.0f)) options = true;
-            if (l_button(L(L_EXIT), ImVec2(x + (w - 14) * 0.5f + 14, 316), ImVec2((w - 14) * 0.5f, 50), false, 21.0f)) result = 0;
+            float x = rx + 20.0f, w = ds.x - x - 50.0f;
+            if (l_button(L(L_PLAY), ImVec2(x, 162), ImVec2(w, 130), true, 44.0f) || ImGui::IsKeyPressed(ImGuiKey_Enter)) result = 1;
+            l_text(dl, lf_ui, 15.0f, ImVec2(x + 2, 302), IM_COL32(170, 160, 155, 255), L(L_HINT));
+            if (l_button(L(L_OPTIONS), ImVec2(x, 474), ImVec2((w - 14) * 0.5f, 56), false, 21.0f)) options = true;
+            if (l_button(L(L_EXIT), ImVec2(x + (w - 14) * 0.5f + 14, 474), ImVec2((w - 14) * 0.5f, 56), false, 21.0f)) result = 0;
         } else {
             float x = rx + 20.0f, w = ds.x - x - 40.0f;
             ImGui::SetCursorScreenPos(ImVec2(x, 150));
@@ -1067,7 +1076,7 @@ extern "C" int overlay_launcher(void)
             ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 3.0f);
             ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(10, 12));
             ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(22, 18));
-            ImGui::BeginChild("##opts", ImVec2(w, ds.y - 150 - 96), ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
+            ImGui::BeginChild("##opts", ImVec2(w, 372.0f), ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
             {   /* the tabs, drawn as Tomb Raider's: words, the chosen one red and underlined */
                 const char* tabs[] = { L(L_TAB_VR), L(L_TAB_GFX), L(L_TAB_TEX) };
                 ImVec2 p = ImGui::GetCursorScreenPos();
@@ -1127,10 +1136,10 @@ extern "C" int overlay_launcher(void)
             ImGui::PopStyleVar(4);
             ImGui::PopStyleColor(16);
             ImGui::PopFont();
-            if (l_button(L(L_BACK), ImVec2(x, ds.y - 80), ImVec2(180, 46), true, 20.0f)) options = false;
+            if (l_button(L(L_BACK), ImVec2(x, 530.0f), ImVec2(180, 46), true, 20.0f)) options = false;
             float dw;
             ImGui::PushFont(lf_bold, 20.0f); dw = ImGui::CalcTextSize(L(L_DEFAULT)).x + 44.0f; ImGui::PopFont();
-            if (l_button(L(L_DEFAULT), ImVec2(x + 194, ds.y - 80), ImVec2(dw > 160.0f ? dw : 160.0f, 46), false, 20.0f)) {   /* as the release has them */
+            if (l_button(L(L_DEFAULT), ImVec2(x + 194, 530.0f), ImVec2(dw > 160.0f ? dw : 160.0f, 46), false, 20.0f)) {   /* as the release has them */
                 g_vr_turn = 45; g_vr_comfort = 0; g_vr_sight = 2; g_vr_res = 100; g_tex_hd = 1; g_tex_hd_per_frame = 2; g_tex_loaders = 4; g_tex_upload = 0;
                 settings_save_later();
             }
@@ -1143,10 +1152,10 @@ extern "C" int overlay_launcher(void)
                 float fs = options ? 17.0f : 19.0f;
                 ImGui::PushFont(lf_bold, fs);
                 ImVec2 ts = ImGui::CalcTextSize(line);
-                ImVec2 sz(ds.x - x - 60.0f, 48.0f), pos(x, 384.0f);
+                ImVec2 sz(ds.x - x - 60.0f, 48.0f), pos(x, 390.0f);
                 if (options) {   /* what's left of the row after Default; too narrow for the words = only the version */
                     float dw = ImGui::CalcTextSize(L(L_DEFAULT)).x * 20.0f / fs + 44.0f;
-                    pos = ImVec2(x + 194 + (dw > 160.0f ? dw : 160.0f) + 14, ds.y - 80.0f);
+                    pos = ImVec2(x + 194 + (dw > 160.0f ? dw : 160.0f) + 14, 530.0f);
                     sz = ImVec2(ds.x - 40.0f - pos.x, 46.0f);
                     if (ts.x + 64.0f > sz.x) { SDL_strlcpy(line, g_update_tag, sizeof line); ts = ImGui::CalcTextSize(line); }
                 }
@@ -1171,8 +1180,11 @@ extern "C" int overlay_launcher(void)
             if (!options) {
                 char f1[128];
                 SDL_snprintf(f1, sizeof f1, L(L_FOOT1), g_vr_version);
-                l_text(dl, lf_ui, 14.0f, ImVec2(x, ds.y - 66), IM_COL32(150, 142, 136, 255), f1);
-                l_text(dl, lf_ui, 14.0f, ImVec2(x, ds.y - 44), IM_COL32(120, 114, 108, 255), L(L_FOOT2));
+                ImGui::PushFont(lf_ui, 14.0f);
+                float w1 = ImGui::CalcTextSize(f1).x, w2 = ImGui::CalcTextSize(L(L_FOOT2)).x;
+                ImGui::PopFont();
+                l_text(dl, lf_ui, 14.0f, ImVec2(ds.x - 40.0f - w1, ds.y - 66), IM_COL32(150, 142, 136, 255), f1);
+                l_text(dl, lf_ui, 14.0f, ImVec2(ds.x - 40.0f - w2, ds.y - 44), IM_COL32(120, 114, 108, 255), L(L_FOOT2));
             }
         }
         ImGui::End();
@@ -1183,7 +1195,8 @@ extern "C" int overlay_launcher(void)
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
         SDL_GL_SwapWindow(win);
     }
-    if (pic) glDeleteTextures(1, &pic);
+    if (texUmb) glDeleteTextures(1, &texUmb);
+    if (texBand) glDeleteTextures(1, &texBand);
     g_vr_request = 1;   /* (one PLAY: VR) */
     g_launcher = show;
     config_save();
