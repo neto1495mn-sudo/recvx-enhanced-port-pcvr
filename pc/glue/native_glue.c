@@ -1,3 +1,6 @@
+#ifndef __ANDROID__
+#define RECVX_DIAG 1   /* TEMP: PC build with the Quest diagnostics (comparison run) */
+#endif
 /*
  * Native 3D path (rendering rework, stage 1): chunk-model strips (njCnkCsUvh/njCnkCsUvn)
  * are drawn by the GPU instead of the VU1 microprograms (vsm/ps2_vu1.vsm SingleMain /
@@ -124,6 +127,28 @@ void pc_native_strip(const unsigned short* idx_uv, int n, const VU1_STRIP_BUF* v
         o->far_d = _fNaViwClipFar - w;
         o->cull = (uint8_t)((single && p->fNz > 0.0f) | 0x80);   /* 0x80: 3D (VR re-projects it) */
     }
+#if defined(__ANDROID__) || defined(RECVX_DIAG)
+    {   /* diagnosis: the traced character's strips - the first vertices (view position, screen position, depth, fog) and any bad one */
+        extern int g_and_trace;
+        static int nd;
+        if (g_and_trace && nd < 600) {
+            int bad = 0;
+            for (int i = 0; i < n; i++) {
+                const VU1_STRIP_BUF* p = &vbuf[idx_uv[i * 3]];
+                if (p->fVx != p->fVx || p->fVy != p->fVy || p->fVz != p->fVz || p->fVz <= 0.0f || p->fVx > 1e6f || p->fVx < -1e6f || p->fVy > 1e6f || p->fVy < -1e6f) bad++;
+            }
+            nd++;
+            {
+                const VU1_STRIP_BUF* a = &vbuf[idx_uv[0]];
+                const VU1_STRIP_BUF* b = &vbuf[idx_uv[3]];
+                const VU1_STRIP_BUF* c = &vbuf[idx_uv[6 < n * 3 ? 6 : 3]];
+                fprintf(stderr, "android: strip n %d prim %x color %d single %d, bad vertices %d, idx %u %u, v0 V %.1f %.1f %.1f S %.1f %.1f fog %.2f | v1 V %.1f %.1f %.1f S %.1f %.1f | v2 V %.1f %.1f %.1f S %.1f %.1f\n",
+                        n, prim, color_mode, single, bad, (unsigned)idx_uv[0], (unsigned)idx_uv[n > 1 ? 3 : 0],
+                        a->fVx, a->fVy, a->fVz, a->fSx, a->fSy, a->fFog, b->fVx, b->fVy, b->fVz, b->fSx, b->fSy, c->fVx, c->fVy, c->fVz, c->fSx, c->fSy);
+            }
+        }
+    }
+#endif
     native_strip(prim, v, n);
 }
 
@@ -158,6 +183,33 @@ uint32_t pc_native_prim3d(unsigned int prim, const VU1_PRIM_BUF* in, int n, int 
         o->far_d = _fNaViwClipFar - w;
         o->cull = (uint8_t)(((p->ulKick & 0x8001) == 0x8001 ? 2 : 0) | 0x80);
     }
+#if defined(__ANDROID__) || defined(RECVX_DIAG)
+    {   /* diagnosis: the raw 12 words of the first vertices of the first deferred strips (Quest vs PC) */
+        static unsigned nraw;
+        if (deferred && n >= 3 && nraw < 10) {
+            const unsigned int* w = (const unsigned int*)in;
+            nraw++;
+            host_log("diag prim3d raw: n %d prim %x sizeof %u | v0: %08x %08x %08x %08x | %08x %08x %08x %08x | %08x %08x %08x %08x | v1: %08x %08x %08x %08x | %08x %08x %08x %08x | %08x %08x %08x %08x\n",
+                     n, prim, (unsigned)sizeof(VU1_PRIM_BUF), w[0], w[1], w[2], w[3], w[4], w[5], w[6], w[7], w[8], w[9], w[10], w[11],
+                     w[12], w[13], w[14], w[15], w[16], w[17], w[18], w[19], w[20], w[21], w[22], w[23]);
+        }
+    }
+#endif
+#if defined(__ANDROID__) || defined(RECVX_DIAG)
+    {   /* diagnosis (Quest: translucent strips arrive with empty vertices): zero view depth in the CPU-projected strip */
+        static unsigned nstrips, nzero, nlog;
+        int z0 = 0, kick = 0;
+        nstrips++;
+        for (int i = 0; i < n && i < 64; i++) { if (in[i].fZ == 0.0f) z0++; if ((in[i].ulKick & 0x8001) == 0x8001) kick++; }
+        if (z0) nzero++;
+        if (z0 && nlog < 24) {
+            nlog++;
+            host_log("diag prim3d: strip n %d prim %x deferred %d: %d vertices with fZ 0, %d with the skip flag; v0 X %g Y %g Z %g Q %g S %g T %g kick %x; v1 Z %g kick %x; v%d Z %g kick %x; strips so far %u, with empty vertices %u\n",
+                     n, prim, deferred, z0, kick, in[0].fX, in[0].fY, in[0].fZ, in[0].fQ, in[0].fS, in[0].fT, (unsigned)in[0].ulKick,
+                     n > 1 ? in[1].fZ : 0.0f, n > 1 ? (unsigned)in[1].ulKick : 0u, n - 1, in[n - 1].fZ, (unsigned)in[n - 1].ulKick, nstrips, nzero);
+        }
+    }
+#endif
     *zavg = n ? zsum / (float)n : 0.0f;
     return native_defer(prim, v, n < 64 ? n : 64, deferred ? pc_cur_mesh : 0, pc_cur_mesh & 1 ? pc_cur_strip++ : pc_cur_strip);
 }

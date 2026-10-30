@@ -1,3 +1,6 @@
+#ifndef __ANDROID__
+#define RECVX_DIAG 1   /* TEMP: PC build with the Quest diagnostics (comparison run) */
+#endif
 /*
  * GS command stream between the game thread and the render thread, and frame interpolation.
  *
@@ -226,6 +229,9 @@ static int clip_plane(const NativeVertex* in, int n, NativeVertex* out, int plan
 /* Native 3D strips are recorded as they come (PRIM attribute bits, len = vertex count, data
    in the pool), so a strip has the same vertices in every frame and an in-between frame can
    blend them one to one; culling and clipping happen when drawn (native_draw). */
+#if defined(__ANDROID__) || defined(RECVX_DIAG)
+unsigned g_and_nstrip_calls, g_and_nstrip_verts;   /* diagnosis: native strips recorded (a character node's report in ps2_NinjaCnk.c) */
+#endif
 int g_native_tag;                  /* game thread: the strips recorded now are a character's (game.c bhDrawEnemy) */
 static int native_tag_force = -1;  /* a deferred strip's own tag (native_marker) */
 void native_strip(unsigned int prim, const NativeVertex* v, int n)
@@ -234,6 +240,9 @@ void native_strip(unsigned int prim, const NativeVertex* v, int n)
     uint8_t tag = (uint8_t)(native_tag_force >= 0 ? native_tag_force : g_native_tag);   /* 1 character, 2/3 right/left hand (VR) */
     uint32_t len = (uint32_t)(n * sizeof(NativeVertex));
     if (n < 3) return;
+#if defined(__ANDROID__) || defined(RECVX_DIAG)
+    g_and_nstrip_calls++; g_and_nstrip_verts += (unsigned)n;
+#endif
     GROW(f->pool, f->npool, f->cpool, len);
     memcpy(f->pool + f->npool, v, len);
     GROW(f->ev, f->nev, f->cev, 1);
@@ -245,6 +254,22 @@ void native_strip(unsigned int prim, const NativeVertex* v, int n)
    (SingleMain) and the rest clipped against the near and far planes, as the VU1 SCISSOR
    routine does, so the GPU only ever gets vertices in front of the camera (w >= near > 0):
    how drivers clip primitives reaching behind the camera differs */
+#if defined(__ANDROID__) || defined(RECVX_DIAG)
+/* diagnosis (Quest vs PC, a character's parts missing): what native_draw is given and what it hands on, per 3 s */
+void host_log(const char* fmt, ...);
+static struct { unsigned strips, tris_in, tris_cull, tris_clipped, tris_out, strips_empty; } nd;
+static void nd_report(void)
+{
+    static uint64_t t0;
+    uint64_t now = SDL_GetTicksNS();
+    if (!t0) t0 = now;
+    if (now - t0 < 3000000000ull) return;
+    t0 = now;
+    host_log("diag native_draw per 3 s: strips %u, triangles in %u, dropped by the facing test %u, clipped %u, out %u, strips with nothing left %u\n",
+             nd.strips, nd.tris_in, nd.tris_cull, nd.tris_clipped, nd.tris_out, nd.strips_empty);
+    memset(&nd, 0, sizeof(nd));
+}
+#endif
 static void native_draw(unsigned int prim, const NativeVertex* v, int n, long ev)
 {
     NativeVertex tri[64 * 9];
@@ -253,16 +278,48 @@ static void native_draw(unsigned int prim, const NativeVertex* v, int n, long ev
     if (n > 64) n = 64;
     for (int i = 2; i < n; i += type == 3 ? 3 : 1) {
         const NativeVertex* t3[3] = { type == 5 ? &v[0] : &v[i - 2], &v[i - 1], &v[i] };
-        if ((t3[2]->cull & 2) || (t3[0]->cull & t3[1]->cull & t3[2]->cull & 1)) continue;
+#if defined(__ANDROID__) || defined(RECVX_DIAG)
+        nd.tris_in++;
+#endif
+        if ((t3[2]->cull & 2) || (t3[0]->cull & t3[1]->cull & t3[2]->cull & 1)) {
+#if defined(__ANDROID__) || defined(RECVX_DIAG)
+            nd.tris_cull++;
+            {
+                static unsigned ns;
+                if (ns < 30 && nd.tris_cull % 997 == 1) {
+                    ns++;
+                    host_log("diag dropped (facing test): prim %x n %d i %d ev %ld cull %02x %02x %02x w %g %g %g near_d %g %g %g far_d %g %g %g x %g y %g z %g\n",
+                             prim, n, i, ev, t3[0]->cull, t3[1]->cull, t3[2]->cull, t3[0]->w, t3[1]->w, t3[2]->w, t3[0]->near_d, t3[1]->near_d, t3[2]->near_d,
+                             t3[0]->far_d, t3[1]->far_d, t3[2]->far_d, t3[2]->x, t3[2]->y, t3[2]->z);
+                }
+            }
+#endif
+            continue;
+        }
         if (t3[0]->near_d >= 0 && t3[1]->near_d >= 0 && t3[2]->near_d >= 0 && t3[0]->far_d >= 0 && t3[1]->far_d >= 0 && t3[2]->far_d >= 0) {
             tri[m++] = *t3[0]; tri[m++] = *t3[1]; tri[m++] = *t3[2];
         } else {
             NativeVertex p0[3] = { *t3[0], *t3[1], *t3[2] }, p1[4], p2[5];
+#if defined(__ANDROID__) || defined(RECVX_DIAG)
+            nd.tris_clipped++;
+            {
+                static unsigned nc;
+                if (nc < 24 && nd.tris_clipped % 1999 == 1) {
+                    nc++;
+                    host_log("diag clipped: prim %x n %d i %d ev %ld cull %02x w %g %g %g near_d %g %g %g far_d %g %g %g\n",
+                             prim, n, i, ev, t3[2]->cull, t3[0]->w, t3[1]->w, t3[2]->w, t3[0]->near_d, t3[1]->near_d, t3[2]->near_d, t3[0]->far_d, t3[1]->far_d, t3[2]->far_d);
+                }
+            }
+#endif
             int k = clip_plane(p0, 3, p1, 0);
             k = k ? clip_plane(p1, k, p2, 1) : 0;
             for (int j = 2; j < k; j++) { tri[m++] = p2[0]; tri[m++] = p2[j - 1]; tri[m++] = p2[j]; }
         }
     }
+#if defined(__ANDROID__) || defined(RECVX_DIAG)
+    nd.strips++; nd.tris_out += (unsigned)(m / 3); if (!m) nd.strips_empty++;
+    nd_report();
+#endif
     if (m) gs_draw_native(prim, tri, m, ev);
 }
 

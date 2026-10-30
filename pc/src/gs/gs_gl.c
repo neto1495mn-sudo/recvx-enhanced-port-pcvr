@@ -1,3 +1,6 @@
+#ifndef __ANDROID__
+#define RECVX_DIAG 1   /* TEMP: PC build with the Quest diagnostics (comparison run) */
+#endif
 /*
  * GS rasterization on OpenGL 3.3.
  *
@@ -513,6 +516,7 @@ static void and_persistent_init(void)   /* the vertex stream's buffer replaced b
     typedef void (GLAPIENTRY *PFN_storage)(GLenum, GLsizeiptr, const void*, GLbitfield);
     PFN_storage storage = (PFN_storage)SDL_GL_GetProcAddress("glBufferStorageEXT");
     PFN_and_map map = (PFN_and_map)SDL_GL_GetProcAddress("glMapBufferRange");
+    if (SDL_getenv("RECVX_DBG_NORING")) { host_log("android: vertex ring OFF (RECVX_DBG_NORING): per-batch uploads\n"); return; }
     const char* ext = (const char*)glGetString(0x1F03 /* GL_EXTENSIONS */);
     const GLbitfield fl = 0x0002 /* MAP_WRITE */ | 0x0040 /* MAP_PERSISTENT */ | 0x0080 /* MAP_COHERENT */;
     void (GLAPIENTRY *delbuf)(GLsizei, const GLuint*) = (void (GLAPIENTRY *)(GLsizei, const GLuint*))SDL_GL_GetProcAddress("glDeleteBuffers");
@@ -548,12 +552,40 @@ static void and_persistent_init(void)   /* the vertex stream's buffer replaced b
 }
 #endif
 
+#if defined(__ANDROID__) && defined(__arm__)
+/* RECVX_GL_DEBUG=1 (env.txt): the driver's own message for every GL error (KHR_debug, synchronous), with the words on the
+   stack that point into the game's code (offset in librecvx.so, as in a crash log) - glGetError once in 64 frames only
+   says that something failed somewhere in them */
+static void GLAPIENTRY gl_debug_cb(GLenum source, GLenum type, GLuint id, GLenum severity, GLsizei length, const char* message, const void* user)
+{
+    static int nerr, nother;
+    const unsigned long* sp = (const unsigned long*)__builtin_frame_address(0);
+    char where[220];
+    int o = 0;
+    (void)source; (void)severity; (void)length; (void)user;
+    if (type == 0x824C || type == 0x824E ? nerr++ >= 60 : nother++ >= 15) return;   /* ERROR, UNDEFINED_BEHAVIOR / the rest */
+    for (int i = 1, found = 0; i < 2048 && found < 14 && o < (int)sizeof(where) - 12; i++)
+        if (sp[i] >= 0x40000000ul && sp[i] < 0x40600000ul) { o += SDL_snprintf(where + o, sizeof(where) - (size_t)o, " %lx", sp[i] - 0x40000000ul); found++; }
+    where[o] = 0;
+    host_log("android: GL debug: type 0x%x id %u frame %llu: %s | code at:%s\n", type, id, (unsigned long long)frame_no, message, where);
+}
+#endif
+
 void gs_renderer_init(void)
 {
     if (!gl_load(gl_getproc)) host_fatal("OpenGL 3.3 entry points missing");
     host_log("gl: %s / %s\n", glGetString(GL_RENDERER), glGetString(GL_VERSION));
 #ifdef __ANDROID__
     host_log("gl: extensions %s\n", glGetString(0x1F03 /* GL_EXTENSIONS */));
+#ifdef __arm__
+    if (SDL_getenv("RECVX_GL_DEBUG")) {
+        typedef void (GLAPIENTRY *DbgCb)(GLenum, GLenum, GLuint, GLenum, GLsizei, const char*, const void*);
+        void (GLAPIENTRY *setcb)(DbgCb, const void*) = (void (GLAPIENTRY *)(DbgCb, const void*))SDL_GL_GetProcAddress("glDebugMessageCallback");
+        if (!setcb) setcb = (void (GLAPIENTRY *)(DbgCb, const void*))SDL_GL_GetProcAddress("glDebugMessageCallbackKHR");
+        if (setcb) { setcb(gl_debug_cb, NULL); glEnable(0x92E0 /* DEBUG_OUTPUT */); glEnable(0x8242 /* DEBUG_OUTPUT_SYNCHRONOUS */); host_log("android: GL debug output on\n"); }
+        else host_log("android: GL debug output not available (no glDebugMessageCallback)\n");
+    }
+#endif
 #endif
     if (!gs_mem_selftest()) host_fatal("GS swizzle tables failed self test");
     gs_reset();
@@ -598,6 +630,19 @@ void gs_renderer_init(void)
    triangles reaching behind the camera instead of clipping them. On for game draws only:
    the present quad and the overlay (ImGui) write no gl_ClipDistance, and enabled distances
    a shader does not write are undefined. */
+#ifdef __ANDROID__
+/* Quest diagnosis switches (env.txt): RECVX_DBG_NODEPTH, RECVX_DBG_NOATEST, RECVX_DBG_NOBLEND, RECVX_DBG_NOCLIP - global, for every game draw */
+static struct { int depth, atest, blend, clip; } and_dbg = { -1, 0, 0, 0 };
+static void and_dbg_init(void)
+{
+    if (and_dbg.depth >= 0) return;
+    and_dbg.depth = SDL_getenv("RECVX_DBG_NODEPTH") != NULL;
+    and_dbg.atest = SDL_getenv("RECVX_DBG_NOATEST") != NULL;
+    and_dbg.blend = SDL_getenv("RECVX_DBG_NOBLEND") != NULL;
+    and_dbg.clip = SDL_getenv("RECVX_DBG_NOCLIP") != NULL;
+    host_log("android: debug switches: no depth test %d, no alpha test %d, no blend %d, no clip distances %d\n", and_dbg.depth, and_dbg.atest, and_dbg.blend, and_dbg.clip);
+}
+#endif
 static int clip_on;
 static void clip_distances(int on)
 {
@@ -2162,7 +2207,12 @@ void gs_flush(void)
     g_and_sub = 3;   /* (profiler stage: program, uniforms) */
 #endif
     glUseProgram(prog);
+#ifdef __ANDROID__
+    and_dbg_init();
+    clip_distances(and_dbg.clip ? 0 : 1);
+#else
     clip_distances(1);
+#endif
     uni2f(u_rt_size, (float)cur_rt->vw, (float)cur_rt->vh);
     uni1f(u_rt_margin, (float)g_margin_x);
     uni1i(u_vr_on, vr_u.on);
@@ -2200,6 +2250,10 @@ void gs_flush(void)
         static const GLenum zf[4] = { GL_NEVER, GL_ALWAYS, GL_GEQUAL, GL_GREATER };
         glEnable(GL_DEPTH_TEST);
         glDepthFunc(zte ? zf[ztst] : GL_ALWAYS);
+#ifdef __ANDROID__
+        and_dbg_init();
+        if (and_dbg.depth) glDisable(GL_DEPTH_TEST);
+#endif
         glDepthMask(zmsk ? GL_FALSE : GL_TRUE);
     }
     /* color mask from FBMSK (whole channels only) */
@@ -2208,6 +2262,9 @@ void gs_flush(void)
 
     apply_blend(st, &premul);
     uni1i(u_premul, premul);
+#ifdef __ANDROID__
+    if (and_dbg.blend) glDisable(GL_BLEND);
+#endif
     { extern int g_vr_debug_cores; uni1i(u_dbg, g_vr_debug_cores && vr_u.on); }
 
 #ifdef __ANDROID__
@@ -2341,7 +2398,11 @@ void gs_flush(void)
         float fr = (float)(st->fogcol & 0xFF), fg = (float)((st->fogcol >> 8) & 0xFF), fb = (float)((st->fogcol >> 16) & 0xFF);
         uni4f(u_fogcol, fr, fg, fb, 0.0f);
     }
+#ifdef __ANDROID__
+    uni1i(u_ate, and_dbg.atest ? 0 : (int)(test & 1));
+#else
     uni1i(u_ate, (int)(test & 1));
+#endif
     uni1i(u_atst, (int)((test >> 1) & 7));
     uni1f(u_aref, (float)((test >> 4) & 0xFF));
 #ifdef __ANDROID__
@@ -2420,6 +2481,10 @@ void gs_flush(void)
                 int nq = (q0 + 1) % 4;
                 if (and_fence[q0]) and_deletesync(and_fence[q0]);
                 and_fence[q0] = and_fencesync(0x9117 /* GL_SYNC_GPU_COMMANDS_COMPLETE */, 0);   /* the draws from q0 issued so far */
+                if (!and_fence[q0]) {
+                    static int nf;
+                    if (nf++ < 5) host_log("android: vertex ring: glFenceSync returned no fence (quarter %d, frame %llu, GL error %x)\n", q0, (unsigned long long)frame_no, glGetError());
+                }
                 if (and_fence[nq]) {
                     uint64_t w0 = SDL_GetTicksNS();
                     GLenum r = and_clientwait(and_fence[nq], 0x0001 /* GL_SYNC_FLUSH_COMMANDS_BIT */, 2000000000ull);
@@ -2430,9 +2495,11 @@ void gs_flush(void)
                     }
                     if (r == 0x911D /* GL_WAIT_FAILED */ || r == 0x911B /* GL_TIMEOUT_EXPIRED */) {
                         static int nl;
-                        if (nl++ < 5) host_log("android: vertex ring: waiting for the GPU %s\n", r == 0x911B ? "timed out (2 s)" : "failed");
+                        if (nl++ < 20) host_log("android: vertex ring: waiting for the GPU %s (fence %p of quarter %d, new fence %p of quarter %d, frame %llu, GL error %x)\n",
+                                                r == 0x911B ? "timed out (2 s)" : "failed", and_fence[nq], nq, and_fence[q0], q0, (unsigned long long)frame_no, glGetError());
                     }
-                    and_deletesync(and_fence[nq]); and_fence[nq] = NULL;
+                    if (r == 0x911D) { glFinish(); and_fence[nq] = NULL; }   /* (the driver does not know this fence: no wait happened and deleting it fails too - the GPU finishes everything so the quarter is free) */
+                    else { and_deletesync(and_fence[nq]); and_fence[nq] = NULL; }
                 }
                 vbo_next = nq * AND_QV;
             }
@@ -2847,8 +2914,14 @@ void gs_native_cache_begin(size_t nev)
 }
 
 /* draw n triangle vertices; ev >= 0: the executed frame's strip of that event (kept) */
+#if defined(__ANDROID__) || defined(RECVX_DIAG)
+unsigned g_and_gsn_calls, g_and_gsn_verts;   /* diagnosis: native strips drawn on the render thread */
+#endif
 void gs_draw_native(unsigned int prim, const NativeVertex* v, int n, long ev)
 {
+#if defined(__ANDROID__) || defined(RECVX_DIAG)
+    g_and_gsn_calls++; g_and_gsn_verts += (unsigned)n;
+#endif
     static GlVertex tmp[64 * 9];
     GlVertex* o = tmp;
     if (ev >= 0) {

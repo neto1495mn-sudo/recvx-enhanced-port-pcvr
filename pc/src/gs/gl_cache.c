@@ -269,6 +269,7 @@ static void GLAPIENTRY c_PixelStorei(GLenum p, GLint v)
 void and_glcache_install(void)
 {
     owner = SDL_GetCurrentThreadID();
+    if (SDL_getenv("RECVX_DBG_NOGLCACHE")) { host_log("android: GL state cache OFF (RECVX_DBG_NOGLCACHE)\n"); return; }
     WRAP(Enable); WRAP(Disable); WRAP(ActiveTexture); WRAP(BindTexture); WRAP(TexParameteri); WRAP(GenTextures); WRAP(DeleteTextures);
     WRAP(BindFramebuffer); WRAP(DeleteFramebuffers); WRAP(UseProgram); WRAP(BindVertexArray); WRAP(BindBuffer); WRAP(Viewport);
     WRAP(Scissor); WRAP(DepthFunc); WRAP(DepthMask); WRAP(ColorMask); WRAP(BlendFuncSeparate); WRAP(BlendEquationSeparate);

@@ -39,9 +39,17 @@ static inline float    ee_u2f(uint32_t u) { float f; memcpy(&f, &u, 4); return f
 #define EE_SD(a, v) (*(uint64_t*)EE_PTR(a) = (uint64_t)(v))
 #define EE_SWF(a, v) (*(float*)EE_PTR(a) = (v))
 
-/* lq/sq ignore the low 4 address bits */
-static inline void ee_lq(ee_reg* r, uint32_t a) { memcpy(r, EE_PTR(a & ~15u), 16); }
-static inline void ee_sq(uint32_t a, const ee_reg* r) { memcpy(EE_PTR(a & ~15u), r, 16); }
+/* lq/sq ignore the low 4 address bits. Android (Quest): clang does not align the decomp's arrays to 32 bytes as GCC does
+   (docs/BUILDING.md), so a buffer can start 8 bytes past a quadword (Ps2_DRAW_TMP: the translucent strips' vertices came
+   out shifted by 8 bytes - their colours stored a word-pair early, the depth lost); the address is used as it is, the
+   same offsets from the buffer on both sides - identical to the rounding wherever the buffer is aligned */
+#ifdef __ANDROID__
+#define EE_QADDR(a) (a)
+#else
+#define EE_QADDR(a) ((a) & ~15u)
+#endif
+static inline void ee_lq(ee_reg* r, uint32_t a) { memcpy(r, EE_PTR(EE_QADDR(a)), 16); }
+static inline void ee_sq(uint32_t a, const ee_reg* r) { memcpy(EE_PTR(EE_QADDR(a)), r, 16); }
 
 /* little-endian unaligned doubleword load/store halves */
 static inline uint64_t ee_ldl(uint64_t rt, uint32_t a)
