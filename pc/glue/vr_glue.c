@@ -82,6 +82,7 @@ static float frame_W[16];    /* this frame's local -> world */
 static float frame_Wg[16];   /* this frame's recentred tracking space -> world */
 static float vr_yaw;         /* the view's heading (radians, forward (-sin, 0, -cos)) */
 static unsigned rec_seen;    /* xr_recenter_gen at the last heading reset */
+volatile int g_vr_recenter_on_start;   /* RECVX_TEST_SAVESPOT: set when the test save loads; the first game frame recentres (heading_update) */
 static int snap_held;        /* the right stick is still out after a snap turn */
 static uint64_t turn_ms;     /* vr116: the last snap or smooth turn (the comfort vignette) */
 static int sprint_on;         /* vr133: running by one click of the left stick while walking forward (as Call of Duty) */
@@ -236,11 +237,20 @@ static void steady_anchor(float t[3])
     memcpy(t, anc, sizeof(anc));
 }
 
+static float st_x, st_z, st_vx, st_vz, st_lx, st_lz;   /* the stairs' horizontal camera: smoothed root, its speed, the last root */
+static int st_ok;
+static int anchor_live;          /* the steady camera's anchor is current (play_base worked the camera out with it last) */
+static uint64_t last_play_ms;
 static void play_base(float out[3])
 {
     if (base_gen != cam_gen) {
         float t[3];
         int st = 0;
+        {   /* this function not called for a while (a cut-scene, a menu, a door, the inventory): the anchor is stale */
+            uint64_t now = SDL_GetTicks();
+            if (last_play_ms && now - last_play_ms > 300) anchor_live = 0;
+            last_play_ms = now;
+        }
         base_gen = cam_gen;
         if (plp && plp->mlwP && plp->mlwP->obj_num > 0) {
             const float* r = plp->mlwP->owP[0].mtx;
@@ -254,27 +264,48 @@ static void play_base(float out[3])
             }
             if (st && root_ok) {
                 float y = r[13] - root_ref;
+                anchor_live = 0;   /* (the stairs: the steady camera's anchor is not kept up to date meanwhile) */
                 if (on_stairs != 1) {
                     extern void host_log(const char* fmt, ...);
                     host_log("vr: stairs: body %.1f %.1f %.1f, position %.1f %.1f %.1f\n", r[12], r[13], r[14], plp->px, plp->py, plp->pz);
                     sm_y = y;
+                    st_ok = 0;   /* (the stairs' horizontal smoothing starts again at the root) */
                 }
                 sm_y += (y - sm_y) * 0.5f;   /* step by step with the body, without the bob */
-                t[0] = r[12]; t[1] = sm_y; t[2] = r[14];
-            } else { steady_anchor(t); st = 0; }
-        } else if (plp) { t[0] = plp->px; t[1] = plp->py; t[2] = plp->pz; }
-        else { t[0] = t[1] = t[2] = 0; }
+                {   /* the root's way up the stairs is uneven (the log, stairs-trace): nearly still for ~5 frames at the start of each cycle of the climb
+                       animation, then a jump of 0.2 m in one frame (the usual step 0.05) - the camera copied it: the pull forward. Followed with the
+                       speed predicted (the average step) and the error taken a fifth a frame: steady climbing, no lag; the jump spread over ~8 frames. */
+                    if (!st_ok) { st_x = r[12]; st_z = r[14]; st_vx = st_vz = 0.0f; st_lx = r[12]; st_lz = r[14]; st_ok = 1; }
+                    else {
+                        float sx = r[12] - st_lx, sz = r[14] - st_lz;
+                        st_vx += (sx - st_vx) * 0.12f; st_vz += (sz - st_vz) * 0.12f;
+                        st_lx = r[12]; st_lz = r[14];
+                        st_x += st_vx; st_z += st_vz;
+                        st_x += (r[12] - st_x) * 0.2f; st_z += (r[14] - st_z) * 0.2f;
+                    }
+                    t[0] = st_x; t[1] = sm_y; t[2] = st_z;
+                }
+            } else {
+                /* The rule for EVERY mode change: the steady camera's anchor is only kept up to date while it is the one in use (here). Whenever the camera was worked out some other way
+                   (the stairs, no model, a cut-scene or menu, a door: this function not called for a while) the anchor is stale; coming back, it starts at her NOW, before this frame's
+                   target is worked out - else the base eases toward a place she left long ago and then jumps back (stairs' end measured +0.5 / -1.7 m). */
+                if (!anchor_live) steady_reset = 1;
+                anchor_live = 1;
+                steady_anchor(t); st = 0;
+            }
+        } else if (plp) { anchor_live = 0; t[0] = plp->px; t[1] = plp->py; t[2] = plp->pz; }
+        else { anchor_live = 0; t[0] = t[1] = t[2] = 0; }
         if (on_stairs >= 0 && st != on_stairs)   /* switching: keep the old base, ease into the new */
             for (int k = 0; k < 3; k++) base_res[k] = base[k] - t[k];
         if (st != on_stairs && on_stairs >= 0) {
             extern void host_log(const char* fmt, ...);
             host_log("vr: stairs %s\n", st ? "start (camera follows the body)" : "end");
-            if (!st) steady_reset = 1;   /* vr91: the steady camera starts again where she is */
+            /* (vr91: the steady camera starts again where she is: done above, before the target is worked out) */
         }
         on_stairs = st;
         for (int k = 0; k < 3; k++) {
             base_res[k] *= 0.75f;
-            if (fabsf(base_res[k]) > 30.0f) base_res[k] = 0;   /* a teleport (door, cut): no easing */
+            if (fabsf(base_res[k]) > 8.0f) base_res[k] = 0;   /* a teleport (door, cut) or a base that differs by more than 0.8 m: no easing - easing a big difference showed as the camera thrown ahead and back (the stairs' end measured +0.5 / -1.7 m); one clean step instead (was 3 m) */
             base[k] = t[k] + base_res[k];
         }
     }
@@ -926,7 +957,16 @@ static void reload_update(void)
         if (mag_out >= 0) { *g = (*g & 0xFFFF0000u) | (unsigned)mag_kept; mag_out = -1; mag_kept = 0; }
         before = (int)(*g & 0xFFFF);
         reloading = 1;
-        bhSearchBullet();
+        for (int pass = 0; pass < 8; pass++) {   /* the game's reload takes ONE stack of ammo a call: a small first stack (what an earlier
+                                                    reload left) filled the gun by a round or two and a second reload was needed */
+            unsigned* gg = gun_slot();
+            int r0 = gg ? (int)(*gg & 0xFFFF) : 0, r1;
+            int did = bhSearchBullet();
+            gg = gun_slot();
+            r1 = gg ? (int)(*gg & 0xFFFF) : 0;
+            if (g_vr_debug_log) vr_log("vr-diag: reload pass %d: %d -> %d rounds (game says %d)\n", pass, r0, r1, did);
+            if (!did || r1 <= r0) break;
+        }
         reloading = 0;
         inv_who = "VR: hand reload (the game's reload from the boxes)";
         g = gun_slot();   /* (the game sorts the inventory after a reload) */
@@ -1022,8 +1062,26 @@ static void heading_update(void)
     done_gen = cam_gen;
     smooth_turn = 0.0f;   /* vr120 */
     facing = (float)(short)plp->ay * (3.14159265f / 32768.0f);
+    if (g_vr_recenter_on_start && vr_active) {   /* the test save spot has just loaded (lobby_glue.c pc_quickload_take): recentre now - the headset's forward is where the head looks, the body keeps the saved facing */
+        g_vr_recenter_on_start = 0;
+        xr_recenter();
+        vr_log("vr: recentred at the start of the game; saved facing %.0f degrees\n", (double)facing * (180.0 / 3.14159265));
+    }
     ctl = xr_input(&in);
-    if (!vr_active || !ctl || rec_seen != xr_recenter_gen()) { vr_yaw = facing; rec_seen = xr_recenter_gen(); }
+    if (!vr_active || !ctl || rec_seen != xr_recenter_gen()) {
+        /* the body's facing (plp->ay) is the view's world yaw, vr_yaw PLUS the head's own turn in the recentred space (vr_camera: R = Wg * head,
+           tps_vr_view -> plp->ay): resetting vr_yaw to the facing counted the head's turn twice, so a reset (back from the Start menu, a recentre,
+           no controller input) with the head turned - looking at the fire, say - turned the view by that angle again (180 degrees behind him).
+           The head's turn comes off: the view then stays where the body already faces. */
+        VrPose hp;
+        float hrow[9], rel = 0.0f, old = vr_yaw;
+        if (xr_head_pose(&hp)) { quat_to_rows(hrow, &hp); rel = atan2f(hrow[2], hrow[8]); }
+        vr_yaw = facing - rel;
+        rec_seen = xr_recenter_gen();
+        { static unsigned nl; if (nl++ < 60) vr_log("vr: heading reset (%s): facing %.0f, head turn %.0f, vr_yaw %.0f -> %.0f degrees\n",
+                                                  !vr_active ? "camera was off" : !ctl ? "no controller" : "recentred", (double)facing * (180.0 / 3.14159265),
+                                                  (double)rel * (180.0 / 3.14159265), (double)old * (180.0 / 3.14159265), (double)vr_yaw * (180.0 / 3.14159265)); }
+    }
     if (ctl && on_stairs == 1) {   /* vr91: on the stairs the stick does not turn (the stairs go straight); the head still looks around */
         static unsigned nl;
         if (fabsf(in.rx) > 0.7f && g_vr_debug_log && nl++ < 20) vr_log("vr-diag: turn held on the stairs\n");
@@ -1072,6 +1130,25 @@ static void stuck_check(void)
         wx[i] = plp->px; wz[i] = plp->pz; gm[i] = game; gdx[i] = gx; gdz[i] = gz; ays[i] = (short)plp->ay; m2[i] = (unsigned char)plp->mode2; slx[i] = in.lx; sly[i] = in.ly; stf[i] = (unsigned)plp->stflg;
         for (k = 1; k < 4; k++) src[i][k] = sqrtf(shift_f[k][0] * shift_f[k][0] + shift_f[k][1] * shift_f[k][1]);
         i = (i + 1) % 15;
+        {   /* the micro stops while walking (the stick held firm and the game's step short), by cause, every 10 s: turning = the stick's direction moved
+               more than 25 degrees since the last frame, wall = the game's wall hit, state = the game left its walk/run, other */
+            static float plx2, ply2;
+            static unsigned nwalk, nslow, c_turn, c_wall, c_state, c_other;
+            static uint64_t t10;
+            float stepm = game / (s > 0 ? s : 1.0f), pm = sqrtf(plx2 * plx2 + ply2 * ply2), cs = pm > 0.1f && m > 0.1f ? (in.lx * plx2 + in.ly * ply2) / (m * pm) : 1.0f;
+            if (g_vr_debug_log && m > 0.7f && plp->mode0 == 1 && plp->mode1 == 0 && !on_stairs) {
+                nwalk++;
+                if (stepm < 0.06f) {
+                    nslow++;
+                    if (cs < 0.906f) c_turn++; else if (plp->stflg & 1) c_wall++; else if (plp->mode2 != 6 && plp->mode2 != 3) c_state++; else c_other++;
+                }
+            }
+            plx2 = in.lx; ply2 = in.ly;
+            if (g_vr_debug_log && SDL_GetTicks() > t10 + 10000) {
+                if (t10 && nwalk) vr_log("vr-diag: walk summary (10 s): %u game frames walking with the stick held, %u with a short step (%u while the stick turned, %u at a wall, %u the game left its walk, %u other)%s", nwalk, nslow, c_turn, c_wall, c_state, c_other, "\n");
+                nwalk = nslow = c_turn = c_wall = c_state = c_other = 0; t10 = SDL_GetTicks();
+            }
+        }
         if (g_vr_debug_log && m > 0.5f && plp->mode0 == 1 && nlog < 60) {
             float gsum = 0, s1 = 0, s2 = 0, s3 = 0, nx = plp->px - wx[i], nz = plp->pz - wz[i], net = sqrtf(nx * nx + nz * nz);
             for (k = 0; k < 15; k++) { gsum += gm[k]; s1 += src[k][1]; s2 += src[k][2]; s3 += src[k][3]; }
@@ -1178,6 +1255,22 @@ void vr_camera(void)
     vr_mat_mul(frame_W, Wg, rec);   /* local -> world */
     memcpy(frame_Wg, Wg, sizeof(Wg));
 
+    {   /* A permanent camera jump detector (vr_debug_log): the head's place in the world moving more than 0.3 m in ONE game frame (a run is 0.105 m) -
+           logged with the state around it, at most 80 times: the next camera problem shows up in the log without a special trace. */
+        extern int g_vr_debug_log;
+        static float lx, lz;
+        static int have, nj;
+        float sc = g_vr_scale / 10.0f, cx = Wg[0] * h.px + Wg[4] * h.py + Wg[8] * h.pz + Wg[12], cz = Wg[2] * h.px + Wg[6] * h.py + Wg[10] * h.pz + Wg[14];
+        if (g_vr_debug_log && have && plp && nj < 80) {
+            float dx = (cx - lx) / sc, dz = (cz - lz) / sc, d = sqrtf(dx * dx + dz * dz);
+            if (d > 0.3f) {
+                nj++;
+                vr_log("vr-diag: CAMERA JUMP %.2f m in one game frame (%+.2f %+.2f): stairs %d, mode %d/%d/%d, base %.2f %.2f, player %.2f %.2f, follow %+.3f %+.3f, steady_reset %d\n",
+                       d, dx, dz, on_stairs, plp->mode0, plp->mode1, plp->mode2, base[0] / sc, base[2] / sc, plp->px / sc, plp->pz / sc, frame_follow[0] / sc, frame_follow[1] / sc, steady_reset);
+            }
+        }
+        lx = cx; lz = cz; have = 1;
+    }
     /* camera: the head's position and orientation in the world */
     cam.px = Wg[0] * h.px + Wg[4] * h.py + Wg[8] * h.pz + Wg[12];
     cam.py = Wg[1] * h.px + Wg[5] * h.py + Wg[9] * h.pz + Wg[13];
@@ -1230,6 +1323,7 @@ int vr_walk_at_once(void)
    weapons a frame at the old heading - a ghost) */
 /* vr133: running as Call of Duty - one click of the left stick while walking forward runs until the stick stops
    pushing forward (let go, sideways or back) or it is clicked again */
+#define RUN_STOP_MS 500   /* the run is let go after this long really stopped (the controller's stick dips last 12 ms median, 57 ms at most in the log; the user asked for half of the first 1 s) */
 static void sprint_update(void)
 {
     static int was;
@@ -1242,7 +1336,21 @@ static void sprint_update(void)
         sprint_on = fwd ? !sprint_on : 0;
         if (g_vr_debug_log) vr_log("vr-diag: run %s (stick %.2f %.2f)\n", sprint_on ? "on" : "off", in.lx, in.ly);
     }
-    if (!fwd) sprint_on = 0;
+    {   /* the run lasts while the stick pushes: it is let go only after she has really stopped for a second - the stick not forward for a second, or
+           (pushing) she has not got anywhere for a second (a wall): then it takes a click again. Not at once at a dip of the controller's stick (a log:
+           forward 0.98 -> 0.31 -> 0.15 -> back cancelled it - she walked slowly, 0.04 m a step against 0.105, until the next click). */
+        static uint64_t t_nofwd, t_still;
+        static float lx, lz;
+        uint64_t now = SDL_GetTicks();
+        float s = g_vr_scale / 10.0f, mv = plp ? sqrtf((plp->px - lx) * (plp->px - lx) + (plp->pz - lz) * (plp->pz - lz)) / (s > 0 ? s : 1.0f) : 1.0f;
+        if (plp) { lx = plp->px; lz = plp->pz; }
+        if (fwd) t_nofwd = 0; else if (!t_nofwd) t_nofwd = now;
+        if (!sprint_on || mv > 0.02f) t_still = 0; else if (!t_still) t_still = now;
+        if ((t_nofwd && now - t_nofwd >= RUN_STOP_MS) || (t_still && now - t_still >= RUN_STOP_MS)) {
+            if (sprint_on && g_vr_debug_log) vr_log("vr-diag: run off: %s for half a second%s", t_nofwd && now - t_nofwd >= RUN_STOP_MS ? "the stick not forward" : "she did not move", "\n");
+            sprint_on = 0; t_still = 0;
+        }
+    }
     was = click;
 }
 void vr_pad_frame(void) { sprint_update(); if (plp && vr_active) heading_update(); }

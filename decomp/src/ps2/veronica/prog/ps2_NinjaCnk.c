@@ -1,6 +1,3 @@
-#ifndef __ANDROID__
-#define RECVX_DIAG 1   /* TEMP: PC build with the Quest diagnostics (comparison run) */
-#endif
 #ifdef TARGET_PC
 #include "ee_asm.h"
 #endif
@@ -708,29 +705,6 @@ void njCnkSetCurrentDrawMode(unsigned int ulMode)
     pNaCnkCrntLighting = &NaCnkLighting[ulMode];
 }
 
-#if defined(__ANDROID__) || defined(RECVX_DIAG)
-/* Quest diagnosis (body parts missing, e.g. a man's arms in the first cell): the model clip test below throws a node
-   away when its sphere is outside the original camera's view; counted by side, every 600 culls. RECVX_NO_MODEL_CLIP=1
-   (env.txt) turns the test off */
-int g_and_trace;   /* set by MdlPut.c for one character's draw: its nodes log what they draw */
-static int and_noclip(void)
-{
-    static int v = -1;
-    if (v < 0) { v = getenv("RECVX_NO_MODEL_CLIP") != NULL; printf("android: model clip test %s\n", v ? "OFF" : "on"); }
-    return v;
-}
-static void and_cull(int why)
-{
-    static unsigned n[7], total, calls;
-    n[why]++; total++;
-    if (++calls % 300 == 0)
-        printf("android: model clip culled %u (sphere: near %u, far %u, left %u, right %u, top %u, bottom %u; all vertices outside one plane (VU0 clip flag) %u)\n", total, n[0], n[1], n[2], n[3], n[4], n[5], n[6]);
-}
-#else
-#define and_cull(why) ((void)0)
-#define and_noclip() 0
-#endif
-
 // 99.55% matching
 #ifdef TARGET_PC
 /* every chunk model draw is tagged for the renderer's frame interpolation */
@@ -757,12 +731,8 @@ int njCnkDrawModelLocal(NJS_CNK_MODEL* pModel)
     float temp, temp2; // not from the debugging symbols
 
     modelclipflag = 0;
-#if defined(__ANDROID__) || defined(RECVX_DIAG)
-    extern unsigned g_and_nstrip_calls, g_and_nstrip_verts, g_and_gsn_calls, g_and_gsn_verts;
-    const unsigned and_c0 = g_and_nstrip_calls, and_v0 = g_and_nstrip_verts, and_g0 = g_and_gsn_calls, and_gv0 = g_and_gsn_verts;
-#endif
     
-    if (ulNaCnkFlagModelClip != 0 && !and_noclip()) 
+    if (ulNaCnkFlagModelClip != 0) 
     {
         temp = pModel->r;
         
@@ -772,12 +742,12 @@ int njCnkDrawModelLocal(NJS_CNK_MODEL* pModel)
             
             if ((Center.z + temp) < _fNaViwClipNear) 
             {
-                { and_cull(0); return 0; }
+                return 0;
             }
             
             if (_fNaViwClipFar < (Center.z - temp))
             {
-                { and_cull(1); return 0; }
+                return 0;
             }
             
             fZ = fabsf(_nj_screen_.dist / Center.z);
@@ -791,24 +761,24 @@ int njCnkDrawModelLocal(NJS_CNK_MODEL* pModel)
             
             if ((fSX + fRW) < -fNaViwHalfW) 
             {
-                { and_cull(2); return 0; }
+                return 0;
             }
             
             if (fNaViwHalfW < (fSX - fRW)) 
             {
-                { and_cull(3); return 0; }
+                return 0;
             }
             
             fSY = Center.y * fZ;
             
             if ((fSY + fRH) < -fNaViwHalfH) 
             {
-                { and_cull(4); return 0; }
+                return 0;
             }
             
             if (fNaViwHalfH < (fSY - fRH)) 
             {
-                { and_cull(5); return 0; }
+                return 0;
             }
         }
     }
@@ -840,46 +810,26 @@ int njCnkDrawModelLocal(NJS_CNK_MODEL* pModel)
     
     njPopMatrixEx();
     
-    if ((modelclipflag != 0) && (Vu0ClipFlag != 0))
+    if ((modelclipflag != 0) && (Vu0ClipFlag != 0)) 
     {
-        and_cull(6);
-        if (!and_noclip())
-        {
-            return 1;
-        }
-    }
-
-    if ((Ps2_njControl3D_flag & 0x8000))
+        return 1;  
+    } 
+    
+    if ((Ps2_njControl3D_flag & 0x8000)) 
     {
         njColorBlendingModeSys(lNaCnkSrcBlendMode, lNaCnkDstBlendMode);
     }
-
-#if defined(__ANDROID__) || defined(RECVX_DIAG)
-    char and_tb[160]; int and_to = 0;
-    and_tb[0] = 0;
-#endif
+    
     pCnk = (CHUNK_HEAD*)pModel->plist;
-
-    if (pCnk != NULL)
+    
+    if (pCnk != NULL) 
     {
-        while (pCnk->ucType != 0xFF)
+        while (pCnk->ucType != 0xFF) 
         {
-            
-#if defined(__ANDROID__) || defined(RECVX_DIAG)
-            if (g_and_trace && and_to < 150) and_to += snprintf(and_tb + and_to, sizeof(and_tb) - (size_t)and_to, " %u", (unsigned)pCnk->ucType);
-#endif
             pCnk = pCnkFuncTbl[pCnk->ucType](pCnk);
         }
     }
-
     
-#if defined(__ANDROID__) || defined(RECVX_DIAG)
-    if (g_and_trace)
-        printf("android: node model r %.1f vlist type %u index %u+%u size %u (buffer max %d), plist types:%s | native strips recorded %u (%u vertices), drawn on the render thread %u (%u vertices)\n", (double)pModel->r,
-               pModel->vlist ? (unsigned)((CHUNK_HEAD*)pModel->vlist)->ucType : 0u,
-               pModel->vlist ? (unsigned)((unsigned short*)pModel->vlist)[2] : 0u, pModel->vlist ? (unsigned)((unsigned short*)pModel->vlist)[3] : 0u,
-               pModel->vlist ? (unsigned)((unsigned short*)pModel->vlist)[1] : 0u, iNaCnkVerBufMax, pModel->plist ? and_tb : " (none)", g_and_nstrip_calls - and_c0, g_and_nstrip_verts - and_v0, g_and_gsn_calls - and_g0, g_and_gsn_verts - and_gv0);
-#endif
     return 1;
 }
 

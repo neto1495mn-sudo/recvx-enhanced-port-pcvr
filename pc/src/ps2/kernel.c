@@ -86,7 +86,26 @@ void ps2_wait_vblank(void)
     uint64_t target;
     extern unsigned char NowLoadDisp;   /* (system.c: the game is loading a room behind a black screen) */
     prof_push(PROF_WAIT);
+#ifdef __ANDROID__
+    {   /* Quest: RM_0200 and RM_0220 (the user's report: "the game freezes and the VR gets heavy") left this flag set - the game ran at ~420 frames a
+           second behind the black screen (the log: 420 empty frames a second, the headset getting 10 images a second, each wait ~100 ms) and
+           never came out of it. A real room load is over in under a second; past 2.5 s the pacing is back (30 frames a second), once per episode logged. */
+        static uint64_t since;
+        static int logged;
+        uint64_t t = SDL_GetTicksNS();
+        if (NowLoadDisp) {
+            if (!since) { since = t; logged = 0; }
+            if (g_fast_doors && t - since < 2500000000ull) next_vblank_ns = t;
+            else if (!logged) {
+                extern void host_log(const char*, ...);
+                logged = 1;
+                host_log("kernel: the room-load flag has been set for %.1f s: the game is paced again (30 frames a second)\n", (double)(t - since) * 1e-9);
+            }
+        } else since = 0;
+    }
+#else
     if (g_fast_doors && NowLoadDisp) next_vblank_ns = SDL_GetTicksNS();   /* no pacing: nothing is shown */
+#endif
     if (!next_vblank_ns) next_vblank_ns = SDL_GetTicksNS() + NTSC_VBLANK_NS;
     target = next_vblank_ns;
     for (;;) {

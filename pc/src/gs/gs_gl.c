@@ -1,6 +1,3 @@
-#ifndef __ANDROID__
-#define RECVX_DIAG 1   /* TEMP: PC build with the Quest diagnostics (comparison run) */
-#endif
 /*
  * GS rasterization on OpenGL 3.3.
  *
@@ -33,6 +30,9 @@
 extern SDL_Window* g_window;
 
 /* ---------------- configuration ---------------- */
+#ifdef __ANDROID__
+static float and_dyn_scale;   /* dynamic resolution (and_dyn_res_update): 0 = the cap */
+#endif
 static float g_scale = 2.0f;        /* internal resolution multiplier */
 static int   g_margin_x = 0;        /* extra GS pixels on each side (widescreen) */
 
@@ -75,8 +75,8 @@ static unsigned and_x_frames, and_x_free, and_x_tex, and_x_mem, and_x_cap;
 int g_and_exec_nodraw;
 static int and_nodraw_block;
 static unsigned and_nodraw_frames, and_nodraw_draws;
-static int and_opt1 = 0;   /* off: with it the game frames ran in bunches (the log: 443 late and 1265 bunched in 188 s, against 25 and 184 without) */
-int gs_exec_nodraw_ok(void) { return and_opt1 && !and_nodraw_block; }
+static int and_opt1 = 0;   /* set in gs_exec_nodraw_ok: on by default, every game frame (RECVX_OPT1=0 off, 1 the old 3 in 4, which ran the frames in bunches: 443 late and 1265 bunched in 188 s) */
+int gs_exec_nodraw_ok(void) { static int e = -1; if (e < 0) { e = SDL_getenv("RECVX_OPT1") ? SDL_atoi(SDL_getenv("RECVX_OPT1")) != 0 : 1; and_opt1 = e; } return and_opt1 && !and_nodraw_block; }
 #endif
 typedef struct {
     int used;
@@ -96,6 +96,10 @@ static RenderTarget rts[MAX_RT];
 enum { FIRST_NONE, FIRST_COVER, FIRST_READ };
 static struct { int how, x0, y0, x1, y1; } first[MAX_RT];   /* COVER: area overwritten (physical pixels, x0..x1-1) */
 static uint64_t frame_no;
+static int walk_smooth_on(void);
+static void walk_smooth(const void* cur, const float dl[3], float t, float out[3]);
+static void walk_smooth_reset(void);
+
 static uint32_t stat_prims, stat_flushes, stat_reloads, stat_decodes, stat_decode_px;
 #ifdef __ANDROID__
 AndStall g_and_stall;
@@ -516,6 +520,7 @@ static void and_persistent_init(void)   /* the vertex stream's buffer replaced b
     typedef void (GLAPIENTRY *PFN_storage)(GLenum, GLsizeiptr, const void*, GLbitfield);
     PFN_storage storage = (PFN_storage)SDL_GL_GetProcAddress("glBufferStorageEXT");
     PFN_and_map map = (PFN_and_map)SDL_GL_GetProcAddress("glMapBufferRange");
+    { extern int g_and_twopass_merge; if (SDL_getenv("RECVX_NO_TWOPASS_MERGE")) g_and_twopass_merge = 0; host_log("android: two-pass batches merged: %s\n", g_and_twopass_merge ? "on" : "off (RECVX_NO_TWOPASS_MERGE)"); }
     if (SDL_getenv("RECVX_DBG_NORING")) { host_log("android: vertex ring OFF (RECVX_DBG_NORING): per-batch uploads\n"); return; }
     const char* ext = (const char*)glGetString(0x1F03 /* GL_EXTENSIONS */);
     const GLbitfield fl = 0x0002 /* MAP_WRITE */ | 0x0040 /* MAP_PERSISTENT */ | 0x0080 /* MAP_COHERENT */;
@@ -835,6 +840,40 @@ static void and_foveate(GLuint tex)   /* (tex bound to GL_TEXTURE_2D, before it 
 }
 /* (and_fov_next: ensure_target's next new target is drawn into - a shadow -, foveate it) */
 #endif
+#ifdef __ANDROID__
+/* Dynamic resolution (Quest). The log of a real session: with the headset worn the 3D images saturated the GPU (the headset hardly waited -
+   xrWaitFrame ~1.5 ms against ~10.6 -, the eye image blocked ~3 ms on the swapchain, display time 49 ms ahead, a game frame in two bunched), while the
+   same scene at the same scale ran clean on a headset not worn - so the scale cannot be fixed. Once a second xr_timing_log gives the wait: under
+   4.5 ms for 3 s = overloaded, one step down (0.25, to 1.25); plenty of wait for 8 s, one step up (to the cap). The scale is read at each game frame
+   (gs_set_scale). RECVX_DYN_RES=0 off; RECVX_DYN_FORCE=<scale> starts there (test). */
+void and_dyn_res_update(double wait_ms, unsigned images, double acquire_ms)
+{
+    static int on = -1, bad, good, settle, ups_wait = 8;
+    static uint64_t last_up_s, now_s;
+    float cap = g_config.scale > 0 ? (float)g_config.scale : 2.0f, eff;
+    if (on < 0) {
+        const char* f = SDL_getenv("RECVX_DYN_FORCE");
+        on = SDL_getenv("RECVX_DYN_RES") && SDL_atoi(SDL_getenv("RECVX_DYN_RES")) != 0;   /* off by default: it did not change the stutter (the worn log), only the sharpness */
+        if (f && SDL_atof(f) > 0.5) { and_dyn_scale = (float)SDL_atof(f); host_log("android: dynamic resolution: forced to %.2f\n", and_dyn_scale); }
+    }
+    now_s++;
+    if (!on || !xr_active() || !g_vr_stereo || images < 50) { bad = good = 0; return; }
+    if (settle > 0) { settle--; return; }
+    eff = and_dyn_scale > 0.0f ? and_dyn_scale : cap;
+    if (wait_ms < 4.5) { bad++; good = 0; } else if (wait_ms > 8.0 && acquire_ms < 0.5) { good++; bad = 0; } else { bad = 0; }
+    if (bad >= 3 && eff > 1.25f) {
+        float n = eff - 0.25f;
+        if (last_up_s && now_s - last_up_s < 60) ups_wait = 90;   /* it went back down soon after going up: wait longer next time */
+        host_log("android: dynamic resolution: %.2f -> %.2f (headset wait %.1f ms, swapchain wait %.1f ms)\n", eff, n, wait_ms, acquire_ms);
+        and_dyn_scale = n; bad = good = 0; settle = 4;
+    } else if (good >= ups_wait && and_dyn_scale > 0.0f) {
+        float n = eff + 0.25f;
+        host_log("android: dynamic resolution: %.2f -> %.2f (the headset waits %.1f ms: room to spare)\n", eff, n, wait_ms);
+        and_dyn_scale = n >= cap ? 0.0f : n; bad = good = 0; settle = 4; last_up_s = now_s;
+    }
+}
+#endif
+
 /* internal resolution: the configured multiplier, or (auto) enough to cover the window */
 float gs_wanted_scale(void)
 {
@@ -849,6 +888,7 @@ float gs_wanted_scale(void)
         {   /* Quest (on the headset's own GPU): at most 2x, or recvx.ini's scale when set - 4x took over 100 ms a frame */
             float cap = g_config.scale > 0 ? (float)g_config.scale : 2.0f;
             if (s > cap) s = cap;
+            if (and_dyn_scale > 0.0f && and_dyn_scale < s) s = and_dyn_scale;   /* (the dynamic resolution, below) */
         }
 #endif
         return s < 1.0f ? 1.0f : s > 8.0f ? 8.0f : s;
@@ -1716,6 +1756,8 @@ static unsigned and_defer_n, and_defer_no[9];
 /* draws ended by a state change, per cause (0 executed frame, 1 replays): logged by and_flush_why_log */
 static unsigned and_flush_why[2][14], and_flush_epoch_only[2];
 static uintptr_t and_fl_ra[2][24];
+int g_and_twopass_merge = 1;   /* primitives of one two-pass (alpha-test fail) state share a batch: all first passes, then all second passes (soft edges of a later primitive may blend over an earlier one's); RECVX_NO_TWOPASS_MERGE=1 off */
+static unsigned and_twopass_n[2][4];   /* batches drawn in two passes (alpha-test fail also writes): [replay][AFAIL] */
 static unsigned and_epoch_merged;   /* replay draws kept going over an epoch change (batch_for) */
 static unsigned and_fl_n[2][24];
 void and_flush_why_log(void)
@@ -1747,7 +1789,9 @@ void and_flush_why_log(void)
                 and_fl_n[r][best] = 0;
             }
             host_log("android: draws ended last second (%s): %u, by %s\n", r ? "the eyes' replays" : "game frames", t2, q ? c : "none");
-            if (r) { host_log("android: replay draws kept going over a texture upload (same texture): %u\n", and_epoch_merged); and_epoch_merged = 0; }
+            if (r) { host_log("android: replay draws kept going over a texture upload (same texture): %u\n", and_epoch_merged); and_epoch_merged = 0;
+                       host_log("android: two-pass batches last second (alpha-test fail also writes): game frames AFAIL 1/2/3 = %u/%u/%u, replays %u/%u/%u\n", and_twopass_n[0][1], and_twopass_n[0][2], and_twopass_n[0][3], and_twopass_n[1][1], and_twopass_n[1][2], and_twopass_n[1][3]);
+                       memset(and_twopass_n, 0, sizeof(and_twopass_n)); }
             memset(and_fl_ra[r], 0, sizeof(and_fl_ra[r])); memset(and_fl_n[r], 0, sizeof(and_fl_n[r]));
         }
         memset(and_flush_why[r], 0, sizeof(and_flush_why[r])); and_flush_epoch_only[r] = 0;
@@ -1855,6 +1899,13 @@ static int and_mv_slot_of(const void* rtp)
     int i = (int)(rt - rts);
     return i >= 0 && i < MAX_RT ? i : -1;
 }
+/* the two-layer scene targets' format: RGBA16F (the GS's alpha up to 2.0), or RGBA8, the default (half the memory traffic: the headset missed 75 refreshes in 30 s with 16F, 8 with 8 bits); RECVX_MV8=0 for 16F */
+static GLenum and_mv_fmt(void)
+{
+    static int f = -1;
+    if (f < 0) f = SDL_getenv("RECVX_MV8") && SDL_atoi(SDL_getenv("RECVX_MV8")) == 0 ? 0 : 1;
+    return f ? 0x8058 /* GL_RGBA8 */ : GL_RGBA16F;
+}
 static int and_mv_target(int i, int pw, int ph)   /* slot i's 2-layer target of that size (1: ready) */
 {
     AndMvT* t = &and_mvt[i];
@@ -1864,7 +1915,7 @@ static int and_mv_target(int i, int pw, int ph)   /* slot i's 2-layer target of 
     and_mvnat = 0;
     glGenTextures(1, &t->tex);
     glBindTexture(0x8C1A /* GL_TEXTURE_2D_ARRAY */, t->tex);
-    and_ts3d(0x8C1A, 1, GL_RGBA16F, pw, ph, 2);
+    and_ts3d(0x8C1A, 1, and_mv_fmt(), pw, ph, 2);
     if (and_fov > 0) {   /* foveated, per layer at that eye's lens centre (and_mv_foveate) */
         glTexParameteri(0x8C1A, AND_FOV_BITS, 0x1 | 0x2);
         glTexParameterf(0x8C1A, AND_FOV_MIN, 0.5f);
@@ -1885,7 +1936,7 @@ static int and_mv_target(int i, int pw, int ph)   /* slot i's 2-layer target of 
         glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
         glClearColor(0, 0, 0, 0);
         glClear(GL_COLOR_BUFFER_BIT);
-        and_tview(t->view[k], GL_TEXTURE_2D, t->tex, GL_RGBA16F, 0, 1, (GLuint)k, 1);
+        and_tview(t->view[k], GL_TEXTURE_2D, t->tex, and_mv_fmt(), 0, 1, (GLuint)k, 1);
         glBindTexture(GL_TEXTURE_2D, t->view[k]);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
@@ -2573,13 +2624,20 @@ and_uploaded:
 #endif
     afail = (test >> 12) & 3;
     if (two_pass(test)) {
+#ifdef __ANDROID__
+        and_twopass_n[gs_replaying ? 1 : 0][afail & 3]++;
+#endif
         /* alpha-test fail still writes some buffers: second pass for failing pixels */
         draw_batch(0);
         glDepthMask(GL_FALSE);
         if (afail == 2) glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
         if (afail == 3) glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_FALSE);
         if (afail == 2) glDepthMask(GL_TRUE);
+#ifdef __ANDROID__
+        { static int np2 = -1; if (np2 < 0) np2 = SDL_getenv("RECVX_DBG_NOPASS2") != NULL; if (!np2) draw_batch(1); }
+#else
         draw_batch(1);
+#endif
     } else {
         draw_batch(0);
     }
@@ -2914,14 +2972,8 @@ void gs_native_cache_begin(size_t nev)
 }
 
 /* draw n triangle vertices; ev >= 0: the executed frame's strip of that event (kept) */
-#if defined(__ANDROID__) || defined(RECVX_DIAG)
-unsigned g_and_gsn_calls, g_and_gsn_verts;   /* diagnosis: native strips drawn on the render thread */
-#endif
 void gs_draw_native(unsigned int prim, const NativeVertex* v, int n, long ev)
 {
-#if defined(__ANDROID__) || defined(RECVX_DIAG)
-    g_and_gsn_calls++; g_and_gsn_verts += (unsigned)n;
-#endif
     static GlVertex tmp[64 * 9];
     GlVertex* o = tmp;
     if (ev >= 0) {
@@ -4205,7 +4257,7 @@ static int present_vr_stereo_(const struct Frame* cur, float t)
     }
     {   /* vr67: walking moves the play space (W) once a game frame: in between, the play space at t
            (still scenery and characters move with the body at the headset's rate) */
-        const struct Frame* pf = g_vr_interpolate && t < 0.999f ? stream_prev_frame(cur) : NULL;
+        const struct Frame* pf = g_vr_interpolate && (t < 0.999f || walk_smooth_on()) ? stream_prev_frame(cur) : NULL;
         const VrView* pv = pf ? stream_frame_vr(pf) : NULL;
         float Wt[16], iWt[16], mv = 0.0f, zs = sqrtf(v->W[0] * v->W[0] + v->W[1] * v->W[1] + v->W[2] * v->W[2]);
         float dl[3];
@@ -4221,10 +4273,27 @@ static int present_vr_stereo_(const struct Frame* cur, float t)
                 steady = b2 < 1e-6f ? a2 < 0.25f * zs * zs * 0.01f : (ab > 0.7f * sqrtf(a2 * b2) && a2 > 0.25f * b2);
                 if (a2 < 1e-8f) steady = 1;   /* not moving */
             }
-            if (mv < 0.5f && steady) {   /* not a jump (a room change), not a wall */
+            if (walk_smooth_on() && mv < 0.5f) {   /* (steadiness no longer matters: the smoothing takes the uneven steps) */
+                float sh[3];
+                walk_smooth(cur, dl, t, sh);
+                memcpy(Wt, v->W, sizeof(Wt));
+                for (int k = 0; k < 3; k++) Wt[12 + k] -= sh[k];
+                if (vr_mat_invert(iWt, Wt)) use = 1;
+                if (use && SDL_getenv("RECVX_WALKTRACE")) host_log("walk-img: shift %.3f %.3f (units) behind the frame, t %.2f\n", sh[0], sh[2], t);
+            } else if (walk_smooth_on()) walk_smooth_reset();   /* a jump: start over */
+            else if (mv < 0.5f && steady) {   /* not a jump (a room change), not a wall */
                 memcpy(Wt, v->W, sizeof(Wt));
                 for (int k = 0; k < 3; k++) Wt[12 + k] -= (1.0f - t) * dl[k];
                 if (vr_mat_invert(iWt, Wt)) use = 1;
+            }
+        }
+        {   /* RECVX_WALKTRACE (test aid): one line per game frame - the body's step, whether it was smoothed and why not */
+            static int wt = -1; static uint64_t wt_last;
+            if (wt < 0) wt = SDL_getenv("RECVX_WALKTRACE") != NULL;
+            if (wt && pv && pv->valid && frame_no != wt_last) {
+                float a2 = 0.0f, b2 = 0.0f; for (int k = 0; k < 3; k++) { a2 += v->step[k] * v->step[k]; b2 += v->step_prev[k] * v->step_prev[k]; }
+                wt_last = frame_no;
+                if (mv > 0.0005f || a2 > 1e-8f) host_log("walk: frame %llu step %.3f m (game %.3f, prev %.3f) steady %d use %d t %.2f\n", (unsigned long long)frame_no, mv, sqrtf(a2), sqrtf(b2), steady, use, t);
             }
         }
         {   /* VR diagnosis (vr_debug_log) */
@@ -4310,7 +4379,7 @@ static int present_vr_stereo_(const struct Frame* cur, float t)
     }
     float chT[16];
     int chars = 0;
-    if (g_vr_interpolate && t < 0.999f) {   /* in between two game frames: the characters at t */
+    if (g_vr_interpolate && (t < 0.999f || t > 1.001f)) {   /* in between two game frames (or a little past the newer one): the characters at t */
         const struct Frame* pf = stream_prev_frame(cur);
         const VrView* pv = pf ? stream_frame_vr(pf) : NULL;
         if (pv && pv->valid) {
@@ -4522,6 +4591,22 @@ static int present_vr_stereo_(const struct Frame* cur, float t)
                 }
                 vr_tm[3] += SDL_GetTicksNS() - tm0;
             }
+#ifdef __ANDROID__
+            if (e == 0 && SDL_getenv("RECVX_DUMP_EYE")) {   /* test aid: the left eye image (RECVX_DUMP_EYE=<dir>), a few, from image RECVX_DUMP_EYE_FROM */
+                static unsigned n_img, n_saved; static int from = -1;
+                if (from < 0) from = SDL_getenv("RECVX_DUMP_EYE_FROM") ? SDL_atoi(SDL_getenv("RECVX_DUMP_EYE_FROM")) : 1500;
+                if (++n_img >= (unsigned)from && n_saved < 3 && (n_img % 7) == 0) {
+                    SDL_Surface* es = SDL_CreateSurface(w, h, SDL_PIXELFORMAT_ABGR8888);
+                    char ep[1024];
+                    glBindFramebuffer(GL_READ_FRAMEBUFFER, vr_fbo);
+                    glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, es->pixels);
+                    SDL_snprintf(ep, sizeof(ep), "%s/eye_%u.bmp", SDL_getenv("RECVX_DUMP_EYE"), n_saved++);
+                    SDL_SaveBMP(es, ep);
+                    SDL_DestroySurface(es);
+                    host_log("android: eye image %u saved to %s\n", n_img, ep);
+                }
+            }
+#endif
             glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
             glBindFramebuffer(GL_FRAMEBUFFER, 0);
             fb_forget();
@@ -4552,6 +4637,46 @@ static int present_vr_stereo_(const struct Frame* cur, float t)
     return ok;
 }
 
+int g_vr_interp_now;     /* render.c: the frame shown is interpolated (matched with the previous one) */
+float g_vr_t_used = 1.0f;   /* the t of the image last shown (render.c logs the motion by it) */
+static int g_vr_clock_t = -1;   /* RECVX_VR_CLOCK=0: the old mix (the last image of a frame at a fixed t = 1) */
+
+/* The walking shown smoothed: the body's step per game frame is uneven (0 then double, a short step among full ones: the game's wall check, a
+   frame that moved less), and gliding each frame's own step makes that a 30 Hz hitch - the world pulled back for a moment. The displayed
+   position follows the frames' position by its own smoothed speed (steady walking: no lag at all) with a gentle pull to the true position.
+   RECVX_WALK_SMOOTH=0: the old glide. Positions in game units, relative to the frame shown: out = how far behind it the world is shown. */
+static int walk_smooth_on(void)
+{
+    static int f = -1;
+    if (f < 0) f = SDL_getenv("RECVX_WALK_SMOOTH") && SDL_atoi(SDL_getenv("RECVX_WALK_SMOOTH")) == 0 ? 0 : 1;
+    return f;
+}
+static void walk_smooth_reset(void);
+static struct { const void* cur; uint64_t fno; float Q[3], S[3], vs[3]; int valid; uint64_t ns; } ws_st;
+static void walk_smooth_reset(void) { memset(&ws_st, 0, sizeof(ws_st)); }
+static void walk_smooth(const void* cur, const float dl[3], float t, float out[3])
+{
+    extern double g_vr_frame_period;
+    uint64_t now = SDL_GetTicksNS();
+    float dt = ws_st.ns ? (float)(now - ws_st.ns) * 1e-9f : 0.0f, P = g_vr_frame_period > 1e6 ? (float)(g_vr_frame_period * 1e-9) : 0.0334f;
+    float Pt[3];
+    ws_st.ns = now;
+    if (dt > 0.05f) dt = 0.05f;
+    if (cur != ws_st.cur || frame_no != ws_st.fno) {   /* a new game frame: its step joins the position, and the speed */
+        float a = 1.0f - expf(-P / 0.07f);
+        for (int k = 0; k < 3; k++) { ws_st.Q[k] += dl[k]; ws_st.vs[k] += (dl[k] / P - ws_st.vs[k]) * a; }
+        ws_st.cur = cur; ws_st.fno = frame_no;
+    }
+    for (int k = 0; k < 3; k++) Pt[k] = ws_st.Q[k] - (1.0f - t) * dl[k];
+    if (!ws_st.valid) { memcpy(ws_st.S, Pt, sizeof(Pt)); ws_st.valid = 1; }
+    else {
+        float c = 1.0f - expf(-dt / 0.05f);
+        for (int k = 0; k < 3; k++) ws_st.S[k] += ws_st.vs[k] * dt + c * (Pt[k] - ws_st.S[k]);
+    }
+    for (int k = 0; k < 3; k++) out[k] = ws_st.Q[k] - ws_st.S[k];
+    if (SDL_getenv("RECVX_WALKTRACE")) host_log("walk-pos: old %.4f %.4f smoothed %.4f %.4f\n", Pt[0], Pt[2], ws_st.S[0], ws_st.S[2]);
+}
+
 /* VR present: one headset frame. Stereo when the frame has a VR camera, else the cinema
    screen (the window image as usual). The window always mirrors. */
 static uint64_t gs_present_vr(const struct Frame* cur, float t)
@@ -4564,8 +4689,66 @@ static uint64_t gs_present_vr(const struct Frame* cur, float t)
     if (fr == 1) {   /* vr123: an in-between image at the time the headset shows it (after its wait), not by
                         counting images - a headset image shown late no longer holds the turn back */
         extern double g_vr_frame_ref, g_vr_frame_period;
-        double tc = g_vr_frame_period > 1e6 ? ((double)SDL_GetTicksNS() - g_vr_frame_ref) / g_vr_frame_period : 1.0;
-        if (t < 1.0f) t = tc < 0.0 ? 0.0f : tc > 1.0 ? 1.0f : (float)tc;
+        double tn = (double)SDL_GetTicksNS();
+        {   /* the time the headset SHOWS this image (OpenXR display time, evenly spaced) in our clock, not when its wait returned
+               (that came bunched when we ran behind: the same game time over two images, then a jump) */
+            static double off;   /* display time - our clock, smoothed */
+            static int have_off;
+            int64_t dsp = xr_display_time_ns();
+            if (dsp > 0 && SDL_getenv("RECVX_VR_DISPLAYCLOCK") == NULL) {
+                double x = (double)dsp - tn;
+                if (!have_off || fabs(x - off) > 20e6) { off = x; have_off = 1; } else off += 0.02 * (x - off);
+                tn = (double)dsp - off;
+            }
+        }
+        double tc = g_vr_frame_period > 1e6 ? (tn - g_vr_frame_ref) / g_vr_frame_period : 1.0;
+        {   /* The game time advances by the exact distance between the headset's display times (always regular), and is only gently pulled to the
+               clock above by the frames' arrival: when the headset changed how far ahead it shows (28 -> 40 ms in the log, every ~8 s) the clock above,
+               smoothed against that distance, was wrong for a moment - 4-9 images a second off their time, the walking "pulled".
+               RECVX_VR_PLL=0: the clock above alone. */
+            extern uint64_t g_vr_frame_seq;
+            static double phi;
+            static uint64_t seq0;
+            static int64_t d0;
+            static int pll = -1, have;
+            int64_t dsp = xr_display_time_ns();
+            if (pll < 0) pll = !(SDL_getenv("RECVX_VR_PLL") && SDL_atoi(SDL_getenv("RECVX_VR_PLL")) == 0);
+            static double bias = -1.0;
+            if (bias < -0.5) { const char* e = SDL_getenv("RECVX_VR_BIAS"); bias = e ? SDL_atof(e) : 0.25; }   /* (the frames arrive at phase ~0.75 of this clock: aligned to ~1.0) */
+            if (pll && dsp > 0 && g_vr_frame_period > 1e6) {
+                double tcb = tc + bias;
+                if (!have || g_vr_frame_seq < seq0) { phi = tcb; have = 1; seq0 = g_vr_frame_seq; }
+                else {
+                    double step = dsp > d0 && dsp - d0 < 60000000 ? (double)(dsp - d0) / g_vr_frame_period : 0.0;
+                    double err;
+                    phi += step;
+                    if (g_vr_frame_seq != seq0) { phi -= (double)(g_vr_frame_seq - seq0); if (g_vr_frame_seq - seq0 > 1) phi = tcb; seq0 = g_vr_frame_seq; }
+                    err = tcb - phi;
+                    if (fabs(err) > 0.5) phi = tcb; else phi += 0.04 * err;
+                }
+                if (SDL_getenv("RECVX_PLL_TRACE")) { static unsigned nn; if (SDL_GetTicks() > 14000 && nn++ < 900) host_log("pll: dsp-d0 %.2f ms seq %llu phi %.3f tc_old %.3f%s", (double)(dsp - d0) / 1e6, (unsigned long long)g_vr_frame_seq, phi, tc, "\n"); }
+                d0 = dsp;
+                tc = phi;
+            } else have = 0;
+        }
+        if (g_vr_clock_t < 0) g_vr_clock_t = SDL_getenv("RECVX_VR_CLOCK") ? SDL_atoi(SDL_getenv("RECVX_VR_CLOCK")) != 0 : 1;
+        /* every image of an interpolated frame by the clock (the last one of three was a fixed t = 1 while the others were
+           the clock's: the world's steps came uneven, a stop then a jump, 30 times a second) */
+        {   /* t may go a little past 0 and 1 (RECVX_VR_MARGIN, default 0.3; 0 = clamped as before): a game frame arrives a few ms early or late (its
+               execution takes 1-6 ms in RM_3210) and the clock reached t = 1 / came back to t < 0 with the image held at the end of the range and then
+               a jump (the log: ~3 images a second "stopped" and 8-12 off their time). The pair is extrapolated by that little - the movement goes on
+               in the same direction. */
+            static double margin = -1.0;
+            if (margin < 0.0) { const char* e = SDL_getenv("RECVX_VR_MARGIN"); margin = e ? SDL_atof(e) : 0.3; if (margin > 0.5) margin = 0.5; }
+            if (g_vr_interp_now && g_vr_clock_t && margin > 0.0) {
+                t = tc < -margin ? (float)-margin : tc > 1.0 + margin ? (float)(1.0 + margin) : (float)tc;
+                g_vr_t_used = t;
+                goto t_done;
+            }
+        }
+        if (t < 1.0f || (g_vr_clock_t && g_vr_interp_now)) t = tc < 0.0 ? 0.0f : tc > 1.0 ? 1.0f : (float)tc;
+        t_done:
+        g_vr_t_used = t;
         vr_turn_t = tc < -0.5 ? -0.5f : tc > 1.5 ? 1.5f : (float)tc;   /* vr125: at most half a game frame ahead or behind */
     }
     {   /* vr141: the smooth turn by the headset's clock - the stick read each headset image, turned by the time since the last

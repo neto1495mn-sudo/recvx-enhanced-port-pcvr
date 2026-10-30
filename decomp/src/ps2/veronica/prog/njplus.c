@@ -1,6 +1,3 @@
-#ifndef __ANDROID__
-#define RECVX_DIAG 1   /* TEMP: PC build with the Quest diagnostics (comparison run) */
-#endif
 #ifdef TARGET_PC
 #include "ee_asm.h"
 #endif
@@ -1996,20 +1993,8 @@ void npInitCalcSkin(void* pwp, int obj_n, int* sknp)
 } 
 
 // 99.93% matching
-#if defined(__ANDROID__) || defined(RECVX_DIAG)
-/* Quest diagnosis (limbs drawn stretched or detached): after each skinned part, its vertices (16 bytes each, xyz checked)
-   and the bone matrices they were blended with, tested for NaN/Inf/absurd values; the log says which node, which matrix */
-static int np_skin_bad(const float* q, int n_vec)
-{
-    int bad = 0;
-    for (int k = 0; k < n_vec; k++, q += 4)
-        if ((q[0] != q[0]) || (q[1] != q[1]) || (q[2] != q[2]) || q[0] > 1e6f || q[0] < -1e6f || q[1] > 1e6f || q[1] < -1e6f || q[2] > 1e6f || q[2] < -1e6f) bad++;
-    return bad;
-}
-#endif
-
 void npCalcSkin(void* pwp, int obj_n, int* sknp)
-{
+{ 
     NJS_POINT4* p0;
     NJS_CNK_OBJECT* op;
     float lv;
@@ -2301,44 +2286,20 @@ void npCalcSkin(void* pwp, int obj_n, int* sknp)
                             p0 += 2; 
                             p1 += 8; 
                         }
-                    }
-
-#if defined(__ANDROID__) || defined(RECVX_DIAG)
-                    {
-                        static unsigned nparts, nbadparts, nlog;
-                        const float* v0 = (const float*)(pHdr1 + 1);
-                        const int nv = (int)(p1 - v0) / 4;
-                        const int bad = np_skin_bad(v0, nv);
-                        nparts++;
-                        if (nparts % 300 == 1) printf("android: skin parts %u (bad %u), last part: node %d of %d, %d vertices, nb %d\n", nparts, nbadparts, i, obj_n, nv, nb);
-                        if (bad) {
-                            nbadparts++;
-                            if (nlog++ < 40) {
-                                const float* m0 = (const float*)np.mxp[rg0][0];
-                                const float* m1 = (const float*)np.mxp[rg0][1];
-                                const float* s0 = (const float*)(pHdr0 + 1);
-                                printf("android: skin BAD node %d of %d: %d of %d vertices, nb %d, last matrix index %d (%p %p), "
-                                       "matrix0 %g %g %g %g | %g %g %g | t %g %g %g, matrix1 %g %g %g %g | t %g %g %g, source v0 %g %g %g %g, out v0 %g %g %g %g, parts %u bad %u\n",
-                                       i, obj_n, bad, nv, nb, rg0, (const void*)m0, (const void*)m1,
-                                       m0[0], m0[1], m0[2], m0[3], m0[4], m0[5], m0[6], m0[12], m0[13], m0[14],
-                                       m1[0], m1[1], m1[2], m1[3], m1[12], m1[13], m1[14],
-                                       s0[0], s0[1], s0[2], s0[3], v0[0], v0[1], v0[2], v0[3], nparts, nbadparts);
-                            }
-                        }
-                    }
-#endif
-                    *(int*)p1 = 255;
-                }
-                else
-                {
+                    } 
+                    
+                    *(int*)p1 = 255; 
+                } 
+                else 
+                { 
                     np.sknp++;
-                }
+                } 
             }
-        }
-
-        njPopMatrixEx();
+        } 
+    
+        njPopMatrixEx(); 
     }
-}
+} 
 
 // 100% matching!
 void npInitCalcSkinFM(void* pwp, int obj_n, int* sknp)
@@ -2462,9 +2423,6 @@ void npInitCalcSkinFM(void* pwp, int obj_n, int* sknp)
 } 
 
 // 99.93% matching
-#if defined(__ANDROID__) || defined(RECVX_DIAG)
-static unsigned and_fm_calls, and_fm_parts, and_fm_bad, and_fm_zero, and_fm_hist[40];   /* diagnosis: npCalcSkinFM (a man's arms in the first cell) */
-#endif
 void npCalcSkinFM(void* pwp, int obj_n, int* sknp)
 { 
     NJS_POINT4* p0;
@@ -2484,10 +2442,7 @@ void npCalcSkinFM(void* pwp, int obj_n, int* sknp)
     { 
         njPushMatrixEx(); 
 
-        npInitCalcSkinFM(pwp, obj_n, sknp);
-#if defined(__ANDROID__) || defined(RECVX_DIAG)
-        and_fm_calls++; for (int hi = 0; hi < 40; hi++) and_fm_hist[hi] = 0;
-#endif 
+        npInitCalcSkinFM(pwp, obj_n, sknp); 
         
         np.sknp = sknp; 
         
@@ -2538,9 +2493,6 @@ void npCalcSkinFM(void* pwp, int obj_n, int* sknp)
                             {
                                 rg0 += 4;
                             }
-#if defined(__ANDROID__) || defined(RECVX_DIAG)
-                            if (rg0 >= 0 && rg0 < 40) and_fm_hist[rg0]++;
-#endif
                             
                             if (lv != 1.0f) 
                             { 
@@ -2773,39 +2725,6 @@ void npCalcSkinFM(void* pwp, int obj_n, int* sknp)
                             }
                         } 
                         
-                        #if defined(__ANDROID__) || defined(RECVX_DIAG)
-                        {
-                            const float* v0 = (const float*)(pHdr1 + 1);
-                            const float* s0 = (const float*)(pHdr0 + 1);
-                            const int nv = (int)(p1 - v0) / 4;
-                            int bad = 0, zero = 0;
-                            for (int q = 0; q < nv; q++) {
-                                const float* v = v0 + 4 * q;
-                                if ((v[0] != v[0]) || (v[1] != v[1]) || (v[2] != v[2]) || v[0] > 1e6f || v[0] < -1e6f || v[1] > 1e6f || v[1] < -1e6f || v[2] > 1e6f || v[2] < -1e6f) bad++;
-                                else if (v[0] == 0.0f && v[1] == 0.0f && v[2] == 0.0f) zero++;
-                            }
-                            and_fm_parts++; and_fm_bad += (unsigned)bad; and_fm_zero += (unsigned)zero;
-                            if (and_fm_calls <= 2 || and_fm_calls % 90 == 0) {
-                                const float* m0 = (const float*)np.mxp[rg0][0];
-                                const float* m1 = (const float*)np.mxp[rg0][1];
-                                printf("android: skinFM call %u node %d of %d: nb %d, %d vertices (%d bad, %d zero), last matrix %d: m0 diag %g %g %g t %g %g %g | m1 diag %g %g %g t %g %g %g, src v0 %g %g %g, out v0 %g %g %g, totals parts %u bad %u zero %u\n",
-                                       and_fm_calls, i, obj_n, nb, nv, bad, zero, rg0, m0[0], m0[5], m0[10], m0[12], m0[13], m0[14],
-                                       m1[0], m1[5], m1[10], m1[12], m1[13], m1[14], s0[0], s0[1], s0[2], v0[0], v0[1], v0[2], and_fm_parts, and_fm_bad, and_fm_zero);
-                                for (int mi = 0; mi < 40; mi++) {
-                                    if (!and_fm_hist[mi]) continue;
-                                    for (int side = 0; side < 2; side++) {
-                                        const float* M = (const float*)np.mxp[mi][side];
-                                        float l0, l1, l2, det;
-                                        if (!M) { printf("android: skinFM mx[%d][%d] NULL (%u vertices)\n", mi, side, and_fm_hist[mi]); continue; }
-                                        l0 = M[0]*M[0] + M[1]*M[1] + M[2]*M[2]; l1 = M[4]*M[4] + M[5]*M[5] + M[6]*M[6]; l2 = M[8]*M[8] + M[9]*M[9] + M[10]*M[10];
-                                        det = M[0]*(M[5]*M[10] - M[6]*M[9]) - M[1]*(M[4]*M[10] - M[6]*M[8]) + M[2]*(M[4]*M[9] - M[5]*M[8]);
-                                        printf("android: skinFM call %u mx[%d][%d] %p used by %u vertices: row lengths^2 %.3f %.3f %.3f det %.3f t %.2f %.2f %.2f | r0 %.3f %.3f %.3f\n",
-                                               and_fm_calls, mi, side, (const void*)M, and_fm_hist[mi], l0, l1, l2, det, M[12], M[13], M[14], M[0], M[1], M[2]);
-                                    }
-                                }
-                            }
-                        }
-#endif
                         *(int*)p1 = 255; 
                     } 
                     else 

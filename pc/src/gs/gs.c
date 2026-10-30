@@ -164,7 +164,8 @@ void gs_upload_image(const uint8_t* src, uint32_t bytes) { stream_image(src, byt
    batch was set up with (gs_flush draws from that copy, not from these registers) and ends it only if it differs; a
    write that changes nothing the batch uses, or is changed back before the next primitive, no longer costs a draw
    (the log: ~40% of the draws were ended by register writes, the GL driver's cost is per draw) */
-static void flush_for(uint64_t old, uint64_t v) { (void)old; (void)v; if (gs_batch_two_pass()) gs_flush(); }
+extern int g_and_twopass_merge;   /* gs_gl.c: 1 = consecutive two-pass primitives of the same state share a batch */
+static void flush_for(uint64_t old, uint64_t v) { if (gs_batch_two_pass() && !g_and_twopass_merge) gs_flush();   /* (merged: batch_for ends the batch when the next primitive's state differs) */ }
 #else
 static void flush_for(uint64_t old, uint64_t v) { if (old != v || gs_batch_two_pass()) gs_flush(); }
 #endif

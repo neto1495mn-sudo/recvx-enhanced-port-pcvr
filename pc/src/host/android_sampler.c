@@ -64,6 +64,9 @@ void and_sampler_thread(int slot)
     struct itimerspec it = { { 0, 1000000 }, { 0, 1000000 } };
     timer_t t;
     sigset_t set;
+    static int enabled = -1;   /* 1 kHz of signals on the render and game threads and a symbol lookup every 20 s cost CPU on the critical thread: off unless RECVX_ANDROID_PROFILE is in env.txt */
+    if (enabled < 0) enabled = SDL_getenv("RECVX_ANDROID_PROFILE") != NULL;
+    if (!enabled) return;
     if (!installed) {
         struct sigaction sa;
         memset(&sa, 0, sizeof(sa));

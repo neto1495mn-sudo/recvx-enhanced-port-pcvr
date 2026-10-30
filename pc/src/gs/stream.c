@@ -1,6 +1,3 @@
-#ifndef __ANDROID__
-#define RECVX_DIAG 1   /* TEMP: PC build with the Quest diagnostics (comparison run) */
-#endif
 /*
  * GS command stream between the game thread and the render thread, and frame interpolation.
  *
@@ -229,9 +226,6 @@ static int clip_plane(const NativeVertex* in, int n, NativeVertex* out, int plan
 /* Native 3D strips are recorded as they come (PRIM attribute bits, len = vertex count, data
    in the pool), so a strip has the same vertices in every frame and an in-between frame can
    blend them one to one; culling and clipping happen when drawn (native_draw). */
-#if defined(__ANDROID__) || defined(RECVX_DIAG)
-unsigned g_and_nstrip_calls, g_and_nstrip_verts;   /* diagnosis: native strips recorded (a character node's report in ps2_NinjaCnk.c) */
-#endif
 int g_native_tag;                  /* game thread: the strips recorded now are a character's (game.c bhDrawEnemy) */
 static int native_tag_force = -1;  /* a deferred strip's own tag (native_marker) */
 void native_strip(unsigned int prim, const NativeVertex* v, int n)
@@ -240,9 +234,6 @@ void native_strip(unsigned int prim, const NativeVertex* v, int n)
     uint8_t tag = (uint8_t)(native_tag_force >= 0 ? native_tag_force : g_native_tag);   /* 1 character, 2/3 right/left hand (VR) */
     uint32_t len = (uint32_t)(n * sizeof(NativeVertex));
     if (n < 3) return;
-#if defined(__ANDROID__) || defined(RECVX_DIAG)
-    g_and_nstrip_calls++; g_and_nstrip_verts += (unsigned)n;
-#endif
     GROW(f->pool, f->npool, f->cpool, len);
     memcpy(f->pool + f->npool, v, len);
     GROW(f->ev, f->nev, f->cev, 1);
@@ -254,22 +245,6 @@ void native_strip(unsigned int prim, const NativeVertex* v, int n)
    (SingleMain) and the rest clipped against the near and far planes, as the VU1 SCISSOR
    routine does, so the GPU only ever gets vertices in front of the camera (w >= near > 0):
    how drivers clip primitives reaching behind the camera differs */
-#if defined(__ANDROID__) || defined(RECVX_DIAG)
-/* diagnosis (Quest vs PC, a character's parts missing): what native_draw is given and what it hands on, per 3 s */
-void host_log(const char* fmt, ...);
-static struct { unsigned strips, tris_in, tris_cull, tris_clipped, tris_out, strips_empty; } nd;
-static void nd_report(void)
-{
-    static uint64_t t0;
-    uint64_t now = SDL_GetTicksNS();
-    if (!t0) t0 = now;
-    if (now - t0 < 3000000000ull) return;
-    t0 = now;
-    host_log("diag native_draw per 3 s: strips %u, triangles in %u, dropped by the facing test %u, clipped %u, out %u, strips with nothing left %u\n",
-             nd.strips, nd.tris_in, nd.tris_cull, nd.tris_clipped, nd.tris_out, nd.strips_empty);
-    memset(&nd, 0, sizeof(nd));
-}
-#endif
 static void native_draw(unsigned int prim, const NativeVertex* v, int n, long ev)
 {
     NativeVertex tri[64 * 9];
@@ -278,48 +253,16 @@ static void native_draw(unsigned int prim, const NativeVertex* v, int n, long ev
     if (n > 64) n = 64;
     for (int i = 2; i < n; i += type == 3 ? 3 : 1) {
         const NativeVertex* t3[3] = { type == 5 ? &v[0] : &v[i - 2], &v[i - 1], &v[i] };
-#if defined(__ANDROID__) || defined(RECVX_DIAG)
-        nd.tris_in++;
-#endif
-        if ((t3[2]->cull & 2) || (t3[0]->cull & t3[1]->cull & t3[2]->cull & 1)) {
-#if defined(__ANDROID__) || defined(RECVX_DIAG)
-            nd.tris_cull++;
-            {
-                static unsigned ns;
-                if (ns < 30 && nd.tris_cull % 997 == 1) {
-                    ns++;
-                    host_log("diag dropped (facing test): prim %x n %d i %d ev %ld cull %02x %02x %02x w %g %g %g near_d %g %g %g far_d %g %g %g x %g y %g z %g\n",
-                             prim, n, i, ev, t3[0]->cull, t3[1]->cull, t3[2]->cull, t3[0]->w, t3[1]->w, t3[2]->w, t3[0]->near_d, t3[1]->near_d, t3[2]->near_d,
-                             t3[0]->far_d, t3[1]->far_d, t3[2]->far_d, t3[2]->x, t3[2]->y, t3[2]->z);
-                }
-            }
-#endif
-            continue;
-        }
+        if ((t3[2]->cull & 2) || (t3[0]->cull & t3[1]->cull & t3[2]->cull & 1)) continue;
         if (t3[0]->near_d >= 0 && t3[1]->near_d >= 0 && t3[2]->near_d >= 0 && t3[0]->far_d >= 0 && t3[1]->far_d >= 0 && t3[2]->far_d >= 0) {
             tri[m++] = *t3[0]; tri[m++] = *t3[1]; tri[m++] = *t3[2];
         } else {
             NativeVertex p0[3] = { *t3[0], *t3[1], *t3[2] }, p1[4], p2[5];
-#if defined(__ANDROID__) || defined(RECVX_DIAG)
-            nd.tris_clipped++;
-            {
-                static unsigned nc;
-                if (nc < 24 && nd.tris_clipped % 1999 == 1) {
-                    nc++;
-                    host_log("diag clipped: prim %x n %d i %d ev %ld cull %02x w %g %g %g near_d %g %g %g far_d %g %g %g\n",
-                             prim, n, i, ev, t3[2]->cull, t3[0]->w, t3[1]->w, t3[2]->w, t3[0]->near_d, t3[1]->near_d, t3[2]->near_d, t3[0]->far_d, t3[1]->far_d, t3[2]->far_d);
-                }
-            }
-#endif
             int k = clip_plane(p0, 3, p1, 0);
             k = k ? clip_plane(p1, k, p2, 1) : 0;
             for (int j = 2; j < k; j++) { tri[m++] = p2[0]; tri[m++] = p2[j - 1]; tri[m++] = p2[j]; }
         }
     }
-#if defined(__ANDROID__) || defined(RECVX_DIAG)
-    nd.strips++; nd.tris_out += (unsigned)(m / 3); if (!m) nd.strips_empty++;
-    nd_report();
-#endif
     if (m) gs_draw_native(prim, tri, m, ev);
 }
 
@@ -646,6 +589,12 @@ static const Frame* sort_frame;
 static int by_mesh(const void* a, const void* b)
 {
     uint32_t x = sort_frame->in[*(const uint32_t*)a].mesh, y = sort_frame->in[*(const uint32_t*)b].mesh;
+#ifdef __ANDROID__
+    if (x == y) {   /* (then by the number of groups: the neighbour search of stream_match takes the ones of the same structure) */
+        uint32_t gx = sort_frame->in[*(const uint32_t*)a].ng, gy = sort_frame->in[*(const uint32_t*)b].ng;
+        if (gx != gy) return gx < gy ? -1 : 1;
+    }
+#endif
     return x < y ? -1 : x > y ? 1 : (int)(*(const uint32_t*)a - *(const uint32_t*)b);
 }
 
@@ -692,10 +641,19 @@ static uint64_t gpos(const Frame* f, const Group* g, uint32_t v)
    rotating GS memory, so a mesh's texture address changes between frames; the tags
    identify the geometry. */
 static int32_t* pair; static size_t cap_pair;
+#ifdef __ANDROID__
+static unsigned long and_ip_calls, and_ip_groups, and_ip_verts;   /* inst_pair: calls, groups of b walked, vertices scored (a line a second in stream_match) */
+static uint64_t and_post_ns, and_search_ns;
+static size_t and_fail_lo = (size_t)-1; static unsigned and_fail_run;
+static unsigned long and_w_ok, and_w_exact, and_w_fall, and_w_none, and_w_rng, and_w_mrng, and_w_notused;
+#endif
 static long inst_pair(const Frame* p, const Inst* a, const Frame* c, const Inst* b)
 {
     int64_t sum = 0, n = 0, total = 0, near = 0;
     uint32_t j = 0;
+#ifdef __ANDROID__
+    and_ip_calls++; and_ip_groups += b->ng;
+#endif
     for (uint32_t k = 0; k < b->ng; k++) {
         const Group* g = &c->g[b->g0 + k];
 #ifdef __ANDROID__
@@ -714,6 +672,9 @@ static long inst_pair(const Frame* p, const Inst* a, const Frame* c, const Inst*
             if (h->key0 == g->key0 && h->nv == g->nv) {
                 pair[k] = (int32_t)(a->g0 + jj);
                 for (uint32_t v = 0; v < g->nv; v += step) {
+#ifdef __ANDROID__
+                    and_ip_verts++;
+#endif
                     uint64_t pa = gpos(p, h, v), pb = gpos(c, g, v);
                     long d;
                     if (pa == NO_POS || pb == NO_POS) { total--; n--; continue; }   /* no screen position: not judged */
@@ -778,6 +739,9 @@ int stream_match(const Frame* p, const Frame* c)
 {
     static uint32_t* order; static uint8_t* used; static size_t cap_order;
     size_t tagged[2] = { 0, 0 }, matched[2] = { 0, 0 }, no_inst = 0, unpaired = 0;   /* [1]: effects (odd tags, pc_effect_tag) */
+#ifdef __ANDROID__
+    uint64_t mt0 = SDL_GetTicksNS(), mt1 = 0, mt2 = 0;
+#endif
     matched_for = NULL;
     if (!p || !c || c->continuation || p->partial || (!c->nvx && !c->nin)) return 0;
     if (p->scene != c->scene) {
@@ -805,10 +769,19 @@ int stream_match(const Frame* p, const Frame* c)
     sort_frame = p;
     qsort(order, p->nin, sizeof(*order), by_mesh);
     memset(used, 0, p->nin);
+#ifdef __ANDROID__
+    mt1 = SDL_GetTicksNS();
+    and_fail_run = 0;
+    long walk_drift = 0;   /* where the last pair left off, relative to the instance index (the neighbours search below) */
+#endif
 
     for (size_t i = 0; i < c->nin; i++) {
         const Inst* b = &c->in[i];
         size_t lo = 0, hi = p->nin, best = (size_t)-1;
+#ifdef __ANDROID__
+        size_t last_m = (size_t)-1;   /* the candidate inst_pair scored last */
+        size_t scan_lo, scan_hi = (size_t)-1, cur_loN = (size_t)-1;   /* the full scan's range */
+#endif
         long best_d = 2 * JUMP + 1;
         int fx = b->mesh & 1;
         if (!b->ng) continue;
@@ -818,15 +791,76 @@ int stream_match(const Frame* p, const Frame* c)
             size_t m = (lo + hi) / 2;
             if (p->in[order[m]].mesh < b->mesh) lo = m + 1; else hi = m;
         }
+#ifdef __ANDROID__
+        scan_lo = lo;
+        {   /* Many instances of one mesh (RM_3210: 1615 instances, the log measured 17 ms a game frame here - 530 thousand inst_pair calls, 330 for each
+               instance, nearly all turned away at once for another structure). The candidates are sorted by (mesh, number of groups, index): the ones
+               of the same structure, and the instances come in drawing order, so the partner is almost always where the last pair left off - its
+               neighbours (6 each side) first; the whole scan only when none of them is near. */
+            size_t loN = lo, hiN, a2 = lo, b2 = p->nin;
+            while (a2 < b2) { size_t m = (a2 + b2) / 2; const Inst* q = &p->in[order[m]]; if (q->mesh < b->mesh || (q->mesh == b->mesh && q->ng < b->ng)) a2 = m + 1; else b2 = m; }
+            loN = a2; b2 = p->nin;
+            while (a2 < b2) { size_t m = (a2 + b2) / 2; const Inst* q = &p->in[order[m]]; if (q->mesh < b->mesh || (q->mesh == b->mesh && q->ng <= b->ng)) a2 = m + 1; else b2 = m; }
+            hiN = a2;
+            and_w_rng += hiN - loN; { size_t hm = lo; while (hm < p->nin && p->in[order[hm]].mesh == b->mesh) hm++; and_w_mrng += hm - lo; }
+            if (hiN > loN) {
+                long want = (long)i + walk_drift;
+                size_t pos;
+                a2 = loN; b2 = hiN;
+                while (a2 < b2) { size_t m = (a2 + b2) / 2; if ((long)order[m] < want) a2 = m + 1; else b2 = m; }
+                pos = a2;
+                for (int step = 0; step <= 6 && best_d; step++) {
+                    for (int sg = 0; sg < 2; sg++) {
+                        long m = sg ? (long)pos - step : (long)pos + step;
+                        const Inst* a;
+                        long d;
+                        if (step == 0 && sg) continue;
+                        if (m < (long)loN || m >= (long)hiN || used[m]) continue;
+                        a = &p->in[order[m]];
+                        d = inst_pair(p, a, c, b); last_m = (size_t)m;
+                        if (d >= 0 && d < best_d) { best_d = d; best = (size_t)m; }
+                        if (step == 0 && best != (size_t)-1 && best_d < 8 * 16) { and_w_exact++; goto chosen; }   /* the expected partner, within 8 px: that is it */
+                    }
+                }
+                if (best != (size_t)-1 && best_d < JUMP) { and_w_ok++; goto chosen; }   /* a near partner among the neighbours */
+                and_w_fall++;
+                cur_loN = loN;
+                if (hiN - loN > 200) {   /* a crowd of identical instances (the rain: ~1000, fast, no partner near its place): the full scan is not worth 1000 calls each -
+                                            only the 48 each side of the expected place, and after 3 failures in a row on this crowd, none until one succeeds */
+                    if (and_fail_lo == loN && and_fail_run >= 6) scan_hi = scan_lo;
+                    else { scan_lo = pos > loN + 96 ? pos - 96 : loN; scan_hi = pos + 96 < hiN ? pos + 96 : hiN; }
+                }
+            } else and_w_none++;
+        }
+#endif
+#ifdef __ANDROID__
+        for (size_t m = scan_lo; m < p->nin && m < scan_hi && p->in[order[m]].mesh == b->mesh && best_d; m++) {
+#else
         for (size_t m = lo; m < p->nin && p->in[order[m]].mesh == b->mesh && best_d; m++) {
+#endif
             const Inst* a = &p->in[order[m]];
             long d;
             if (used[m]) continue;
             d = inst_pair(p, a, c, b);
+#ifdef __ANDROID__
+            last_m = m;
+#endif
             if (d >= 0 && d < best_d) { best_d = d; best = m; }
         }
+#ifdef __ANDROID__
+    chosen:
+        if (best != (size_t)-1) walk_drift = (long)order[best] - (long)i;
+        if (cur_loN != (size_t)-1) {   /* (the crowd's failures in a row) */
+            if (best == (size_t)-1) { if (and_fail_lo == cur_loN) and_fail_run++; else { and_fail_lo = cur_loN; and_fail_run = 1; } }
+            else and_fail_run = 0;
+        }
+#endif
         if (best == (size_t)-1) { for (uint32_t k = 0; k < b->ng; k++) no_inst += c->g[b->g0 + k].nv; continue; }
         used[best] = 1;
+#ifdef __ANDROID__
+        uint64_t post0 = SDL_GetTicksNS();
+        if (last_m != best)   /* (the last one scored is the chosen one: its pairs are in place already) */
+#endif
         inst_pair(p, &p->in[order[best]], c, b);   /* the pairs of the chosen instance */
         {
             for (uint32_t k = 0; k < b->ng; k++) {
@@ -846,10 +880,22 @@ int stream_match(const Frame* p, const Frame* c)
                 matched[fx] += g->nv;
             }
         }
+#ifdef __ANDROID__
+        and_post_ns += SDL_GetTicksNS() - post0;
+#endif
     }
     {
         if (interp_stats()) printf("interp: meshes %zu/%zu, vertices %zu/%zu tagged matched, effects %zu/%zu, %zu total; unmatched: %zu no instance, %zu unpaired groups\n", c->nin, p->nin, matched[0], tagged[0], matched[1], tagged[1], c->nvx, no_inst, unpaired);
     }
+#ifdef __ANDROID__
+    {   /* where the matching's time goes (a line a second): before the loop (spos, sort), the loop, the blend set-up after it */
+        static uint64_t tl, a0, a1, a2n; static unsigned n;
+        uint64_t t3 = SDL_GetTicksNS();
+        mt2 = t3; a0 += mt1 - mt0; a1 += mt2 - mt1; n++;
+        (void)a2n;
+        if (t3 - tl > 1000000000ull) { extern void host_log(const char*, ...); if (tl) host_log("android: matching parts per frame: before the loop %.2f ms, the loop %.2f ms (%zu instances, %zu vertices)\n", a0 / 1e6 / n, a1 / 1e6 / n, c->nin, c->nvx); host_log("android: matching detail per frame: inst_pair %lu calls, %lu groups, %lu vertices scored; the chosen pairs' set-up %.2f ms\n", and_ip_calls / n, and_ip_groups / n, and_ip_verts / n, and_post_ns / 1e6 / n); host_log("android: matching search: %lu exact at the expected place, %lu near among neighbours, %lu fell back to the full scan, %lu with no same-structure candidate; same-structure range avg %.1f, same-mesh range avg %.1f\n", and_w_exact / n, and_w_ok / n, and_w_fall / n, and_w_none / n, (double)and_w_rng / (double)(c->nin * n), (double)and_w_mrng / (double)(c->nin * n)); and_w_exact = and_w_ok = and_w_fall = and_w_none = and_w_rng = and_w_mrng = 0; and_ip_calls = and_ip_groups = and_ip_verts = 0; and_post_ns = 0; tl = t3; a0 = a1 = 0; n = 0; }
+    }
+#endif
     /* most meshes lost or jumping although the camera did not cut: a scene change */
     if (!matched[0] || matched[0] * 2 < tagged[0]) return 0;
     matched_for = c;

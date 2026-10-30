@@ -44,11 +44,15 @@ static double present_hz(void)
 
 /* vr123: the game frames' arrival on an even grid (a frame arriving a few ms early or late does not move it),
    for the VR in-between images by the clock (gs_gl.c) */
+uint64_t g_vr_frame_seq;   /* game frames executed (gs_gl.c: the game time by the headset's display times is pulled to their arrival) */
 double g_vr_frame_ref, g_vr_frame_period = 1001.0 / 30000.0 * 1e9;
 
 #ifdef __ANDROID__
 #include "xr.h"
 #include "android_prof.h"
+static double and_exec_ema = 5e6; static int and_exec_fit = -1;   /* the game frame's execution time (smoothed), and whether to wait for a gap that fits it (RECVX_EXEC_FIT=0 off) */
+static uint64_t and_match_sum, and_match_max; static unsigned and_match_n;   /* stream_match time (the interpolation's matching) */
+static uint64_t and_exec_n;   /* game frames executed here (the motion log's game time: gs_frame_count() runs ahead of them) */
 static unsigned hb_slow_logged;   /* slow frame lines this second (at most 5: android_prof.c has the summary) */
 /* Android (Quest) diagnosis: once a second, the headset images presented and the loops that skipped the present - a
    partial frame (download sync point) or an in-between image dropped because the next frame was waiting */
@@ -57,6 +61,7 @@ static unsigned hb_presents, hb_skip_partial, hb_skip_queued, hb_forced;
    t) against when the headset shows it (OpenXR display time); the ideal is the game's 30 frames a second of game time
    spread evenly. stops: no game time advanced; slow/fast: under 0.6 / over 1.5 of the ideal; gaps: a headset refresh
    with no new image (the previous one shown again) */
+static unsigned mo_gap_exec, mo_gap_plain, mo_exec_since; static double mo_gap_exec_ms;   /* gaps right after a game frame's execution / without one */
 static unsigned mo_stop, mo_slow, mo_ok, mo_fast, mo_gap, mo_n;
 static unsigned mo_nointerp, mo_tclamp, mo_tmid;   /* images: no interpolation (the frame itself), t held at 1, t in between */
 static int and_trace_exec;   /* this game frame's GPU passes are traced (gl_cache.c) */
@@ -106,6 +111,11 @@ void render_loop(void)
             uint64_t tn = SDL_GetTicksNS();
             if (!stream_queued()) queued_since = 0;
             else if (!queued_since) queued_since = tn;
+            if (and_exec_fit < 0) and_exec_fit = SDL_getenv("RECVX_EXEC_FIT") && SDL_atoi(SDL_getenv("RECVX_EXEC_FIT")) != 0;   /* off by default: walking, it delayed the frames more (285 late against 154) */
+            if (!and_hold && cur && xr_active() && queued_since && and_exec_fit && tn - queued_since <= 16000000ull) {   /* a game frame only when it fits before the next image */
+                extern uint64_t xr_next_ready_in_ns(void);
+                if (xr_next_ready_in_ns() < (uint64_t)(and_exec_ema * 1.15) + 500000ull) and_hold = 1;
+            }
             if (and_hold && queued_since && tn - queued_since > 16000000ull) and_hold = 0;
         }
         f = and_hold ? NULL : stream_pop(!cur ? 20 : pace_until > now ? (int)((pace_until - now) / 1000000) : 0);
@@ -148,7 +158,10 @@ void render_loop(void)
                 host_log("android: motion images last second: %u without interpolation (the game frame itself), %u interpolated but at t = 1 (the next frame "
                          "not there yet), %u in between\n", mo_nointerp, mo_tclamp, mo_tmid);
                 mo_nointerp = mo_tclamp = mo_tmid = 0;
-                mo_n = mo_stop = mo_slow = mo_ok = mo_fast = mo_gap = 0; mo_rmin = 1e9; mo_rmax = 0;
+                host_log("android: refreshes missed last second: %u right after a game frame was executed, %u without one\n", mo_gap_exec, mo_gap_plain);
+                if (and_match_n) host_log("android: interpolation matching last second: %u frames, avg %.2f max %.2f ms\n", and_match_n, and_match_sum / 1e6 / and_match_n, and_match_max / 1e6);
+                and_match_sum = and_match_max = 0; and_match_n = 0;
+                mo_n = mo_stop = mo_slow = mo_ok = mo_fast = mo_gap = mo_gap_exec = mo_gap_plain = 0; mo_rmin = 1e9; mo_rmax = 0;
                 xr_timing_log();
                 if (pc_n) host_log("android: game frame pacing last second: %u frames; from the game thread %u late %u bunched (max %.1f ms), "
                                    "executed on the render thread %u late %u bunched (max %.1f ms)\n",
@@ -172,6 +185,9 @@ void render_loop(void)
             prof_push(PROF_EXEC);
             uint64_t tx0 = SDL_GetTicksNS();
 #ifdef __ANDROID__
+            mo_exec_since = 1;
+#endif
+#ifdef __ANDROID__
             unsigned and_d0 = g_and_stall.draws, and_p0 = g_and_stall.prims;
             uint64_t and_c0 = and_thread_cpu_ns();
             memset(&g_and_stall, 0, sizeof(g_and_stall));
@@ -193,7 +209,7 @@ void render_loop(void)
                 static unsigned k;
                 const VrView* vv = stream_frame_vr(f);
                 g_and_exec_nodraw = 0;
-                if (xr_active() && g_vr_stereo && vv && vv->valid && gs_exec_nodraw_ok()) g_and_exec_nodraw = (k++ & 3) != 0;
+                if (xr_active() && g_vr_stereo && vv && vv->valid && gs_exec_nodraw_ok()) { static int all = -1; if (all < 0) all = !SDL_getenv("RECVX_OPT1") || SDL_atoi(SDL_getenv("RECVX_OPT1")) != 1;   /* every frame (1: the old 3 in 4, 0: off in gs_exec_nodraw_ok) */ g_and_exec_nodraw = all ? 1 : (k++ & 3) != 0; }
             }
 #endif
             gs_frame_begin();
@@ -232,6 +248,9 @@ void render_loop(void)
                 extern int g_vr_debug_log; void host_log(const char*, ...);
                 static unsigned nslow;
                 uint64_t tx = SDL_GetTicksNS() - tx0;
+#ifdef __ANDROID__
+                and_exec_ema += 0.1 * ((double)tx - and_exec_ema);
+#endif
                 if (g_vr_debug_log && tx > 8000000 && nslow < 80) { nslow++; host_log("vr-diag: slow game frame drawing: %.1f ms\n", tx / 1e6); }
             }
 #ifdef __ANDROID__
@@ -265,15 +284,25 @@ void render_loop(void)
             }
 #endif
             arrived = now;
+#ifdef __ANDROID__
+            and_exec_n++;
+#endif
             shown = 0;
             {   /* vr123 */
                 double nw = (double)now, d = nw - (g_vr_frame_ref + period);
                 if (g_vr_frame_ref <= 0.0 || fabs(d) > period * 0.5) g_vr_frame_ref = nw;
                 else g_vr_frame_ref += period + 0.1 * d;
                 g_vr_frame_period = period;
+                g_vr_frame_seq++;
             }
             prof_push(PROF_INTERP);
+#ifdef __ANDROID__
+            uint64_t and_m0 = SDL_GetTicksNS();
+#endif
             interp = g_config.interpolate && stream_match(cur, f);
+#ifdef __ANDROID__
+            { uint64_t d = SDL_GetTicksNS() - and_m0; and_match_sum += d; and_match_n++; if (d > and_match_max) and_match_max = d; }
+#endif
             prof_pop();
             gs_frame_executed(interp);
 #ifdef __ANDROID__
@@ -347,7 +376,11 @@ void render_loop(void)
 #ifdef __ANDROID__
             { extern volatile int g_and_phase; g_and_phase = 2; }
 #endif
+            { extern int g_vr_interp_now; g_vr_interp_now = interp; }
             swap = gs_present(cur, t);
+#ifdef __ANDROID__
+            { extern float g_vr_t_used; if (xr_active() && interp) t = g_vr_t_used; }   /* (the motion log: the t really shown) */
+#endif
 #ifdef __ANDROID__
             { extern volatile int g_and_phase; g_and_phase = 0; }
             and_gpu_end(AND_PRESENT);
@@ -358,14 +391,14 @@ void render_loop(void)
                 static int64_t mo_d0;
                 static double mo_g0;
                 int64_t disp = xr_display_time_ns();
-                double g = (double)gs_frame_count() - 1.0 + (interp ? (t < 0.0f ? 0.0 : t > 1.0f ? 1.0 : t) : 1.0), xp = xr_display_hz() > 1.0 ? 1e9 / xr_display_hz() : 13.9e6;
+                double g = (double)and_exec_n - 1.0 + (interp ? (t < -0.5f ? -0.5 : t > 1.5f ? 1.5 : t) : 1.0), xp = xr_display_hz() > 1.0 ? 1e9 / xr_display_hz() : 13.9e6;
                 if (!interp) mo_nointerp++;
                 else if (t >= 0.999f) mo_tclamp++;
                 else mo_tmid++;
                 if (mo_d0 && disp > mo_d0 && period > 1e6) {
                     double dd = (double)(disp - mo_d0), r = (g - mo_g0) / (dd / period);
                     mo_n++;
-                    if (dd > xp * 1.5) mo_gap++;
+                    if (dd > xp * 1.5) { extern uint64_t g_xr_last_wait_ns, g_xr_last_react_ns; static unsigned gl; if (gl++ < 60) host_log("android: refresh missed (%.1f ms between displays): this image waited %.1f ms for the headset, then %.1f ms before the render thread took it, drawn in %.1f ms wall; a game frame executed before it: %u (ema %.1f ms)\n", dd / 1e6, g_xr_last_wait_ns / 1e6, g_xr_last_react_ns / 1e6, (hb_last_present - and_pt0) / 1e6, mo_exec_since, and_exec_ema / 1e6); mo_gap++; if (mo_exec_since) mo_gap_exec++; else mo_gap_plain++; }
                     if (g - mo_g0 <= 1e-6) mo_stop++;
                     else if (r < 0.6) mo_slow++;
                     else if (r > 1.5) mo_fast++;
@@ -373,7 +406,7 @@ void render_loop(void)
                     if (r < mo_rmin) mo_rmin = r;
                     if (r > mo_rmax) mo_rmax = r;
                 }
-                mo_d0 = disp; mo_g0 = g;
+                mo_d0 = disp; mo_g0 = g; mo_exec_since = 0;
             }
 #endif
             shown++;

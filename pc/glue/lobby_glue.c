@@ -608,12 +608,20 @@ static SaveInfo* saves;   /* by slot (lobby.h: the card's 0..14 or native save n
 static int n_saves;
 static unsigned char save_buf[LOBBY_SAVE_BYTES];   /* the host's chosen save, read when the game starts */
 static int quickload;   /* F10 pressed: the title loads save 15 (test aid, with F9's save anywhere) */
+static volatile int testsave_req;   /* RECVX_TEST_SAVESPOT: X held for 2 s on the Touch controller (xr.c) asks for F9's save */
+void pc_testsave_request(void) { testsave_req = 1; }
 int pc_quickload_take(void)
 {
+    static int boot = 1;
+    if (boot) {   /* RECVX_TEST_SAVESPOT (env.txt; a test aid): the first title after the start loads save 15 at once (a missing save: the title as usual) */
+        boot = 0;
+        if (getenv("RECVX_TEST_SAVESPOT")) quickload = 1;
+    }
     if (!quickload) return 0;
     quickload = 0;
     if (!lobby_read_save(14, save_buf)) { host_log("quickload: save 15 cannot be read\n"); return 0; }
     host_log("quickload: loading save 15\n");
+    { extern volatile int g_vr_recenter_on_start; g_vr_recenter_on_start = 1; }   /* vr_glue.c heading_update: the headset's forward where the head looks when the game starts */
     return 1;
 }
 
@@ -1480,6 +1488,11 @@ void lobby_frame(void)
         was = down;
         if (now) { slot = 14; goto write_save; }
     }
+    if (testsave_req) {   /* the same save asked for by X held on the Touch controller; kept for a few seconds while the game is not in play */
+        static int waited;
+        if (sys && plp && (sys->tk_flg & 0x80) && !(sys->ss_flg & 0x400000)) { testsave_req = 0; waited = 0; slot = 14; goto write_save; }
+        if (++waited > 300) { testsave_req = 0; waited = 0; host_log("test: save here refused (the game is not in play)\n"); }
+    }
     {   /* F10: back to the title, which then loads save 15 (pc_quickload_take, adv.c) */
         static int was;
         extern const _Bool* SDL_GetKeyboardState(int* numkeys);
@@ -1504,6 +1517,7 @@ write_save:
     sys->ply_stflg[(int)sys->ply_id] = plp->stflg & 0x78280000;
     sys->ply_pos.x = plp->px; sys->ply_pos.y = plp->py; sys->ply_pos.z = plp->pz;
     sys->ply_ang = plp->ay;
+    host_log("test: facing saved %d (%.0f degrees)\n", (int)(short)plp->ay, (double)(short)plp->ay * (180.0 / 32768.0));
     sys->ply_wno[(int)sys->ply_id] = plp->wpnr_no;
     sys->ply_hp[(int)sys->ply_id] = plp->hp;
     coop_save_written(slot);   /* as the memory card's save: the host's partner items go with it */

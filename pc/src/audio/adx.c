@@ -157,6 +157,16 @@ void* pc_mod_open(const char* name)
     return hf ? open_host(hf, size) : NULL;
 }
 
+/* whether the mods folder has a file by that name (the file is closed again): the teleport's check for rooms the disc's table lacks */
+int pc_mod_exists(const char* name)
+{
+    uint32_t size;
+    FILE* hf = mod_open(name, &size);
+    if (!hf) return 0;
+    fclose(hf);
+    return 1;
+}
+
 void* ADXF_OpenAfs(int ptid, int flid)
 {
     uint32_t lsn, size;

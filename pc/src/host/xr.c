@@ -140,6 +140,8 @@ typedef struct {
     uint32_t n;
     XrSwapchainImageGL img[8];
     int acquired;
+    int pre;            /* acquired, its wait not done yet (xr_eyes_ready polls it without blocking) */
+    uint32_t idx;       /* the image acquired */
 } Chain;
 
 static XrInstance  inst = XR_NULL_HANDLE;
@@ -159,7 +161,7 @@ static XrFrameState fs;
 #include <time.h>
 /* where the headset images wait (the owner's log: the render thread was idle ~70% and still only ~37-60 images a
    second): sums per second, logged by xr_timing_log */
-static struct { uint64_t wait, wait_max, react, react_max, begin, acq, acq_max, end, end_max, idle, ahead; unsigned n, nw, nacq, noshow, late; } xt;
+static struct { unsigned eyes_not_ready; uint64_t wait, wait_max, react, react_max, begin, acq, acq_max, end, end_max, idle, ahead; unsigned n, nw, nacq, noshow, late; } xt;
 #endif
 static int in_frame;            /* between xrBeginFrame and xrEndFrame */
 static XrView views[2];
@@ -227,11 +229,20 @@ static GLuint chain_acquire(Chain* c, int w, int h)
     uint32_t idx = 0;
     XrSwapchainImageAcquireInfo ai = { XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO };
     XrSwapchainImageWaitInfo wi = { XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO };
+    if ((w != c->w || h != c->ht) && c->h && (c->pre || c->acquired)) {   /* a new size: what was taken ahead goes back first */
+        XrSwapchainImageReleaseInfo ri = { XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO };
+        if (c->pre) { wi.timeout = XR_INFINITE_DURATION; xrWaitSwapchainImage(c->h, &wi); }
+        xrReleaseSwapchainImage(c->h, &ri);
+        c->pre = c->acquired = 0;
+    }
     if ((w != c->w || h != c->ht || !c->h) && !chain_make(c, w, h)) return 0;
+    if (c->acquired) return c->img[c->idx].image;   /* taken ahead and ready (chain_poll): no wait here */
 #ifdef __ANDROID__
     uint64_t ta = SDL_GetTicksNS();
 #endif
-    if (!xr_ok(xrAcquireSwapchainImage(c->h, &ai, &idx), "xrAcquireSwapchainImage")) return 0;
+    if (c->pre) idx = c->idx;   /* taken ahead, not ready yet: the wait below */
+    else if (!xr_ok(xrAcquireSwapchainImage(c->h, &ai, &idx), "xrAcquireSwapchainImage")) return 0;
+    c->pre = 0;
     wi.timeout = XR_INFINITE_DURATION;
     {
 #ifdef __ANDROID__
@@ -250,7 +261,33 @@ static GLuint chain_acquire(Chain* c, int w, int h)
     }
 acquired:
     c->acquired = 1;
+    c->idx = idx;
     return c->img[idx].image;
+}
+
+/* The next image of c taken ahead without blocking: 1 when it is ours to draw into. The log of a worn headset: the eye image waited 3-8 ms on
+   the headset mid-frame, the render thread blocked there and the game frames (executed while it is idle) piled up and came in bunches - the
+   stutter. The render loop now starts an image only when both are ready (xr_frame_ready) and runs game frames meanwhile. */
+static int chain_poll(Chain* c)
+{
+    XrSwapchainImageAcquireInfo ai = { XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO };
+    XrSwapchainImageWaitInfo wi = { XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO };
+    XrResult r;
+    if (!c->h) return 1;   /* not made yet: the first image makes it (and waits) */
+    if (c->acquired) return 1;
+    if (!c->pre) {
+        if (!xr_ok(xrAcquireSwapchainImage(c->h, &ai, &c->idx), "xrAcquireSwapchainImage (ahead)")) return 1;
+        c->pre = 1;
+    }
+    wi.timeout = 0;
+    r = xrWaitSwapchainImage(c->h, &wi);
+    if (XR_SUCCEEDED(r) && r != XR_TIMEOUT_EXPIRED) { c->pre = 0; c->acquired = 1; return 1; }
+    return 0;
+}
+static int eyes_ready(void)
+{
+    int a = chain_poll(&eye_chain[0]), b = chain_poll(&eye_chain[1]);
+    return a && b;
 }
 
 static void chain_release(Chain* c)
@@ -420,6 +457,32 @@ static void send_haptics(void)
     }
 }
 
+#ifdef __ANDROID__
+/* A control dropping out for a moment mid-use (the log, raw at 90 Hz: the left stick fell from ~1.0 to 0.0-0.3 in ONE reading - 11 ms, no thumb does
+   that - and came back within 10-110 ms; the game saw 0 for 1-4 frames, left its walk and the footsteps stopped). After being held (>0.7) for
+   150 ms, a fall of more than 0.4 in one reading keeps the last value until it is back above 0.7 or `hold_ms` passes (a real release springs back
+   the same way and is delayed by as much). */
+#define STICK_HOLD_MS 130   /* how long a dropped stick keeps its last value (the controller's dips: 12 ms median, 57 ms the longest measured; a real release is delayed by up to this) */
+typedef struct { float mprev, px, py, lx0, ly0, bx, by; int masking; uint64_t t_mask, t_big, t_since; unsigned nev, masked, last_n; } AxisHold;
+static void axis_hold(AxisHold* a, const char* name, float* x, float* y, uint64_t now, int hold_ms)
+{
+    float m = sqrtf(*x * *x + *y * *y), rx = *x, ry = *y;
+    if (m > 0.7f) { a->masking = 0; if (!a->t_since) a->t_since = now; a->t_big = now; a->bx = rx; a->by = ry; }
+    else if (m < 0.2f && !a->masking && now - a->t_big > 300000000ull) a->t_since = 0;
+    if (!a->masking && a->t_since && now - a->t_since >= 150000000ull && a->mprev > 0.7f && m < a->mprev - 0.4f) {
+        a->masking = 1; a->t_mask = now; a->lx0 = a->px; a->ly0 = a->py; a->nev++;
+    }
+    if (a->masking) {
+        if (m > 0.7f || now - a->t_mask > (uint64_t)hold_ms * 1000000ull) { if (m <= 0.7f) a->t_since = 0; a->masking = 0; }
+        else { *x = a->lx0; *y = a->ly0; a->masked++; }
+    }
+    /* and the slower fall (two or three readings, 20-30 ms): for 50 ms after the last firm reading the firm value stays */
+    if (!a->masking && m <= 0.7f && a->t_since && now - a->t_since >= 150000000ull && now - a->t_big <= 50000000ull) { *x = a->bx; *y = a->by; a->masked++; }
+    if (a->nev && (a->nev == 1 || (a->nev % 10) == 0) && a->nev != a->last_n) { a->last_n = a->nev; host_log("android: %s hold: %u drops held, %u images\n", name, a->nev, a->masked); }
+    a->mprev = m; a->px = rx; a->py = ry;
+}
+#endif
+
 static void read_actions(XrTime t)
 {
     XrActiveActionSet as = { aset, XR_NULL_PATH };
@@ -437,9 +500,66 @@ static void read_actions(XrTime t)
     get_v(a_lstick, &in.lx, &in.ly);
     get_v(a_rstick, &in.rx, &in.ry);
     in.ltrig = get_f(a_ltrig); in.rtrig = get_f(a_rtrig);
+#ifdef __ANDROID__
+    {   /* Quest diagnosis ("the character stops walking" - the controller's stick or the game?): the raw left stick, 90 times a second. A DIP is the
+           stick falling below 0.35 after being held (>0.7) for 150 ms and coming back above 0.7 within 300 ms: the same way (a controller dropout, or the
+           thumb easing off) or the opposite way (a reversal through the centre). Logged with the raw values, at most 40, and counted per 10 s. */
+        static float hx, hy, mn, sx, sy;
+        static uint64_t t_hold0, t_dip0, t_cnt;
+        static int dipping, nlog;
+        static unsigned c_same, c_rev, c_other, c_long;
+        float m = sqrtf(in.lx * in.lx + in.ly * in.ly);
+        uint64_t now = SDL_GetTicksNS();
+        if (m > 0.7f) {
+            if (dipping) {
+                float dd = (hx * in.lx + hy * in.ly) / m, ms = (float)(now - t_dip0) * 1e-6f;
+                if (ms <= 300.0f) {
+                    if (dd > 0.5f) c_same++; else if (dd < -0.2f) c_rev++; else c_other++;
+                    if (nlog < 40 && dd > -0.2f) { nlog++; host_log("android: STICK DIP %s: %.0f ms below 0.35 (lowest %.2f), before %+.2f %+.2f, start %+.2f %+.2f, after %+.2f %+.2f%s", dd > 0.5f ? "same way (the controller, or easing off)" : "other way", ms, mn, hx, hy, sx, sy, in.lx, in.ly, "\n"); }
+                } else c_long++;
+                dipping = 0; t_hold0 = now;
+            } else if (!t_hold0) t_hold0 = now;
+            if (m > 0.85f || !dipping) { hx = in.lx / m; hy = in.ly / m; }
+        } else if (m < 0.35f) {
+            if (!dipping && t_hold0 && now - t_hold0 >= 150000000ull) { dipping = 1; t_dip0 = now; mn = m; sx = in.lx; sy = in.ly; }
+            else if (dipping && m < mn) mn = m;
+            if (!dipping) t_hold0 = 0;
+        }
+        if (now - t_cnt >= 10000000000ull) {
+            if (t_cnt && (c_same || c_rev || c_other || c_long)) host_log("android: stick dips last 10 s: %u same way, %u reversals through the centre, %u other, %u longer than 300 ms (released)\n", c_same, c_rev, c_other, c_long);
+            c_same = c_rev = c_other = c_long = 0; t_cnt = now;
+        }
+    }
+#endif
     in.lgrip = get_f(a_lgrip); in.rgrip = get_f(a_rgrip);
+#ifdef __ANDROID__
+    {   /* The dropout hold of the walking controls: the left stick, the right stick (the turn) and the left trigger (see axis_hold). ALWAYS ON and
+           not configurable (no env.txt, no ini): the Touch thumbsticks drop out for 10-110 ms mid-walk and without this the character stops and the
+           footsteps cut; it is part of how the game plays on the headset. */
+        static AxisHold hl, hr, ht;
+        uint64_t now = SDL_GetTicksNS();
+        axis_hold(&hl, "left stick", &in.lx, &in.ly, now, STICK_HOLD_MS);
+        axis_hold(&hr, "right stick", &in.rx, &in.ry, now, STICK_HOLD_MS);
+        { float zero = 0.0f; axis_hold(&ht, "left trigger", &in.ltrig, &zero, now, STICK_HOLD_MS); }
+    }
+#endif
     in.buttons = (get_b(a_a) ? VRB_A : 0) | (get_b(a_b) ? VRB_B : 0) | (get_b(a_x) ? VRB_X : 0) | (get_b(a_y) ? VRB_Y : 0) |
                  (get_b(a_menu) ? VRB_MENU : 0) | (get_b(a_lclick) ? VRB_LSTICK : 0) | (get_b(a_rclick) ? VRB_RSTICK : 0);
+    {   /* RECVX_TEST_SAVESPOT (env.txt; a test aid, to be removed with the rest of it): hold X for 2 s to save the game here as save
+           15 (pc_testsave_request, lobby_glue.c; the controller buzzes); the game's own X (the map, Square) only gets a quick tap, on release */
+        static int on = -1, down, fired, pulse;
+        static uint64_t t_down;
+        if (on < 0) { const char* e = SDL_getenv("RECVX_TEST_SAVESPOT"); on = e && SDL_strcmp(e, "load") != 0; }   /* "load": only the boot load (lobby_glue.c), no X trigger - a controller resting on a table can read X as held and save over save 15 */
+        if (on) {
+            uint64_t now = SDL_GetTicksNS();
+            int x = (in.buttons & VRB_X) != 0;
+            if (x && !down) { down = 1; fired = 0; t_down = now; }
+            if (x && !fired && now - t_down >= 2000000000ull) { extern void pc_testsave_request(void); fired = 1; pc_testsave_request(); xr_haptic(1, 1.0f, 300); }
+            if (!x && down) { down = 0; if (!fired && now - t_down < 600000000ull) pulse = 8; }
+            in.buttons &= ~(unsigned)VRB_X;
+            if (pulse > 0) { in.buttons |= VRB_X; pulse--; }
+        }
+    }
 #ifdef __ANDROID__
     {   /* Quest diagnosis: every change of the buttons (A seen held for a minute in the first test) */
         static unsigned last_b;
@@ -482,7 +602,7 @@ static void read_actions(XrTime t)
 /* Android (Quest): the CPU and GPU clock levels (XR_EXT_performance_settings) and the threads' roles for the
    scheduler (XR_KHR_android_thread_settings) - without them the runtime keeps the app on its default levels. The
    log showed the render thread at ~50% of one core and the GPU ~15% busy, yet the frames slow (25-30 ms). */
-static int have_perf, have_threads;
+static int have_perf, have_threads, have_refresh;
 static volatile int game_tid, game_tid_done;
 void xr_android_game_thread(void) { game_tid = (int)syscall(SYS_gettid); }   /* host.c: the game thread at its start */
 static void android_thread(XrAndroidThreadTypeKHR type, int tid, const char* name)
@@ -492,14 +612,50 @@ static void android_thread(XrAndroidThreadTypeKHR type, int tid, const char* nam
     if (!xr_ok(xrGetInstanceProcAddr(inst, "xrSetAndroidApplicationThreadKHR", (PFN_xrVoidFunction*)&set), "xrGetInstanceProcAddr(xrSetAndroidApplicationThreadKHR)")) return;
     host_log("vr: thread %s (tid %d) %s\n", name, tid, XR_SUCCEEDED(set(sess, type, (uint32_t)tid)) ? "registered with the runtime" : "not registered");
 }
+/* Android (Quest): the display's refresh rate (XR_FB_display_refresh_rate): the headset's own pick is 72; the game asks for
+   RECVX_HZ (env.txt) or g_and_refresh_hz, the nearest one the headset lists */
+int g_and_refresh_hz = 90;
+static void android_refresh(void)
+{
+    PFN_xrEnumerateDisplayRefreshRatesFB enumr = NULL;
+    PFN_xrRequestDisplayRefreshRateFB req = NULL;
+    float rates[16]; uint32_t n = 0, i;
+    float want = SDL_getenv("RECVX_HZ") ? (float)SDL_atof(SDL_getenv("RECVX_HZ")) : (float)g_and_refresh_hz, best = 0.0f;
+    if (!have_refresh || !sess) return;
+    if (!xr_ok(xrGetInstanceProcAddr(inst, "xrEnumerateDisplayRefreshRatesFB", (PFN_xrVoidFunction*)&enumr), "xrGetInstanceProcAddr(xrEnumerateDisplayRefreshRatesFB)")) return;
+    if (!xr_ok(xrGetInstanceProcAddr(inst, "xrRequestDisplayRefreshRateFB", (PFN_xrVoidFunction*)&req), "xrGetInstanceProcAddr(xrRequestDisplayRefreshRateFB)")) return;
+    if (!XR_SUCCEEDED(enumr(sess, 16, &n, rates)) || !n) return;
+    for (i = 0; i < n && i < 16; i++) {
+        host_log("vr: display refresh rate offered: %.0f Hz\n", rates[i]);
+        if (best == 0.0f || fabsf(rates[i] - want) < fabsf(best - want)) best = rates[i];
+    }
+    host_log("vr: display refresh rate asked for %.0f Hz (wanted %.0f): %s\n", best, want, XR_SUCCEEDED(req(sess, best)) ? "accepted" : "refused");
+}
+/* The clocks: BOOST (the highest) for the first seconds after the headset starts - the log: for ~10 s the eye image waited ~7 ms on the GPU
+   (9 ms an image instead of 4, refreshes missed, the game "stuttering at the start") until the clocks came up - then sustained high
+   (boost cannot be held: the headset heats and throttles). RECVX_BOOST_S: seconds (default 30; 0 none; -1 always) */
+static PFN_xrPerfSettingsSetPerformanceLevelEXT perf_set;
+static uint64_t perf_boost_until;   /* SDL ticks (ms); 0: sustained already (or none) */
 static void android_perf(void)
 {
-    PFN_xrPerfSettingsSetPerformanceLevelEXT set = NULL;
+    const char* e = SDL_getenv("RECVX_BOOST_S");
+    int secs = e ? SDL_atoi(e) : 30;
+    XrPerfSettingsLevelEXT lv = secs ? XR_PERF_SETTINGS_LEVEL_BOOST_EXT : XR_PERF_SETTINGS_LEVEL_SUSTAINED_HIGH_EXT;
     if (!have_perf || !sess) return;
-    if (!xr_ok(xrGetInstanceProcAddr(inst, "xrPerfSettingsSetPerformanceLevelEXT", (PFN_xrVoidFunction*)&set), "xrGetInstanceProcAddr(xrPerfSettingsSetPerformanceLevelEXT)")) return;
-    host_log("vr: performance level CPU sustained high %s, GPU sustained high %s\n",
-             XR_SUCCEEDED(set(sess, XR_PERF_SETTINGS_DOMAIN_CPU_EXT, XR_PERF_SETTINGS_LEVEL_SUSTAINED_HIGH_EXT)) ? "set" : "refused",
-             XR_SUCCEEDED(set(sess, XR_PERF_SETTINGS_DOMAIN_GPU_EXT, XR_PERF_SETTINGS_LEVEL_SUSTAINED_HIGH_EXT)) ? "set" : "refused");
+    if (!xr_ok(xrGetInstanceProcAddr(inst, "xrPerfSettingsSetPerformanceLevelEXT", (PFN_xrVoidFunction*)&perf_set), "xrGetInstanceProcAddr(xrPerfSettingsSetPerformanceLevelEXT)")) return;
+    host_log("vr: performance level CPU %s %s, GPU %s %s\n", secs ? "boost" : "sustained high",
+             XR_SUCCEEDED(perf_set(sess, XR_PERF_SETTINGS_DOMAIN_CPU_EXT, lv)) ? "set" : "refused", secs ? "boost" : "sustained high",
+             XR_SUCCEEDED(perf_set(sess, XR_PERF_SETTINGS_DOMAIN_GPU_EXT, lv)) ? "set" : "refused");
+    perf_boost_until = secs > 0 ? SDL_GetTicks() + (uint64_t)secs * 1000u : 0;
+}
+static void perf_tick(void)   /* each headset frame: the boost over -> sustained high */
+{
+    if (perf_boost_until && perf_set && sess && SDL_GetTicks() >= perf_boost_until) {
+        perf_boost_until = 0;
+        host_log("vr: boost over: CPU %s, GPU %s sustained high\n",
+                 XR_SUCCEEDED(perf_set(sess, XR_PERF_SETTINGS_DOMAIN_CPU_EXT, XR_PERF_SETTINGS_LEVEL_SUSTAINED_HIGH_EXT)) ? "set" : "refused",
+                 XR_SUCCEEDED(perf_set(sess, XR_PERF_SETTINGS_DOMAIN_GPU_EXT, XR_PERF_SETTINGS_LEVEL_SUSTAINED_HIGH_EXT)) ? "set" : "refused");
+    }
 }
 #endif
 
@@ -562,6 +718,7 @@ int xr_init(void)
         if (XR_SUCCEEDED(xrEnumerateInstanceExtensionProperties(NULL, 128, &n, ep)))
             for (uint32_t i = 0; i < n && i < 128; i++) {
                 if (!strcmp(ep[i].extensionName, XR_EXT_PERFORMANCE_SETTINGS_EXTENSION_NAME)) { exts_all[k++] = XR_EXT_PERFORMANCE_SETTINGS_EXTENSION_NAME; have_perf = 1; }
+                else if (!strcmp(ep[i].extensionName, XR_FB_DISPLAY_REFRESH_RATE_EXTENSION_NAME)) { exts_all[k++] = XR_FB_DISPLAY_REFRESH_RATE_EXTENSION_NAME; have_refresh = 1; }
                 else if (!strcmp(ep[i].extensionName, XR_KHR_ANDROID_THREAD_SETTINGS_EXTENSION_NAME)) { exts_all[k++] = XR_KHR_ANDROID_THREAD_SETTINGS_EXTENSION_NAME; have_threads = 1; }
             }
         host_log("vr: optional extensions: performance settings %s, thread settings %s\n", have_perf ? "yes" : "no", have_threads ? "yes" : "no");
@@ -623,6 +780,7 @@ int xr_init(void)
     if (!xr_ok(xrCreateSession(inst, &sci, &sess), "xrCreateSession")) goto fail;
 #ifdef __ANDROID__
     android_perf();
+    android_refresh();
     android_thread(XR_ANDROID_THREAD_TYPE_RENDERER_MAIN_KHR, (int)syscall(SYS_gettid), "render");   /* (xr_init runs on the render thread) */
 #endif
 
@@ -659,7 +817,8 @@ void xr_recenter(void) { need_center = 1; }
    (72 - 30 = ~42 images a second). Now the waiter blocks there and the render loop executes game frames until it
    says the headset wants an image (xr_frame_ready); xrBeginFrame/xrEndFrame stay on the render thread. OpenXR allows
    xrWaitFrame on another thread; the waiter waits again only after the render thread's xrBeginFrame. */
-static uint64_t w_ready_ns;
+uint64_t g_xr_last_wait_ns, g_xr_last_react_ns;   /* (render.c logs them for a missed refresh) */
+static uint64_t w_ready_ns, w_period_ns = 11111111;   /* (the headset's images come about a period apart: the estimate) */
 static SDL_Thread* w_thread;
 static SDL_Mutex* w_mx;
 static SDL_Condition* w_cv;
@@ -681,8 +840,9 @@ static int SDLCALL waiter(void* ud)
             uint64_t t0 = SDL_GetTicksNS(), dt;
             XrResult r = xrWaitFrame(sess, &wi, &f);
             SDL_LockMutex(w_mx);
+            { uint64_t pr = w_ready_ns, nw0 = SDL_GetTicksNS(); if (pr && nw0 - pr > 5000000ull && nw0 - pr < 30000000ull) w_period_ns = (uint64_t)((double)w_period_ns * 0.95 + (double)(nw0 - pr) * 0.05); }
             w_ready_ns = SDL_GetTicksNS(); dt = w_ready_ns - t0;
-            xt.nw++; xt.wait += dt; if (dt > xt.wait_max) xt.wait_max = dt;
+            g_xr_last_wait_ns = dt; xt.nw++; xt.wait += dt; if (dt > xt.wait_max) xt.wait_max = dt;
             w_fs = f; w_res_ok = XR_SUCCEEDED(r); w_st = 2;
             if (!w_res_ok) { static int nl; if (nl++ < 10) host_log("vr: xrWaitFrame (waiter thread) failed: %d\n", (int)r); }
             SDL_BroadcastCondition(w_cv);
@@ -717,6 +877,19 @@ int xr_frame_ready(void)
     r = w_st == 2;
     if (w_st == 0) SDL_BroadcastCondition(w_cv);
     SDL_UnlockMutex(w_mx);
+    if (r && !eyes_ready()) { xt.eyes_not_ready++; r = 0; }   /* (the headset's eye images still in use: game frames meanwhile) */
+    return r;
+}
+/* render loop: how long until the headset wants its next image (0: now or unknown), by the images' own rhythm - a game frame
+   is only begun when it fits before that (one still running when the image was ready delayed it by up to 6 ms) */
+uint64_t xr_next_ready_in_ns(void)
+{
+    uint64_t r = 0, now;
+    if (!w_thread || !running || !sess) return 0;
+    SDL_LockMutex(w_mx);
+    now = SDL_GetTicksNS();
+    if (w_st != 2 && w_ready_ns && w_ready_ns + w_period_ns > now) r = w_ready_ns + w_period_ns - now;
+    SDL_UnlockMutex(w_mx);
     return r;
 }
 /* render loop: wait up to ms for the headset (returns early when it is ready) */
@@ -726,17 +899,22 @@ void xr_frame_wait_ready(int ms)
     if (!w_thread || !running) { SDL_Delay((Uint32)ms); return; }
     SDL_LockMutex(w_mx);
     if (w_st != 2) SDL_WaitConditionTimeout(w_cv, w_mx, ms);
-    SDL_UnlockMutex(w_mx);
+    {
+        int st2 = w_st == 2;
+        SDL_UnlockMutex(w_mx);
+        if (st2) SDL_DelayNS(300000);   /* the headset is ready, its eye images are not: look again in a moment */
+    }
     xt.idle += SDL_GetTicksNS() - t0;
 }
 void xr_timing_log(void)
 {
     unsigned n = xt.n ? xt.n : 1, nw = xt.nw ? xt.nw : 1, na = xt.nacq ? xt.nacq : 1;
+    { extern void and_dyn_res_update(double, unsigned, double); and_dyn_res_update(xt.wait / 1e6 / nw, xt.n, xt.acq / 1e6 / (xt.n ? xt.n : 1)); }
     host_log("android: headset waits last second: %u images (%u not to be shown, %u began after their display time); xrWaitFrame %u, avg %.1f max %.1f ms; "
              "ready until the render thread took it avg %.1f max %.1f ms; xrBeginFrame avg %.2f ms; eye image acquire avg %.2f max %.1f ms; "
-             "xrEndFrame avg %.2f max %.1f ms; render loop idle waiting for the headset %.0f ms; display time ahead at begin avg %.1f ms\n",
+             "xrEndFrame avg %.2f max %.1f ms; render loop idle waiting for the headset %.0f ms; display time ahead at begin avg %.1f ms; eye images not ready when polled %u\n",
              xt.n, xt.noshow, xt.late, xt.nw, xt.wait / 1e6 / nw, xt.wait_max / 1e6, xt.react / 1e6 / n, xt.react_max / 1e6, xt.begin / 1e6 / n,
-             xt.acq / 1e6 / na, xt.acq_max / 1e6, xt.end / 1e6 / n, xt.end_max / 1e6, xt.idle / 1e6, xt.ahead / 1e6 / n);
+             xt.acq / 1e6 / na, xt.acq_max / 1e6, xt.end / 1e6 / n, xt.end_max / 1e6, xt.idle / 1e6, xt.ahead / 1e6 / n, xt.eyes_not_ready);
     memset(&xt, 0, sizeof(xt));
 }
 #endif
@@ -843,6 +1021,9 @@ static void update_head(XrTime t)
 
 int xr_frame_begin(void)
 {
+#ifdef __ANDROID__
+    perf_tick();
+#endif
     XrFrameWaitInfo wi = { XR_TYPE_FRAME_WAIT_INFO };
     XrFrameBeginInfo bi = { XR_TYPE_FRAME_BEGIN_INFO };
     eyes_valid = 0;
@@ -862,7 +1043,7 @@ int xr_frame_begin(void)
         if (w_st == 0) SDL_BroadcastCondition(w_cv);
         while (w_st != 2 && running) SDL_WaitConditionTimeout(w_cv, w_mx, 50);
         ok = w_st == 2 && w_res_ok;
-        if (w_st == 2) { uint64_t d = SDL_GetTicksNS() - w_ready_ns; xt.react += d; if (d > xt.react_max) xt.react_max = d; }
+        if (w_st == 2) { uint64_t d = SDL_GetTicksNS() - w_ready_ns; g_xr_last_react_ns = d; xt.react += d; if (d > xt.react_max) xt.react_max = d; }
         fs = w_fs;
         w_st = 3;   /* taken: the waiter waits again after xrBeginFrame */
         SDL_UnlockMutex(w_mx);
