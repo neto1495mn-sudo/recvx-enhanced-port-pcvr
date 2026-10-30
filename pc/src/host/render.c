@@ -46,6 +46,36 @@ static double present_hz(void)
 uint64_t g_vr_frame_seq;   /* game frames executed (gs_gl.c: the game time by the headset's display times is pulled to their arrival) */
 double g_vr_frame_ref, g_vr_frame_period = 1001.0 / 30000.0 * 1e9;
 
+/* VR heartbeat (once a second, xr_active, in the log): what the render thread does - images to the headset, game frames, how long a game frame takes
+   to execute (of which the interpolation matching), how many draws a game frame and an image make. Every number that told what was slow on the Quest. */
+extern uint64_t g_pc_draws, g_pc_prims_total;
+static struct { uint64_t t0; unsigned presents, frames; uint64_t exec_ns, exec_max, match_ns, match_max, present_ns, present_max, exec_draws, img_draws, exec_prims, img_prims; } hb;
+static void hb_log(uint64_t now)
+{
+    extern void host_log(const char*, ...);
+    extern int gs_lazy_flush(void);
+    extern int g_vr_debug_log;
+    if (!g_vr_debug_log) return;   /* (the log's heartbeat: ini vr_debug_log) */
+    if (!hb.t0) { hb.t0 = now; return; }
+    if (now - hb.t0 < 1000000000ull) return;
+    host_log("pc: last second: %u images to the headset, %u game frames | a game frame: exec avg %.2f max %.2f ms (matching avg %.2f max %.2f), %llu draws, %llu prims | an image: %.2f max %.2f ms wall, %llu draws, %llu prims | lazy flush %s\n",
+             hb.presents, hb.frames, hb.frames ? hb.exec_ns / 1e6 / hb.frames : 0.0, hb.exec_max / 1e6, hb.frames ? hb.match_ns / 1e6 / hb.frames : 0.0, hb.match_max / 1e6,
+             (unsigned long long)(hb.frames ? hb.exec_draws / hb.frames : 0), (unsigned long long)(hb.frames ? hb.exec_prims / hb.frames : 0),
+             hb.presents ? hb.present_ns / 1e6 / hb.presents : 0.0, hb.present_max / 1e6,
+             (unsigned long long)(hb.presents ? hb.img_draws / hb.presents : 0), (unsigned long long)(hb.presents ? hb.img_prims / hb.presents : 0), gs_lazy_flush() ? "on" : "off");
+    {   /* why the draws ended: reasons 0 full 1 mode 2 prim 3 tex0 4 epoch 5 alpha 6 test 7 frame 8 zbuf 9 scissor 10 xyoffset 11 tex1/clamp 12 texa/fog 13 other */
+        extern unsigned g_pc_why[2][14], g_pc_why_epoch[2], g_pc_epoch_merged;
+        host_log("pc: batches kept going over a texture upload (same texture): %u\n", g_pc_epoch_merged); g_pc_epoch_merged = 0;
+        for (int r = 0; r < 2; r++) {
+            char b[200]; int o = 0;
+            for (int k = 0; k < 14; k++) if (g_pc_why[r][k]) o += snprintf(b + o, sizeof(b) - (size_t)o, " %d:%u", k, g_pc_why[r][k]);
+            host_log("pc: draws ended (%s):%s | epoch changed and nothing else: %u\n", r ? "image replays" : "game frames", b, g_pc_why_epoch[r]);
+        }
+        memset(g_pc_why, 0, sizeof(g_pc_why)); memset(g_pc_why_epoch, 0, sizeof(g_pc_why_epoch));
+    }
+    memset(&hb, 0, sizeof(hb)); hb.t0 = now;
+}
+
 void render_loop(void)
 {
     Frame *prev = NULL, *cur = NULL;
@@ -68,10 +98,11 @@ void render_loop(void)
         f = stream_pop(!cur ? 20 : pace_until > now ? (int)((pace_until - now) / 1000000) : 0);   /* the rest: SDL_DelayPrecise */
         if (f) {
             prof_push(PROF_EXEC);
-            uint64_t tx0 = SDL_GetTicksNS();
+            uint64_t tx0 = SDL_GetTicksNS(), hd0 = g_pc_draws, hp0 = g_pc_prims_total;
             gs_frame_begin();
             stream_exec(f);
             prof_pop();
+            if (xr_active()) { uint64_t tx = SDL_GetTicksNS() - tx0; hb.frames++; hb.exec_ns += tx; if (tx > hb.exec_max) hb.exec_max = tx; hb.exec_draws += g_pc_draws - hd0; hb.exec_prims += g_pc_prims_total - hp0; }
             if (xr_active()) {   /* vr74 diagnosis (vr_debug_log): a game frame's drawing that takes long holds the next headset frame */
                 extern int g_vr_debug_log; void host_log(const char*, ...);
                 static unsigned nslow;
@@ -94,7 +125,9 @@ void render_loop(void)
                 g_vr_frame_seq++;
             }
             prof_push(PROF_INTERP);
+            uint64_t tm0 = SDL_GetTicksNS();
             interp = g_config.interpolate && stream_match(cur, f);
+            if (xr_active()) { uint64_t tm = SDL_GetTicksNS() - tm0; hb.match_ns += tm; if (tm > hb.match_max) hb.match_max = tm; }
             prof_pop();
             gs_frame_executed(interp);
             if (interp && check_replay) gs_replay_check(f);
@@ -135,7 +168,9 @@ void render_loop(void)
                 int fl = stream_point_at(interp ? prev : NULL, cur, t, &x, &y);
                 overlay_point(fl, x, y);            }
             { extern int g_vr_interp_now; g_vr_interp_now = interp; }
+            uint64_t tp0 = SDL_GetTicksNS(), pd0 = g_pc_draws, pp0 = g_pc_prims_total;
             swap = gs_present(cur, t);
+            if (xr_active()) { uint64_t tp = SDL_GetTicksNS() - tp0; hb.presents++; hb.present_ns += tp; if (tp > hb.present_max) hb.present_max = tp; hb.img_draws += g_pc_draws - pd0; hb.img_prims += g_pc_prims_total - pp0; hb_log(SDL_GetTicksNS()); }
             shown++;
             if (trace) fprintf(trace, "%llu %.3f %llu %llu\n", (unsigned long long)gs_frame_count(), t, (unsigned long long)(now / 1000),
                                (unsigned long long)(swap / 1000));

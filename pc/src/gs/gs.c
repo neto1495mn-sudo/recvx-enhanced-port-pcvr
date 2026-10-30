@@ -159,7 +159,12 @@ void gs_upload_image(const uint8_t* src, uint32_t bytes) { stream_image(src, byt
    has (the game rewrites the same TEST, ALPHA, TEX1, ... before most primitives): the batch
    goes on, the same primitives in the same order. Not for a two-pass alpha-test batch, whose
    passes would interleave differently. */
-static void flush_for(uint64_t old, uint64_t v) { if (old != v || gs_batch_two_pass()) gs_flush(); }
+extern int gs_lazy_flush(void);   /* gs_gl.c: VR - a batch ends when the next primitive's state differs (batch_for), not at every register write */
+static void flush_for(uint64_t old, uint64_t v)
+{
+    if (gs_lazy_flush()) return;   /* (the primitives of one state - the rain's alpha-tested two-pass ones above all - share a batch: all first passes, then all second passes) */
+    if (old != v || gs_batch_two_pass()) gs_flush();
+}
 
 /* render thread: the GS register file */
 int gs_vu1_vr;   /* VR: between the 0x7E markers, the GS vertices came from VU1 programs (3D) */

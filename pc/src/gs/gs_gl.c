@@ -55,6 +55,15 @@ static RenderTarget rts[MAX_RT];
 enum { FIRST_NONE, FIRST_COVER, FIRST_READ };
 static struct { int how, x0, y0, x1, y1; } first[MAX_RT];   /* COVER: area overwritten (physical pixels, x0..x1-1) */
 static uint64_t frame_no;
+/* VR: the GS register writes no longer end the batch (gs.c flush_for): one batch per state. The log of RM_3210 on a Quest 2: ~330 of ~440 draws per eye image were
+   alpha-test two-pass batches ended by every register write and drawn twice; merged, 438 -> 230 draws an image. RECVX_NO_LAZY_FLUSH=1: the old way (test). */
+extern int g_vr_stereo;
+int gs_lazy_flush(void)
+{
+    static int off = -1;
+    if (off < 0) off = SDL_getenv("RECVX_NO_LAZY_FLUSH") != NULL;
+    return !off && g_vr_stereo && xr_active();
+}
 static int walk_smooth_on(void);
 static void walk_smooth(const void* cur, const float dl[3], float t, float out[3]);
 static void walk_smooth_reset(void);
@@ -920,8 +929,12 @@ int gs_batch_two_pass(void) { return batch_valid && vcount && two_pass(batch_sta
 
 /* the batch: vbuf's vertices from vbo_first on, with the static runs in their places (one draw
    call each part, in order: the same primitives in the same order as one call) */
+uint64_t g_pc_draws, g_pc_prims_total, g_pc_flushes;
+unsigned g_pc_epoch_merged;   /* batches that went on over a texture upload (same texture), per second */
+unsigned g_pc_why[2][14], g_pc_why_epoch[2];   /* batch_for: the reason a draw ended, by [replay][reason 0 full,1 mode,2 prim,3 tex0,4 epoch,5 alpha,6 test,7 frame,8 zbuf,9 scissor,10 xyoffset,11 tex1/clamp,12 texa/fog/pabe,13 other] */   /* heartbeat counters (render.c logs them per second): batches drawn, primitives, flushes */
 static void draw_batch(int afail_pass)
 {
+    g_pc_draws++;
     int at = 0;
     uni1i(u_afail_pass, afail_pass);
     if (!nsruns) { glDrawArrays(batch_mode, vbo_first, vcount); return; }
@@ -1509,13 +1522,43 @@ static void batch_for(int type, const GsVertex* v, int count, const GsContext* c
 {
     DrawState st;
     batch_native.valid = 0;
-    stat_prims++;
+    stat_prims++; g_pc_prims_total++;
     GLenum mode = (type == 0) ? GL_POINTS : (type == 1) ? GL_LINES : GL_TRIANGLES;
     memset(&st, 0, sizeof(st));
     st.prim = prim & 0x7F8; st.ctx = *c; st.texa = gs.texa; st.fogcol = gs.fogcol; st.pabe = gs.pabe; st.colclamp = gs.colclamp;
     if (!(st.prim & (1 << 4))) { st.ctx.tex0 = 0; st.ctx.tex1 = 0; st.ctx.clamp = 0; }
     st.epoch = gs_tex_epoch;
+    /* In a replay a texture upload in between (only the epoch differs) ends the draw for nothing when the
+       batch's texture resolves to the same one at both epochs and no target reload lies between (the log: ~30 draws an
+       eye ended so, all else the same): the batch goes on (its epoch stays the first one) */
+    if (gs_replaying && batch_valid && vcount && mode == batch_mode && vcount + 6 <= MAX_VERTS && st.epoch != batch_state.epoch) {
+        DrawState t2 = st;
+        t2.epoch = batch_state.epoch;
+        if (!memcmp(&t2, &batch_state, sizeof(t2))) {
+            int same = 0;
+            if (!(st.prim & (1 << 4))) same = 1;   /* (no texture) */
+            else {
+                const TexMemo* a = memo_slot(st.ctx.tex0, st.texa, batch_state.epoch, 0);
+                const TexMemo* b = memo_slot(st.ctx.tex0, st.texa, st.epoch, 0);
+                if (a && b) same = a->rt >= 0 ? (b->rt == a->rt && b->ox == a->ox && b->oy == a->oy && b->is16 == a->is16 && memo_rt_ok(a))
+                                              : (b->rt < 0 && a->tex && b->tex == a->tex && b->ascale == a->ascale);
+            }
+            for (int i = 0; same && i < nreloads; i++)
+                if (!reloads[i].applied && reloads[i].epoch > batch_state.epoch && reloads[i].epoch <= st.epoch) same = 0;
+            if (same) { g_pc_epoch_merged++; batch_full_cover = 0; return; }
+        }
+    }
     if (!batch_valid || memcmp(&st, &batch_state, sizeof(st)) != 0 || mode != batch_mode || vcount + 6 > MAX_VERTS) {
+        if (batch_valid && vcount) {   /* why a draw ends here (heartbeat in render.c: [0] a game frame's execution, [1] an image's replay) */
+            extern int gs_replaying;
+            const DrawState* o = &batch_state;
+            int k = vcount + 6 > MAX_VERTS ? 0 : mode != batch_mode ? 1 : st.prim != o->prim ? 2 : st.ctx.tex0 != o->ctx.tex0 ? 3 :
+                    st.epoch != o->epoch ? 4 : st.ctx.alpha != o->ctx.alpha ? 5 : st.ctx.test != o->ctx.test ? 6 : st.ctx.frame != o->ctx.frame ? 7 :
+                    st.ctx.zbuf != o->ctx.zbuf ? 8 : st.ctx.scissor != o->ctx.scissor ? 9 : st.ctx.xyoffset != o->ctx.xyoffset ? 10 :
+                    st.ctx.tex1 != o->ctx.tex1 || st.ctx.clamp != o->ctx.clamp ? 11 : st.texa != o->texa || st.fogcol != o->fogcol || st.pabe != o->pabe ? 12 : 13;
+            g_pc_why[gs_replaying ? 1 : 0][k]++;
+            if (k == 4 && st.ctx.tex0 == o->ctx.tex0 && !memcmp(&st.ctx, &o->ctx, sizeof(st.ctx))) g_pc_why_epoch[gs_replaying ? 1 : 0]++;
+        }
         gs_flush();
         batch_state = st; batch_valid = 1; batch_mode = mode;
         batch_sprite_first = type == 6 && !(st.ctx.test & 1) && !(st.ctx.frame >> 32);
