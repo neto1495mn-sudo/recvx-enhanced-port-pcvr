@@ -188,6 +188,8 @@ static void read_ignore(const char* path)
     host_log("tex: %s: %d textures left as the game's own\n", path, nign);
 }
 
+char g_tex_dir[1024];   /* ini tex_dir: one more folder of replacements (the launcher's "add textures") */
+
 static void scan(const char* dir, int depth)
 {
     DIR* d = opendir(dir);
@@ -216,6 +218,7 @@ static void init(void)
     snprintf(dir, sizeof(dir), "%stextures", base ? base : "");
     scan(dir, 0);
     if (!tab_n && base) scan("textures", 0);   /* (started from another folder) */
+    if (g_tex_dir[0]) scan(g_tex_dir, 0);
     host_log("tex: %u replacement textures found in %s (%u other files) in %u ms\n", tab_n, dir, skipped, (unsigned)(SDL_GetTicks() - t0));
     for (int k = 0; k < nign; k++)   /* the ignore list wins over the pack */
         for (uint32_t i = 0; i < tab_cap; i++)

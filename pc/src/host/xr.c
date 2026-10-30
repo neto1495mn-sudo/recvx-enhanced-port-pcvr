@@ -14,6 +14,7 @@
 #include "xr.h"
 #include <SDL3/SDL.h>
 #include <math.h>
+#include <stdlib.h>
 #include <string.h>
 
 void host_log(const char* fmt, ...);
@@ -88,6 +89,10 @@ int64_t xr_display_time_ns(void) { return 0; }
 void   xr_recenter(void) {}
 void   xr_shutdown(void) {}
 int    xr_frame_begin(void) { return -1; }
+const char* xr_headset_name(void) { return ""; }
+void xr_quad_source(unsigned fbo) { (void)fbo; }
+void xr_screen_lock(int on, int angle) { (void)on; (void)angle; }
+int    xr_quad_pointer(float* u, float* v, int* down) { (void)u; (void)v; if (down) *down = 0; return 0; }
 const VrEye* xr_frame_eye(int e) { (void)e; return NULL; }
 unsigned int xr_eye_target(int e, int w, int h) { (void)e; (void)w; (void)h; return 0; }
 void   xr_eye_release(int e) { (void)e; }
@@ -175,6 +180,14 @@ static VrEye eyes[2];
 static int eyes_valid;
 
 static XrPosef screen_pose;     /* the cinema quad's pose in LOCAL space */
+static char headset_name[64];
+int g_vr_fps;   /* ini vr_fps: the frame-rate readout in the headset */
+float g_vr_rx_raw;   /* the right stick's x as the controller sent it, before the dropout hold (diagnosis, gs_gl.c) */
+static Chain fps_chain;
+static unsigned quad_src_fbo;   /* 0: the window's back buffer is what the cinema screen shows */
+static int screen_lock, screen_placed, screen_lock_angle;   /* the launcher: the screen stays where it appeared, a little wider */
+static float quad_dim[2];   /* the cinema quad's size in metres at its last submit */
+static int quad_dim_ok;
 static int need_center = 1;     /* recentre on the next frame */
 
 /* controller actions (Touch profile) */
@@ -305,12 +318,21 @@ static int pick_format(void)
     if (!xr_ok(xrEnumerateSwapchainFormats(sess, 256, &n, fmts), "xrEnumerateSwapchainFormats")) return 0;
     chain_fmt = 0;
 #ifdef __ANDROID__
-    /* ES cannot turn the sRGB write conversion off (GL_FRAMEBUFFER_SRGB): the plain format, the game's bytes as they are */
-    for (uint32_t i = 0; i < n && !chain_fmt; i++) if (fmts[i] == GL_RGBA8) chain_fmt = fmts[i];
+    /* The sRGB format (the default): the Quest's compositor decodes it as sRGB-encoded colour; a plain RGBA8 one it took as linear and encoded
+       again - the washed-out colours the player saw (measured by eye with him: sRGB removes it). GL_EXT_sRGB_write_control (the Quest 2 has it)
+       turns the conversion on writing off below, so the game's bytes still arrive as they are. RECVX_SRGB_CHAIN=0 (env.txt): the plain format */
+    {
+        const char* e = getenv("RECVX_SRGB_CHAIN");
+        if (e && !atoi(e)) for (uint32_t i = 0; i < n && !chain_fmt; i++) if (fmts[i] == GL_RGBA8) chain_fmt = fmts[i];
+    }
 #endif
     for (uint32_t i = 0; i < n && !chain_fmt; i++) if (fmts[i] == GL_SRGB8_ALPHA8) chain_fmt = fmts[i];
     for (uint32_t i = 0; i < n && !chain_fmt; i++) if (fmts[i] == GL_RGBA8) chain_fmt = fmts[i];
     if (!chain_fmt && n) chain_fmt = fmts[0];
+    if (chain_fmt == GL_SRGB8_ALPHA8) {
+        glDisable(GL_FRAMEBUFFER_SRGB);   /* (nothing else in the renderer writes to an sRGB target: only the headset's images) */
+        host_log("vr: swapchain format sRGB8_ALPHA8, the write conversion off\n");
+    } else host_log("vr: swapchain format 0x%llx (plain)\n", (unsigned long long)chain_fmt);
     return chain_fmt != 0;
 }
 
@@ -538,6 +560,7 @@ static void read_actions(XrTime t)
            footsteps cut; it is part of how the game plays on the headset. */
         static AxisHold hl, hr, ht;
         uint64_t now = SDL_GetTicksNS();
+        g_vr_rx_raw = in.rx;
         axis_hold(&hl, "left stick", &in.lx, &in.ly, now, STICK_HOLD_MS);
         axis_hold(&hr, "right stick", &in.rx, &in.ry, now, STICK_HOLD_MS);
         { float zero = 0.0f; axis_hold(&ht, "left trigger", &in.ltrig, &zero, now, STICK_HOLD_MS); }
@@ -602,7 +625,12 @@ static void read_actions(XrTime t)
 /* Android (Quest): the CPU and GPU clock levels (XR_EXT_performance_settings) and the threads' roles for the
    scheduler (XR_KHR_android_thread_settings) - without them the runtime keeps the app on its default levels. The
    log showed the render thread at ~50% of one core and the GPU ~15% busy, yet the frames slow (25-30 ms). */
-static int have_perf, have_threads, have_refresh;
+static int have_perf, have_threads, have_refresh, have_csb;   /* have_csb: XR_KHR_composition_layer_color_scale_bias (the brightness of the headset's layers) */
+#ifdef __ANDROID__
+static float color_scale = 1.0f;   /* the compositor's linear colour scale (a plain brightness: it blows the highlights): off; the headset's picture grade is a gamma in the present pass (gs_gl.c vr_grade_ig). RECVX_COLOR_SCALE (env.txt) for tests */
+#else
+static float color_scale = 1.0f;   /* RECVX_COLOR_SCALE (env.txt): the layers' colour scale, linear light (1.0 = as sent) */
+#endif
 static volatile int game_tid, game_tid_done;
 void xr_android_game_thread(void) { game_tid = (int)syscall(SYS_gettid); }   /* host.c: the game thread at its start */
 static void android_thread(XrAndroidThreadTypeKHR type, int tid, const char* name)
@@ -692,7 +720,7 @@ int xr_init(void)
     ici.enabledExtensionCount = sizeof(exts) / sizeof(exts[0]);
     ici.enabledExtensionNames = exts;
 #ifdef __ANDROID__
-    const char* exts_all[4];   /* the two needed, and the optional ones the runtime has (after the loader init below) */
+    const char* exts_all[8];   /* the two needed, and the optional ones the runtime has (after the loader init below) */
 #endif
 #ifdef __ANDROID__
     {   /* the loader first (XR_KHR_loader_init), then the instance, both with the app's VM and activity */
@@ -720,8 +748,10 @@ int xr_init(void)
                 if (!strcmp(ep[i].extensionName, XR_EXT_PERFORMANCE_SETTINGS_EXTENSION_NAME)) { exts_all[k++] = XR_EXT_PERFORMANCE_SETTINGS_EXTENSION_NAME; have_perf = 1; }
                 else if (!strcmp(ep[i].extensionName, XR_FB_DISPLAY_REFRESH_RATE_EXTENSION_NAME)) { exts_all[k++] = XR_FB_DISPLAY_REFRESH_RATE_EXTENSION_NAME; have_refresh = 1; }
                 else if (!strcmp(ep[i].extensionName, XR_KHR_ANDROID_THREAD_SETTINGS_EXTENSION_NAME)) { exts_all[k++] = XR_KHR_ANDROID_THREAD_SETTINGS_EXTENSION_NAME; have_threads = 1; }
+                else if (!strcmp(ep[i].extensionName, XR_KHR_COMPOSITION_LAYER_COLOR_SCALE_BIAS_EXTENSION_NAME)) { exts_all[k++] = XR_KHR_COMPOSITION_LAYER_COLOR_SCALE_BIAS_EXTENSION_NAME; have_csb = 1; }
             }
-        host_log("vr: optional extensions: performance settings %s, thread settings %s\n", have_perf ? "yes" : "no", have_threads ? "yes" : "no");
+        host_log("vr: optional extensions: performance settings %s, thread settings %s, colour scale %s\n", have_perf ? "yes" : "no", have_threads ? "yes" : "no", have_csb ? "yes" : "no");
+        if (getenv("RECVX_COLOR_SCALE")) { color_scale = (float)atof(getenv("RECVX_COLOR_SCALE")); host_log("vr: colour scale %.2f (RECVX_COLOR_SCALE)\n", (double)color_scale); }
         ici.enabledExtensionCount = k;
         ici.enabledExtensionNames = exts_all;
     }
@@ -734,7 +764,7 @@ int xr_init(void)
 
     sgi.formFactor = XR_FORM_FACTOR_HEAD_MOUNTED_DISPLAY;
     if (!xr_ok(xrGetSystem(inst, &sgi, &sys), "xrGetSystem (is the headset connected?)")) goto fail;
-    if (XR_SUCCEEDED(xrGetSystemProperties(inst, sys, &props))) host_log("vr: headset %s\n", props.systemName);
+    if (XR_SUCCEEDED(xrGetSystemProperties(inst, sys, &props))) { host_log("vr: headset %s\n", props.systemName); SDL_strlcpy(headset_name, props.systemName, sizeof(headset_name)); }
     {
         XrViewConfigurationView vcv[2] = { { XR_TYPE_VIEW_CONFIGURATION_VIEW }, { XR_TYPE_VIEW_CONFIGURATION_VIEW } };
         uint32_t nv = 0;
@@ -1107,10 +1137,79 @@ unsigned int xr_eye_target(int e, int w, int h)
 
 void xr_eye_release(int e) { if (e >= 0 && e < 2) chain_release(&eye_chain[e]); }
 
-static void end_frame(const XrCompositionLayerBaseHeader* const* layers, uint32_t n)
+/* the frame-rate readout (VR settings "Show frame rate"): "Real" = the game's own frames per second, "Interpolated" = the images
+   the headset gets. A small head-locked quad, its picture made by overlay.cpp a couple of times a second */
+extern uint64_t g_vr_frame_seq;
+extern unsigned overlay_fps_panel(int real, int shown, int* w, int* h);
+static int fps_layer(XrCompositionLayerQuad* q)
+{
+    static uint64_t t0, imgs, seq0;
+    static int real, shown, pw, ph, have;
+    uint64_t now = SDL_GetTicksNS();
+    imgs++;
+    if (!t0) { t0 = now; seq0 = g_vr_frame_seq; imgs = 0; }
+    if (now - t0 >= 500000000ull) {
+        double dt = (double)(now - t0) * 1e-9;
+        real = (int)((double)(g_vr_frame_seq - seq0) / dt + 0.5);
+        shown = (int)((double)imgs / dt + 0.5);
+        t0 = now; seq0 = g_vr_frame_seq; imgs = 0;
+        {   /* a new picture: acquire an image of the quad's swapchain, copy the panel into it */
+            unsigned src = overlay_fps_panel(real, shown, &pw, &ph);
+            GLuint tex;
+            if (src && (tex = chain_acquire(&fps_chain, pw, ph))) {
+                GLuint rfbo = 0;
+                glDisable(GL_FRAMEBUFFER_SRGB);
+                glDisable(GL_SCISSOR_TEST);
+                glGenFramebuffers(1, &rfbo);
+                glBindFramebuffer(GL_READ_FRAMEBUFFER, rfbo);
+                glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, src, 0);
+                glBindFramebuffer(GL_DRAW_FRAMEBUFFER, blit_fbo);
+                glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
+                glBlitFramebuffer(0, 0, pw, ph, 0, 0, pw, ph, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+                glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
+                glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
+                glBindFramebuffer(GL_FRAMEBUFFER, 0);
+                glDeleteFramebuffers(1, &rfbo);
+                chain_release(&fps_chain);
+                have = 1;
+            }
+        }
+    }
+    if (!have || !fps_chain.h || !view_space) return 0;
+    q->type = XR_TYPE_COMPOSITION_LAYER_QUAD;
+    q->next = NULL;
+    q->layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
+    q->space = view_space;
+    q->eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+    memset(&q->subImage, 0, sizeof(q->subImage));
+    q->subImage.swapchain = fps_chain.h;
+    q->subImage.imageRect.extent.width = fps_chain.w;
+    q->subImage.imageRect.extent.height = fps_chain.ht;
+    q->pose.orientation.x = q->pose.orientation.y = q->pose.orientation.z = 0.0f; q->pose.orientation.w = 1.0f;
+    q->pose.position.x = -0.17f; q->pose.position.y = -0.23f; q->pose.position.z = -0.9f;
+    q->size.width = 0.26f; q->size.height = 0.26f * (float)fps_chain.ht / (float)fps_chain.w;
+    return 1;
+}
+
+static void end_frame(const XrCompositionLayerBaseHeader* const* layers_in, uint32_t n)
 {
     XrFrameEndInfo ei = { XR_TYPE_FRAME_END_INFO };
+    XrCompositionLayerQuad fpsq;
+    const XrCompositionLayerBaseHeader* two[2];
+    const XrCompositionLayerBaseHeader* const* layers = layers_in;
     if (!in_frame) return;
+    if (g_vr_fps && n == 1 && fps_layer(&fpsq)) { two[0] = layers_in[0]; two[1] = (const XrCompositionLayerBaseHeader*)&fpsq; layers = two; n = 2; }
+    {   /* the brightness of the layers (the Quest's panel looks darker than the PC's picture with the sRGB format): a linear colour scale, no extra pass */
+        static XrCompositionLayerColorScaleBiasKHR csb;
+        if (have_csb && color_scale != 1.0f && color_scale > 0.1f) {
+            csb.type = XR_TYPE_COMPOSITION_LAYER_COLOR_SCALE_BIAS_KHR;
+            csb.next = NULL;
+            csb.colorScale.r = csb.colorScale.g = csb.colorScale.b = color_scale; csb.colorScale.a = 1.0f;
+            csb.colorBias.r = csb.colorBias.g = csb.colorBias.b = csb.colorBias.a = 0.0f;
+            for (uint32_t j = 0; j < n; j++)
+                if (layers[j] != (const XrCompositionLayerBaseHeader*)&fpsq) ((XrCompositionLayerBaseHeader*)layers[j])->next = &csb;
+        }
+    }
     ei.displayTime = fs.predictedDisplayTime;
     ei.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
     ei.layerCount = n;
@@ -1211,7 +1310,7 @@ void xr_frame_end_quad_rect(int x, int y, int w, int h)
     glDisable(GL_SCISSOR_TEST);
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, blit_fbo);
     glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
-    glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);   /* the window's back buffer, as just drawn */
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, quad_src_fbo);   /* the window's back buffer, as just drawn (or the launcher's own picture) */
 #ifdef __ANDROID__
     glBlitFramebuffer(x, y, x + w, y + h, 0, 0, qw, qh, GL_COLOR_BUFFER_BIT, qw != w ? GL_LINEAR : GL_NEAREST);
 #else
@@ -1226,7 +1325,7 @@ void xr_frame_end_quad_rect(int x, int y, int w, int h)
     quad.subImage.swapchain = quad_chain.h;
     quad.subImage.imageRect.extent.width = quad_chain.w;
     quad.subImage.imageRect.extent.height = quad_chain.ht;
-    {   /* the screen floats where the head looks: placed in front of the gaze when it appears,
+    if (!(screen_lock && screen_placed)) {   /* the screen floats where the head looks: placed in front of the gaze when it appears,
            then following the head's heading and pitch slowly (~1.2 s), at vr_dist */
         static float sy, sp, shp[3];
         static uint64_t last_ms;
@@ -1240,7 +1339,7 @@ void xr_frame_end_quad_rect(int x, int y, int w, int h)
             float hp[3] = { loc.pose.position.x, loc.pose.position.y, loc.pose.position.z };
             if (pitch > 0.1f) pitch = 0.1f;   /* vr100: at the eyes' height - it follows sideways, up and down only ~6 degrees */
             if (pitch < -0.1f) pitch = -0.1f;
-            if (!last_ms || now - last_ms > 500) { sy = yaw; sp = 0.0f; memcpy(shp, hp, sizeof(shp)); }   /* appears: in front, level with the eyes (even looking down) */
+            if (!last_ms || now - last_ms > 500) { sy = yaw; sp = screen_lock ? -0.08f : 0.0f; memcpy(shp, hp, sizeof(shp)); }   /* appears: in front, level with the eyes (even looking down) */
             else {
                 float dt = (now - last_ms) / 1000.0f, dy = yaw - sy;
                 while (dy > 3.14159265f) dy -= 6.2831853f;
@@ -1250,6 +1349,7 @@ void xr_frame_end_quad_rect(int x, int y, int w, int h)
                 for (int i = 0; i < 3; i++) shp[i] += (hp[i] - shp[i]) * k;
             }
             last_ms = now;
+            screen_placed = 1;
             {
                 float cy = cosf(sy * 0.5f), syh = sinf(sy * 0.5f), cp = cosf(sp * 0.5f), sph = sinf(sp * 0.5f);
                 screen_pose.orientation.x = cy * sph;   /* yaw (about y) then pitch (about x) */
@@ -1264,13 +1364,56 @@ void xr_frame_end_quad_rect(int x, int y, int w, int h)
     }
     quad.pose = screen_pose;
     {
-        float a = (float)(g_vr_screen_angle < 20 ? 20 : g_vr_screen_angle > 120 ? 120 : g_vr_screen_angle) * (3.14159265f / 360.0f);
+        int ang = screen_lock && screen_lock_angle ? screen_lock_angle : g_vr_screen_angle;
+        float a = (float)(ang < 20 ? 20 : ang > 120 ? 120 : ang) * (3.14159265f / 360.0f);
         quad.size.width = 2.0f * ((float)g_vr_screen_dist / 100.0f) * tanf(a);
     }
     quad.size.height = quad.size.width * (float)quad_chain.ht / (float)quad_chain.w;
+    quad_dim[0] = quad.size.width; quad_dim[1] = quad.size.height; quad_dim_ok = 1;   /* (xr_quad_pointer) */
     layers[0] = (const XrCompositionLayerBaseHeader*)&quad;
     chain_release(&eye_chain[0]); chain_release(&eye_chain[1]);
     end_frame(layers, 1);
+}
+
+
+/* where the right controller points on the cinema screen: u, v in 0..1 from the top left of the shown picture; 1 if it points at it.
+   *down: the trigger is pressed (the launcher's click) */
+static void quat_rot(const XrQuaternionf* q, float x, float y, float z, float* o)
+{
+    float tx = 2.0f * (q->y * z - q->z * y), ty = 2.0f * (q->z * x - q->x * z), tz = 2.0f * (q->x * y - q->y * x);
+    o[0] = x + q->w * tx + (q->y * tz - q->z * ty);
+    o[1] = y + q->w * ty + (q->z * tx - q->x * tz);
+    o[2] = z + q->w * tz + (q->x * ty - q->y * tx);
+}
+const char* xr_headset_name(void) { return headset_name; }
+void xr_quad_source(unsigned fbo) { quad_src_fbo = fbo; }
+void xr_screen_lock(int on, int angle) { screen_lock = on; screen_lock_angle = angle; screen_placed = 0; }
+int xr_quad_pointer(float* u, float* v, int* down)
+{
+    XrSpaceLocation loc = { XR_TYPE_SPACE_LOCATION };
+    VrInput in;
+    float d[3], n[3], xa[3], ya[3], c[3], p[3], den, t, h[3], dx, dy;
+    if (down) *down = 0;
+    if (!quad_dim_ok || !aim_space || !in_frame) return 0;
+    if (!XR_SUCCEEDED(xrLocateSpace(aim_space, local_space, fs.predictedDisplayTime, &loc)) ||
+        !(loc.locationFlags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT) || !(loc.locationFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT)) return 0;
+    if (down && xr_input(&in)) *down = in.rtrig > 0.6f;
+    quat_rot(&loc.pose.orientation, 0.0f, 0.0f, -1.0f, d);
+    quat_rot(&screen_pose.orientation, 0.0f, 0.0f, 1.0f, n);
+    quat_rot(&screen_pose.orientation, 1.0f, 0.0f, 0.0f, xa);
+    quat_rot(&screen_pose.orientation, 0.0f, 1.0f, 0.0f, ya);
+    p[0] = loc.pose.position.x; p[1] = loc.pose.position.y; p[2] = loc.pose.position.z;
+    c[0] = screen_pose.position.x; c[1] = screen_pose.position.y; c[2] = screen_pose.position.z;
+    den = d[0] * n[0] + d[1] * n[1] + d[2] * n[2];
+    if (den > -1e-4f) return 0;   /* parallel, or pointing away */
+    t = ((c[0] - p[0]) * n[0] + (c[1] - p[1]) * n[1] + (c[2] - p[2]) * n[2]) / den;
+    if (t < 0.05f) return 0;
+    for (int i = 0; i < 3; i++) h[i] = p[i] + d[i] * t - c[i];
+    dx = h[0] * xa[0] + h[1] * xa[1] + h[2] * xa[2];
+    dy = h[0] * ya[0] + h[1] * ya[1] + h[2] * ya[2];
+    *u = 0.5f + dx / quad_dim[0];
+    *v = 0.5f - dy / quad_dim[1];
+    return *u >= 0.0f && *u <= 1.0f && *v >= 0.0f && *v <= 1.0f;
 }
 
 void xr_shutdown(void)

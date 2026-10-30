@@ -16,6 +16,10 @@ extern "C" {
 #include "../gs/stream.h"
 #include "tps.h"
 extern "C" int xr_active(void);   /* vr132 */
+extern "C" {
+#include "xr.h"
+}
+
 #include "menu_mouse.h"
 #include "bindings.h"
 #include "settings.h"
@@ -29,6 +33,9 @@ extern "C" int xr_active(void);   /* vr132 */
 #include <math.h>
 #include <string.h>
 #include <stdio.h>
+#include <vector>
+#include <sys/stat.h>
+#include <string>
 
 extern "C" void pad_set_game_input_enabled(int on);
 
@@ -1199,3 +1206,768 @@ extern "C" int overlay_launcher(void)
     }
     return result;
 }
+
+/* ---- the in-headset frame-rate readout (ini vr_fps, VR settings "Show frame rate"): a small panel drawn with ImGui into its own
+   picture (512 x 96, transparent around a dark rounded box), which xr.c shows as a head-locked quad. "Real" is the game's own
+   frames per second (30), "Interpolated" what the headset gets (90). Called a couple of times a second, never from inside an
+   ImGui frame. Returns the GL texture (0 if the overlay is not ready). */
+extern "C" unsigned overlay_fps_panel(int real, int shown, int* w, int* h)
+{
+    static GLuint fbo, tex;
+    static int lang = -1;
+    const int PWID = 512, PHEI = 96;
+    char line[96];
+    if (!ready) return 0;
+    if (lang < 0) {   /* the device's language, as the launcher: pt, es, else English */
+        int nl = 0;
+        SDL_Locale** loc = SDL_GetPreferredLocales(&nl);
+        lang = 0;
+        if (loc && nl > 0 && loc[0] && loc[0]->language) {
+            if (!SDL_strcasecmp(loc[0]->language, "pt")) lang = 1;
+            else if (!SDL_strcasecmp(loc[0]->language, "es")) lang = 2;
+        }
+        SDL_free(loc);
+    }
+    if (!fbo) {
+        glGenTextures(1, &tex);
+        glBindTexture(GL_TEXTURE_2D, tex);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, PWID, PHEI, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glGenFramebuffers(1, &fbo);
+        glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    }
+    *w = PWID; *h = PHEI;
+    SDL_snprintf(line, sizeof line, "Real %d    %s %d", real, lang == 0 ? "Interpolated" : "Interpolado", shown);
+    ImGuiIO& io = ImGui::GetIO();
+    ImVec2 old_ds = io.DisplaySize, old_fs = io.DisplayFramebufferScale;
+    io.DisplaySize = ImVec2((float)PWID, (float)PHEI);
+    io.DisplayFramebufferScale = ImVec2(1, 1);
+    ImGui_ImplOpenGL3_NewFrame();
+    ImGui::NewFrame();
+    ImGui::SetNextWindowPos(ImVec2(0, 0));
+    ImGui::SetNextWindowSize(ImVec2((float)PWID, (float)PHEI));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(0, 0, 0, 0));
+    ImGui::Begin("##fpspanel", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoBackground);
+    ImGui::PopStyleColor();
+    ImGui::PopStyleVar(2);
+    {
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        ImFont* f = ImGui::GetFont();
+        float fs = 34.0f;
+        ImVec2 ts = f->CalcTextSizeA(fs, FLT_MAX, 0.0f, line);
+        dl->AddRectFilled(ImVec2(2, 2), ImVec2(PWID - 2.0f, PHEI - 2.0f), IM_COL32(8, 7, 9, 190), 26.0f);
+        dl->AddRect(ImVec2(2, 2), ImVec2(PWID - 2.0f, PHEI - 2.0f), IM_COL32(190, 40, 48, 255), 26.0f, 0, 2.5f);
+        dl->AddText(f, fs, ImVec2((PWID - ts.x) * 0.5f, (PHEI - ts.y) * 0.5f), IM_COL32(245, 240, 235, 255), line);
+    }
+    ImGui::End();
+    ImGui::Render();
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    glDisable(GL_SCISSOR_TEST);
+    glViewport(0, 0, PWID, PHEI);
+    glClearColor(0, 0, 0, 0);
+    glClear(GL_COLOR_BUFFER_BIT);
+    ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    io.DisplaySize = old_ds;
+    io.DisplayFramebufferScale = old_fs;
+    return tex;
+}
+
+#ifdef __ANDROID__
+/* ---- Quest: the launcher in the headset. A 16:9 panel on the cinema screen (black all around, fixed in front), the right
+   controller points at it (xr_quad_pointer), the trigger clicks. First start: the disc image through the launcher's own
+   file browser (the "all files" permission asked first); later: Play / Settings tabs, change the disc, add a folder of
+   textures, the update from GitHub. The language is the device's (pt, es, else English). Runs after xr_init, before the
+   game starts. The layout follows the approved mockup (1000 px wide there, 1280 here: every size is the mockup's x 1.28);
+   it is drawn at twice that resolution so the text is sharp in the headset. */
+extern "C" {
+const char* xr_headset_name(void);
+int xr_frame_begin(void);
+void xr_frame_end_quad_rect(int x, int y, int w, int h);
+void xr_frame_end_none(void);
+int xr_quad_pointer(float* u, float* v, int* down);
+void xr_quad_source(unsigned fbo);
+float gs_vr_grade_ig(void);
+void xr_screen_lock(int on, int angle);
+int xr_input(VrInput* out);
+int host_disc_ok(void);
+int host_disc_set(const char* path);
+int and_all_files(void);
+void and_all_files_request(void);
+int and_can_install(void);
+void and_request_install(void);
+void and_update_check(const char* cur);
+int and_update_state(void);
+int and_update_pct(void);
+void and_update_download(void);
+void and_update_tag(char* out, int n);
+extern const char* g_vr_version;
+extern char g_tex_dir[1024];
+extern const unsigned char g_launcher_umbrella[];
+extern const int g_launcher_umbrella_size;
+extern const unsigned char g_launcher_band[];
+extern const int g_launcher_band_size;
+extern const unsigned char g_launcher_font[];
+extern const int g_launcher_font_size;
+unsigned char* stbi_load_from_memory(const unsigned char* buffer, int len, int* x, int* y, int* comp, int req_comp);
+}
+enum { Q_PLAY, Q_TAB_PLAY, Q_TAB_SET, Q_READY, Q_CHANGE_DISC, Q_CHOOSE_DISC, Q_DISC_TITLE, Q_DISC_TEXT, Q_DISC_BAD, Q_RES, Q_REC, Q_TURN, Q_COMFORT, Q_SIGHT, Q_HDTEX,
+       Q_SMOOTH, Q_OFF, Q_MEDIUM, Q_STRONG, Q_LASER, Q_DOT, Q_NOSIGHT, Q_ON, Q_APPLIED, Q_EXIT, Q_ADD_TEX, Q_TEX_OK, Q_PERM_TITLE, Q_PERM_TEXT, Q_PERM_BTN, Q_BACK, Q_UP,
+       Q_USE_FOLDER, Q_EMPTY, Q_UPD_NEW, Q_UPD_GET, Q_UPD_PERM, Q_UPD_DOWN, Q_UPD_INSTALL, Q_UPD_FAIL, Q_UPD_RETRY, Q_PICK_ISO, Q_PICK_DIR, Q_STORAGE, Q_DOCUMENTS, Q_CANCEL, Q_NO_ISO, Q_HINT_ISO, Q_HINT_DIR, Q_HINT_PICK, Q_TAB_DISC, Q_TAB_TEX, Q_HINT_POINT, Q_DISC_PAGE, Q_DISC_OK, Q_TEX_PAGE, Q_F_DEVICE, Q_OKSHORT, Q_N };
+static const char* const q_text[3][Q_N] = {
+    { "PLAY", "Play", "Settings", "Ready to play", "Change disc", "Choose disc", "Choose the game disc", "Select the .iso of your Resident Evil Code: Veronica X (SLUS-20184). You only do this once.",
+      "That file could not be opened. Choose another one.", "Resolution", "recommended", "Turning", "Comfort", "Aim", "HD textures",
+      "Smooth", "Off", "Medium", "Strong", "Laser", "Dot", "None", "On", "recommended settings applied", "Exit", "Add textures", "Textures folder added",
+      "Allow access to files", "The launcher needs permission to see your files, so you can choose the disc and the textures. On the next screen, turn the option on for this app, then come back.",
+      "Allow", "Back", "Up", "Use this folder", "Nothing here", "New version %s available", "Download and install",
+      "To install it, allow this app to install updates. Turn the option on, then come back.", "Downloading...", "Confirm the installation in the system window", "The update failed", "Try again",
+      "Choose the disc (.iso)", "Choose the textures folder", "Storage", "Documents", "Cancel", "No disc images here", "Open the folders until you find your .iso file.", "This folder is empty. Open another folder, or use this one.", "Tap a .iso file to choose it", "Disc", "Textures", "Point with the right controller and pull the trigger to interact.", "Choose another disc image, for example one in another language.", "Disc ready", "Optional. Add a folder with replacement textures.", "Device", "Ready" },
+    { "JOGAR", "Jogar", "Configurações", "Pronto para jogar", "Trocar disco", "Escolher disco", "Escolha o disco do jogo", "Selecione o .iso do seu Resident Evil Code: Veronica X (SLUS-20184). Você só faz isso uma vez.",
+      "Esse arquivo não pôde ser aberto. Escolha outro.", "Resolução", "recomendado", "Giro", "Conforto", "Mira", "Texturas HD",
+      "Suave", "Desligado", "Médio", "Forte", "Laser", "Ponto", "Sem mira", "Ligado", "configuração recomendada aplicada", "Sair", "Adicionar texturas", "Pasta de texturas adicionada",
+      "Permitir acesso aos arquivos", "O launcher precisa de permissão para ver seus arquivos, para você escolher o disco e as texturas. Na próxima tela, ative a opção deste app e volte aqui.",
+      "Permitir", "Voltar", "Subir", "Usar esta pasta", "Nada aqui", "Nova versão %s disponível", "Baixar e instalar",
+      "Para instalar, permita que este app instale atualizações. Ative a opção e volte aqui.", "Baixando...", "Confirme a instalação na janela do sistema", "A atualização falhou", "Tentar de novo",
+      "Escolha o disco (.iso)", "Escolha a pasta de texturas", "Armazenamento", "Documentos", "Cancelar", "Nenhum disco (.iso) aqui", "Abra as pastas até achar o seu arquivo .iso.", "Esta pasta está vazia. Abra outra pasta, ou use esta.", "Toque em um arquivo .iso para escolher", "Disco", "Texturas", "Apontar com o controle direito e puxar o gatilho para interagir.", "Escolha outra imagem de disco, por exemplo de outro idioma.", "Disco pronto", "Opcional. Adicione uma pasta com texturas de substituição.", "Aparelho", "Pronto" },
+    { "JUGAR", "Jugar", "Configuración", "Listo para jugar", "Cambiar disco", "Elegir disco", "Elige el disco del juego", "Selecciona el .iso de tu Resident Evil Code: Veronica X (SLUS-20184). Solo lo haces una vez.",
+      "No se pudo abrir ese archivo. Elige otro.", "Resolución", "recomendado", "Giro", "Comodidad", "Mira", "Texturas HD",
+      "Suave", "Apagado", "Medio", "Fuerte", "Láser", "Punto", "Sin mira", "Activado", "configuración recomendada aplicada", "Salir", "Agregar texturas", "Carpeta de texturas agregada",
+      "Permitir acceso a los archivos", "El launcher necesita permiso para ver tus archivos y así elegir el disco y las texturas. En la siguiente pantalla, activa la opción de esta app y vuelve aquí.",
+      "Permitir", "Volver", "Subir", "Usar esta carpeta", "Nada aquí", "Nueva versión %s disponible", "Descargar e instalar",
+      "Para instalar, permite que esta app instale actualizaciones. Activa la opción y vuelve aquí.", "Descargando...", "Confirma la instalación en la ventana del sistema", "La actualización falló", "Reintentar",
+      "Elige el disco (.iso)", "Elige la carpeta de texturas", "Almacenamiento", "Documentos", "Cancelar", "No hay discos (.iso) aquí", "Abre las carpetas hasta encontrar tu archivo .iso.", "Esta carpeta está vacía. Abre otra carpeta, o usa esta.", "Toca un archivo .iso para elegirlo", "Disco", "Texturas", "Apunta con el control derecho y tira del gatillo para interactuar.", "Elige otra imagen de disco, por ejemplo en otro idioma.", "Disco listo", "Opcional. Agrega una carpeta con texturas de reemplazo.", "Dispositivo", "Listo" },
+};
+
+/* the launcher's file browser: folders first, then the .iso files (disc) - or only folders (textures) */
+struct QEntry { char name[256]; bool dir; double size; };
+static struct { char path[1024]; QEntry* e; int n, cap; } qb;
+static SDL_EnumerationResult SDLCALL qb_cb(void* ud, const char* dirname, const char* fname)
+{
+    bool want_files = *(bool*)ud;
+    char full[1400];
+    struct stat st;   /* (the plain stat: SDL's path info fails on a disc image over 2 GB in this 32-bit build, and the image was left out of the list) */
+    if (fname[0] == '.') return SDL_ENUM_CONTINUE;
+    SDL_snprintf(full, sizeof full, "%s%s%s", dirname, dirname[SDL_strlen(dirname) - 1] == '/' ? "" : "/", fname);
+    if (stat(full, &st) != 0) return SDL_ENUM_CONTINUE;
+    bool dir = S_ISDIR(st.st_mode);
+    if (!dir) {
+        size_t l = SDL_strlen(fname);
+        if (!want_files || l < 5 || SDL_strcasecmp(fname + l - 4, ".iso")) return SDL_ENUM_CONTINUE;
+    }
+    if (qb.n == qb.cap) { qb.cap = qb.cap ? qb.cap * 2 : 128; qb.e = (QEntry*)SDL_realloc(qb.e, qb.cap * sizeof(QEntry)); }
+    SDL_strlcpy(qb.e[qb.n].name, fname, sizeof qb.e[qb.n].name);
+    qb.e[qb.n].dir = dir;
+    qb.e[qb.n].size = (double)st.st_size;
+    qb.n++;
+    return SDL_ENUM_CONTINUE;
+}
+static int qb_cmp(const void* a, const void* b)
+{
+    const QEntry* x = (const QEntry*)a;
+    const QEntry* y = (const QEntry*)b;
+    if (x->dir != y->dir) return x->dir ? -1 : 1;
+    return SDL_strcasecmp(x->name, y->name);
+}
+static void qb_open(const char* path, bool want_files)
+{
+    SDL_strlcpy(qb.path, path, sizeof qb.path);
+    qb.n = 0;
+    SDL_EnumerateDirectory(qb.path, qb_cb, &want_files);
+    if (qb.n > 1) qsort(qb.e, qb.n, sizeof(QEntry), qb_cmp);
+}
+static void qb_up(bool want_files)
+{
+    char* s = strrchr(qb.path, '/');
+    if (!s || s == qb.path || SDL_strlen(qb.path) <= SDL_strlen("/storage/emulated/0")) return;
+    char up[1024];
+    SDL_strlcpy(up, qb.path, sizeof up);
+    up[s - qb.path] = 0;
+    qb_open(up, want_files);
+}
+
+extern "C" int overlay_launcher_xr(void)
+{
+    static const float PW = 1260.0f, PH = 760.0f, K = 1.28f, SS = 2.0f;   /* panel size; the mockup's scale; the drawing's oversampling */
+    static const int turn_v[] = { 0, 30, 45, 90 };
+    static const int comfort_v[] = { 0, 2, 3 };
+    static const int sight_v[] = { 2, 1, 0 };
+    enum { S_MAIN, S_PERM, S_BROWSE };
+    int lang = 0, q3 = 0, rec, tab = 0, bad = 0, done = 0, pw = 0, ph = 0, scr = S_MAIN, browse_mode = 0, scroll = 0, tex_ok = 0, upd_perm = 0, upd_asked = 0;
+    float scrollf = 0.0f;
+    GLuint pic = 0, fbo = 0, fbo_tex = 0;
+    uint64_t t_last = SDL_GetTicksNS();
+    const char* hn = xr_headset_name();
+    ImFont* font = nullptr;
+    if (!ready) return 1;
+    {   /* the device's language: pt, es, anything else English */
+        int nl = 0;
+        SDL_Locale** loc = SDL_GetPreferredLocales(&nl);
+        if (loc && nl > 0 && loc[0] && loc[0]->language) {
+            if (!SDL_strcasecmp(loc[0]->language, "pt")) lang = 1;
+            else if (!SDL_strcasecmp(loc[0]->language, "es")) lang = 2;
+        }
+        SDL_free(loc);
+    }
+    q3 = hn && (SDL_strstr(hn, "Quest 3") != NULL || SDL_strstr(hn, "Quest3") != NULL);
+    rec = q3 ? 3 : 2;   /* the Quest 2's older chip: 2x; the Quest 3: 3x */
+    if (g_config.scale != rec && !(q3 && g_config.scale == rec + 1)) { g_config.scale = rec; config_save(); }   /* the recommended one (on a Quest 3 also one step above it): anything else goes back to it */
+    host_log("launcher: headset '%s' language %d recommended resolution %dx\n", hn ? hn : "", lang, rec);
+    {   /* the system's own font (Roboto) */
+        static const char* const paths[] = { "/system/fonts/Roboto-Regular.ttf", "/system/fonts/RobotoStatic-Regular.ttf", "/system/fonts/DroidSans.ttf" };
+        static const ImWchar ranges[] = { 0x20, 0x17F, 0x2000, 0x206F, 0xB0, 0xB7, 0 };
+        for (const char* p : paths) {
+            if (FILE* f = fopen(p, "rb")) { fclose(f); font = ImGui::GetIO().Fonts->AddFontFromFileTTF(p, 32.0f, nullptr, ranges); if (font) break; }
+        }
+    }
+    ImFont* fontC = nullptr;   /* Chakra Petch SemiBold for the titles and buttons: a technical lettering, not too round */
+    {
+        ImFontConfig fc;
+        fc.FontDataOwnedByAtlas = false;
+        fontC = ImGui::GetIO().Fonts->AddFontFromMemoryTTF((void*)g_launcher_font, g_launcher_font_size, 32.0f, &fc, nullptr);
+    }
+    GLuint texUmb = 0, texBand = 0;   /* the Umbrella emblem and the bar-code band, cut from the reference card */
+    int umbW = 1, umbH = 1, bandW = 1, bandH = 1;
+    {
+        struct { const unsigned char* d; int n; GLuint* t; int* w; int* h; } im[2] = { { g_launcher_umbrella, g_launcher_umbrella_size, &texUmb, &umbW, &umbH }, { g_launcher_band, g_launcher_band_size, &texBand, &bandW, &bandH } };
+        for (int k = 0; k < 2; k++) {
+            int nn = 0;
+            unsigned char* px = stbi_load_from_memory(im[k].d, im[k].n, im[k].w, im[k].h, &nn, 4);
+            if (!px) continue;
+            for (int q = 0; q < *im[k].w * *im[k].h; q++)   /* the headset's grade, as on the game (once, here) */
+                for (int ch = 0; ch < 3; ch++) px[q * 4 + ch] = (unsigned char)(255.0f * powf(px[q * 4 + ch] / 255.0f, gs_vr_grade_ig()) + 0.5f);
+            glGenTextures(1, im[k].t);
+            glBindTexture(GL_TEXTURE_2D, *im[k].t);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, *im[k].w, *im[k].h, 0, GL_RGBA, GL_UNSIGNED_BYTE, px);
+            stbi_image_free(px);
+        }
+    }
+    {   /* the panel is drawn into its own picture at twice the size */
+        glGenTextures(1, &fbo_tex);
+        glBindTexture(GL_TEXTURE_2D, fbo_tex);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, (int)(PW * SS), (int)(PH * SS), 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glGenFramebuffers(1, &fbo);
+        glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, fbo_tex, 0);
+        if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) { host_log("launcher: the panel's picture cannot be made\n"); fbo = 0; }
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    }
+    ImGuiIO& io = ImGui::GetIO();
+    ImGui::GetStyle().FontScaleDpi = 1.0f;
+    io.DisplayFramebufferScale = ImVec2(SS, SS);
+    xr_screen_lock(1, 42);   /* fixed in front, like the headset's own panels */
+    and_update_check(g_vr_version ? g_vr_version : "0.0.0");
+    while (!done) {
+        SDL_Event ev;
+        while (SDL_PollEvent(&ev)) if (ev.type == SDL_EVENT_QUIT) exit(0);   /* (not passed on to ImGui: the controller is the pointer) */
+        int fr = xr_frame_begin();
+        if (fr != 1) { if (fr == 0) xr_frame_end_none(); continue; }
+        uint64_t now = SDL_GetTicksNS();
+        float dt = (float)(now - t_last) * 1e-9f;
+        t_last = now;
+        if (dt < 0.001f) dt = 0.001f;
+        if (dt > 0.1f) dt = 0.1f;
+        float mu = 0, mv = 0;
+        int down = 0, point = xr_quad_pointer(&mu, &mv, &down);
+        VrInput vin;
+        float stick = xr_input(&vin) ? (fabsf(vin.ry) > fabsf(vin.ly) ? vin.ry : vin.ly) : 0.0f;
+        io.DisplaySize = ImVec2(PW, PH);
+        io.DeltaTime = dt;
+        if (point) io.AddMousePosEvent(mu * PW, mv * PH); else io.AddMousePosEvent(-FLT_MAX, -FLT_MAX);
+        io.AddMouseButtonEvent(0, point && down);
+        ImGui_ImplOpenGL3_NewFrame();
+        ImGui::NewFrame();
+        ImGui::SetNextWindowPos(ImVec2(0, 0));
+        ImGui::SetNextWindowSize(ImVec2(PW, PH));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+        ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(8, 7, 9, 255));
+        ImGui::Begin("##qlauncher", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoScrollbar);
+        ImGui::PopStyleColor();
+        ImGui::PopStyleVar(2);
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        ImFont* F = font ? font : ImGui::GetFont();
+        const char* const* T = q_text[lang];
+        const float topH = 112.0f;
+        const bool disc = host_disc_ok() != 0;
+        const ImU32 cWhite = IM_COL32(245, 240, 235, 255), cGray = IM_COL32(154, 146, 139, 255), cDim = IM_COL32(122, 114, 107, 255), cRed = IM_COL32(224, 48, 56, 255);
+        const ImU32 cBtn = IM_COL32(19, 17, 15, 255), cBtnLine = IM_COL32(106, 90, 82, 255), cPlay = IM_COL32(168, 35, 42, 255);
+        const float FS = 1.15f;               /* every text size is scaled by this: the headset needs bigger letters */
+        ImFont* FR = F;                       /* Roboto: paragraphs, paths, file names */
+        ImFont* FC = fontC ? fontC : F;       /* Chakra Petch SemiBold: titles, tabs, buttons */
+        auto text = [&](float x, float y, float sz, ImU32 c, const char* s) { dl->AddText(FC, sz * FS, ImVec2(x, y), c, s); };
+        auto tw = [&](float sz, const char* s) { return FC->CalcTextSizeA(sz * FS, FLT_MAX, 0.0f, s).x; };
+        auto textR = [&](float x, float y, float sz, ImU32 c, const char* s) { dl->AddText(FR, sz * FS, ImVec2(x, y), c, s); };
+        auto twR = [&](float sz, const char* s) { return FR->CalcTextSizeA(sz * FS, FLT_MAX, 0.0f, s).x; };
+        /* a button: (x, y, w, h) in panel pixels, fs the font size, bg the fill, line the border */
+        auto button = [&](const char* id, const char* label, float x, float y, float w, float h, float fs, ImU32 bg, ImU32 line, float lw, float rad) -> bool {
+            ImGui::SetCursorPos(ImVec2(x, y));
+            ImGui::InvisibleButton(id, ImVec2(w, h));
+            bool hov = ImGui::IsItemHovered(), clicked = ImGui::IsItemDeactivated() && hov;
+            dl->AddRectFilled(ImVec2(x, y), ImVec2(x + w, y + h), bg, rad);
+            if (hov) dl->AddRectFilled(ImVec2(x, y), ImVec2(x + w, y + h), IM_COL32(255, 80, 80, 40), rad);
+            dl->AddRect(ImVec2(x, y), ImVec2(x + w, y + h), hov ? IM_COL32(255, 96, 104, 255) : line, rad, 0, lw);
+            if (label[0]) text(x + (w - tw(fs, label)) * 0.5f, y + (h - fs) * 0.5f - 1.0f, fs, cWhite, label);
+            return clicked;
+        };
+        /* where the file browser starts */
+        auto browse_start = [&](int mode) {
+            if (!and_all_files()) { scr = S_PERM; browse_mode = mode; return; }
+            static const char* const starts[] = { "/storage/emulated/0/Download", "/storage/emulated/0" };
+            browse_mode = mode; scroll = 0; scrollf = 0.0f; scr = S_BROWSE;
+            qb_open(starts[0], mode == 1);
+            if (qb.n == 0 && !SDL_GetPathInfo(starts[0], nullptr)) qb_open(starts[1], mode == 1);
+        };
+        {   /* test aid (env.txt RECVX_LAUNCHER_SCR = perm / browse / browse_dir / settings): starts on that screen, for the pictures */
+            static int once;
+            const char* ts = SDL_getenv("RECVX_LAUNCHER_SCR");
+            if (ts && !once++) {
+                if (!SDL_strcmp(ts, "settings")) tab = 3;
+                else if (!SDL_strcmp(ts, "tab1")) tab = 1;
+                else if (!SDL_strcmp(ts, "tab2")) tab = 2;
+                else if (!SDL_strcmp(ts, "perm")) { scr = S_PERM; browse_mode = 1; }
+                else if (!SDL_strcmp(ts, "browse")) browse_start(1);
+                else if (!SDL_strcmp(ts, "browse_iso")) { browse_start(1); qb_open("/storage/emulated/0/Download/MoonlightXR", true); }
+                else if (!SDL_strcmp(ts, "browse_dir")) browse_start(2);
+            }
+        }
+        /* the background: a dark red glow behind the panel's middle */
+        for (int i = 0; i < 7; i++) dl->AddCircleFilled(ImVec2(PW * 0.62f, PH * 0.5f), 560.0f - i * 70.0f, IM_COL32(110, 8, 14, 6 + i * 3), 64);
+        /* the top bar: the title (two colours) on the left, the four tabs on the right, a hairline under it */
+        {   /* the game's name, large and heavy */
+            float x = 40.0f;
+            text(x, 24.0f, 46.0f, cRed, "RE");
+            x += tw(46.0f, "RE") + 20.0f;
+            text(x, 24.0f, 46.0f, cWhite, "CODE: VERONICA X");
+            x += tw(46.0f, "CODE: VERONICA X") + 20.0f;
+            text(x, 24.0f, 46.0f, cRed, "VR");
+            x += tw(46.0f, "VR") + 14.0f;
+            text(x, 56.0f, 14.0f, cWhite, "STANDALONE");
+        }
+        if (disc && scr == S_MAIN) {
+            const char* tabs[4] = { T[Q_TAB_PLAY], T[Q_TAB_DISC], T[Q_TAB_TEX], T[Q_TAB_SET] };
+            float tx = PW - 40.0f;
+            for (int k = 3; k >= 0; k--) {
+                float w = tw(20.0f, tabs[k]) + 40.0f;
+                tx -= w;
+                bool on = tab == k;
+                char tid[16];
+                SDL_snprintf(tid, sizeof tid, "##tab%d", k);
+                if (button(tid, tabs[k], tx, 32.0f, w, 46.0f, 20.0f, on ? IM_COL32(58, 26, 24, 255) : IM_COL32(24, 21, 21, 255), on ? cRed : IM_COL32(52, 46, 46, 255), 1.5f, 8.0f)) tab = k;
+                tx -= 8.0f;
+            }
+        }
+        dl->AddLine(ImVec2(40.0f, topH), ImVec2(PW - 40.0f, topH), IM_COL32(43, 35, 38, 255), 1.0f);
+        const float cx = scr == S_MAIN ? 600.0f : 60.0f, right = PW - 50.0f;
+        const float by = 150.0f;   /* the body's top: level with the top of the emblem */
+        if (scr == S_PERM) {   /* the "all files" permission, then on to the browser */
+            text(cx, by + 20.0f, 36.0f, cWhite, T[Q_PERM_TITLE]);
+            dl->AddText(FR, FS * 20.0f, ImVec2(cx, by + 80.0f), cGray, T[Q_PERM_TEXT], nullptr, right - cx);
+            if (and_all_files()) browse_start(browse_mode);
+            else if (button("##perm", T[Q_PERM_BTN], cx, by + 200.0f, 260.0f, 56.0f, 22.0f, cPlay, cRed, 1.5f, 8.0f)) and_all_files_request();
+            if (button("##permback", T[Q_BACK], cx + 280.0f, by + 200.0f, 200.0f, 56.0f, 22.0f, cBtn, cBtnLine, 1.5f, 8.0f)) scr = S_MAIN;
+        } else if (scr == S_BROWSE) {   /* the file browser: back button + clickable path, shortcuts on the left, the list, a scroll bar */
+            const bool files = browse_mode == 1;
+            static const char* const ROOT = "/storage/emulated/0";
+            const float hdrY = by + 30.0f, hdrH = 50.0f, sideW = 210.0f, listX = cx + sideW + 18.0f, listW = right - listX - 22.0f;
+            const float top = hdrY + hdrH + 14.0f, bot = PH - 100.0f, rowH = 52.0f;
+            const int vis = (int)((bot - top) / rowH);
+            const bool atRoot = SDL_strlen(qb.path) <= SDL_strlen(ROOT);
+            if (fabsf(stick) > 0.25f) scrollf -= stick * dt * 16.0f;   /* the thumbstick scrolls */
+            if (scrollf > qb.n - vis) scrollf = (float)(qb.n - vis);
+            if (scrollf < 0) scrollf = 0;
+            scroll = (int)scrollf;
+            text(cx, by - 8.0f, 30.0f, cWhite, files ? T[Q_PICK_ISO] : T[Q_PICK_DIR]);   /* what is being chosen: the disc (.iso) or a folder of textures */
+            /* the header: back, then the path as clickable pieces */
+            if (button("##bkb", "", cx, hdrY, 56.0f, hdrH, 20.0f, cBtn, cBtnLine, 1.5f, 10.0f)) {
+                if (atRoot) scr = S_MAIN; else { qb_up(files); scrollf = 0; }
+            }
+            {   /* the arrow, drawn */
+                float ax = cx + 28.0f, ay = hdrY + hdrH * 0.5f;
+                dl->AddLine(ImVec2(ax + 9.0f, ay), ImVec2(ax - 9.0f, ay), cWhite, 3.0f);
+                dl->AddLine(ImVec2(ax - 9.0f, ay), ImVec2(ax - 1.0f, ay - 8.0f), cWhite, 3.0f);
+                dl->AddLine(ImVec2(ax - 9.0f, ay), ImVec2(ax - 1.0f, ay + 8.0f), cWhite, 3.0f);
+            }
+            {
+                float px = cx + 70.0f;
+                char acc[1024];
+                SDL_strlcpy(acc, ROOT, sizeof acc);
+                const char* rest = qb.path + (SDL_strlen(qb.path) >= SDL_strlen(ROOT) ? SDL_strlen(ROOT) : SDL_strlen(qb.path));
+                std::vector<std::pair<std::string, std::string>> crumbs;   /* (label, full path) */
+                crumbs.push_back({ T[Q_STORAGE], ROOT });
+                while (*rest == '/') {
+                    const char* e = strchr(rest + 1, '/');
+                    std::string seg(rest + 1, e ? (size_t)(e - rest - 1) : strlen(rest + 1));
+                    SDL_strlcat(acc, "/", sizeof acc);
+                    SDL_strlcat(acc, seg.c_str(), sizeof acc);
+                    crumbs.push_back({ seg, acc });
+                    rest = e ? e : rest + strlen(rest);
+                }
+                size_t from = 0;   /* too many pieces: the first ones are left out */
+                float total = 0;
+                for (size_t k = 0; k < crumbs.size(); k++) total += twR(19.0f, crumbs[k].first.c_str()) + 36.0f;
+                while (crumbs.size() - from > 1 && total > right - px - 170.0f) { total -= twR(19.0f, crumbs[from].first.c_str()) + 36.0f; from++; }
+                if (from) { textR(px, hdrY + 14.0f, 19.0f, cDim, "…  >"); px += 56.0f; }
+                for (size_t k = from; k < crumbs.size(); k++) {
+                    bool last = k + 1 == crumbs.size();
+                    float w = twR(19.0f, crumbs[k].first.c_str());
+                    char id[24];
+                    SDL_snprintf(id, sizeof id, "##crumb%d", (int)k);
+                    ImGui::SetCursorPos(ImVec2(px - 6.0f, hdrY));
+                    ImGui::InvisibleButton(id, ImVec2(w + 12.0f, hdrH));
+                    bool hov = ImGui::IsItemHovered(), clk = ImGui::IsItemDeactivated() && hov;
+                    textR(px, hdrY + (hdrH - 19.0f) * 0.5f - 1.0f, 19.0f, last ? cWhite : (hov ? cWhite : cGray), crumbs[k].first.c_str());
+                    if (hov && !last) dl->AddLine(ImVec2(px, hdrY + hdrH - 10.0f), ImVec2(px + w, hdrY + hdrH - 10.0f), cRed, 2.0f);
+                    if (clk && !last) { qb_open(crumbs[k].second.c_str(), files); scrollf = 0; break; }
+                    px += w;
+                    if (!last) { textR(px + 10.0f, hdrY + (hdrH - 19.0f) * 0.5f - 1.0f, 19.0f, cDim, ">"); px += 36.0f; }
+                }
+            }
+            /* the shortcuts */
+            {
+                struct Sc { const char* label; const char* path; };
+                const Sc sc[3] = { { T[Q_STORAGE], "/storage/emulated/0" }, { "Download", "/storage/emulated/0/Download" }, { T[Q_DOCUMENTS], "/storage/emulated/0/Documents" } };
+                for (int k = 0; k < 3; k++) {
+                    float y = top + k * 56.0f;
+                    char id[24];
+                    SDL_snprintf(id, sizeof id, "##sc%d", k);
+                    ImGui::SetCursorPos(ImVec2(cx, y));
+                    ImGui::InvisibleButton(id, ImVec2(sideW, 48.0f));
+                    bool hov = ImGui::IsItemHovered(), clk = ImGui::IsItemDeactivated() && hov, cur = !SDL_strcmp(qb.path, sc[k].path);
+                    dl->AddRectFilled(ImVec2(cx, y), ImVec2(cx + sideW, y + 48.0f), cur ? IM_COL32(58, 26, 24, 255) : (hov ? IM_COL32(40, 28, 28, 255) : IM_COL32(19, 17, 15, 255)), 9.0f);
+                    if (cur) dl->AddRect(ImVec2(cx, y), ImVec2(cx + sideW, y + 48.0f), cRed, 9.0f, 0, 1.5f);
+                    dl->AddRectFilled(ImVec2(cx + 14.0f, y + 17.0f), ImVec2(cx + 36.0f, y + 33.0f), IM_COL32(196, 54, 62, 255), 3.0f);   /* a folder */
+                    dl->AddRectFilled(ImVec2(cx + 14.0f, y + 13.0f), ImVec2(cx + 24.0f, y + 19.0f), IM_COL32(196, 54, 62, 255), 2.0f);
+                    textR(cx + 48.0f, y + (48.0f - 18.0f) * 0.5f - 1.0f, 18.0f, cWhite, sc[k].label);
+                    if (clk) { qb_open(sc[k].path, files); scrollf = 0; }
+                }
+            }
+            /* the list */
+            dl->AddRectFilled(ImVec2(listX, top), ImVec2(listX + listW, bot), IM_COL32(14, 12, 12, 255), 10.0f);
+            for (int i = 0; i < vis && scroll + i < qb.n; i++) {
+                const QEntry& e = qb.e[scroll + i];
+                float y = top + i * rowH;
+                char id[24];
+                SDL_snprintf(id, sizeof id, "##e%d", i);
+                ImGui::SetCursorPos(ImVec2(listX, y));
+                ImGui::InvisibleButton(id, ImVec2(listW, rowH));
+                bool hov = ImGui::IsItemHovered(), clicked = ImGui::IsItemDeactivated() && hov;
+                if (hov) dl->AddRectFilled(ImVec2(listX + 4.0f, y + 2.0f), ImVec2(listX + listW - 4.0f, y + rowH - 2.0f), IM_COL32(58, 26, 24, 255), 8.0f);
+                else if ((scroll + i) & 1) dl->AddRectFilled(ImVec2(listX + 4.0f, y + 2.0f), ImVec2(listX + listW - 4.0f, y + rowH - 2.0f), IM_COL32(20, 18, 18, 255), 8.0f);
+                float iy = y + rowH * 0.5f;
+                if (e.dir) {   /* a folder icon */
+                    dl->AddRectFilled(ImVec2(listX + 20.0f, iy - 11.0f), ImVec2(listX + 44.0f, iy + 11.0f), IM_COL32(196, 54, 62, 255), 4.0f);
+                    dl->AddRectFilled(ImVec2(listX + 20.0f, iy - 15.0f), ImVec2(listX + 32.0f, iy - 8.0f), IM_COL32(196, 54, 62, 255), 3.0f);
+                } else {   /* a disc icon */
+                    dl->AddCircleFilled(ImVec2(listX + 32.0f, iy), 13.0f, IM_COL32(232, 226, 220, 255), 24);
+                    dl->AddCircleFilled(ImVec2(listX + 32.0f, iy), 7.0f, IM_COL32(196, 54, 62, 255), 16);
+                    dl->AddCircleFilled(ImVec2(listX + 32.0f, iy), 4.5f, IM_COL32(14, 12, 12, 255), 16);
+                }
+                {   /* the name, cut with "..." before it reaches the size or the chevron */
+                    char nm[300];
+                    float avail = listW - 62.0f - (e.dir ? 60.0f : 170.0f);
+                    SDL_strlcpy(nm, e.name, sizeof nm);
+                    if (twR(20.0f, nm) > avail) {
+                        size_t l = SDL_strlen(nm);
+                        while (l > 4 && twR(20.0f, nm) > avail) { nm[--l] = 0; if (l > 3) { nm[l - 1] = '.'; nm[l - 2] = '.'; nm[l - 3] = '.'; } }
+                    }
+                    textR(listX + 62.0f, iy - 10.0f, 20.0f, cWhite, nm);
+                }
+                if (e.dir) {   /* a chevron */
+                    float xx = listX + listW - 34.0f;
+                    dl->AddLine(ImVec2(xx, iy - 8.0f), ImVec2(xx + 8.0f, iy), cGray, 2.5f);
+                    dl->AddLine(ImVec2(xx + 8.0f, iy), ImVec2(xx, iy + 8.0f), cGray, 2.5f);
+                } else {
+                    char sz[32];
+                    double mb = e.size / 1048576.0;
+                    if (mb >= 1024.0) SDL_snprintf(sz, sizeof sz, "%.2f GB", mb / 1024.0); else SDL_snprintf(sz, sizeof sz, "%.0f MB", mb);
+                    textR(listX + listW - 30.0f - twR(17.0f, sz), iy - 9.0f, 17.0f, cGray, sz);
+                }
+                if (clicked) {
+                    char np[1400];
+                    SDL_snprintf(np, sizeof np, "%s/%s", qb.path, e.name);
+                    if (e.dir) { qb_open(np, files); scrollf = 0; break; }
+                    if (host_disc_set(np) > 0) { scr = S_MAIN; bad = 0; } else bad = 1;
+                    break;
+                }
+            }
+            if (qb.n == 0) {
+                textR(listX + 30.0f, top + 28.0f, 22.0f, cGray, files ? T[Q_NO_ISO] : T[Q_EMPTY]);
+                dl->AddText(FR, FS * 17.0f, ImVec2(listX + 30.0f, top + 64.0f), cDim, files ? T[Q_HINT_ISO] : T[Q_HINT_DIR], nullptr, listW - 60.0f);
+            }
+            if (qb.n > vis) {   /* the scroll bar: a track, a thumb, a page up / page down at its ends */
+                float tx = listX + listW + 6.0f, tt = top + 40.0f, tb = bot - 40.0f, th = fmaxf(36.0f, (tb - tt) * vis / qb.n);
+                float frac = qb.n > vis ? scrollf / (qb.n - vis) : 0.0f;
+                dl->AddRectFilled(ImVec2(tx, tt), ImVec2(tx + 12.0f, tb), IM_COL32(30, 26, 26, 255), 6.0f);
+                dl->AddRectFilled(ImVec2(tx, tt + (tb - tt - th) * frac), ImVec2(tx + 12.0f, tt + (tb - tt - th) * frac + th), IM_COL32(150, 60, 62, 255), 6.0f);
+                if (button("##sup", "", tx - 8.0f, top, 28.0f, 36.0f, 16.0f, cBtn, cBtnLine, 1.0f, 6.0f)) scrollf -= vis - 1;
+                if (button("##sdn", "", tx - 8.0f, bot - 36.0f, 28.0f, 36.0f, 16.0f, cBtn, cBtnLine, 1.0f, 6.0f)) scrollf += vis - 1;
+                dl->AddTriangleFilled(ImVec2(tx + 6.0f, top + 12.0f), ImVec2(tx - 1.0f, top + 22.0f), ImVec2(tx + 13.0f, top + 22.0f), cWhite);
+                dl->AddTriangleFilled(ImVec2(tx - 1.0f, bot - 22.0f), ImVec2(tx + 13.0f, bot - 22.0f), ImVec2(tx + 6.0f, bot - 12.0f), cWhite);
+            }
+            /* the footer: cancel, and in the textures mode the folder being looked at */
+            const float fy = PH - 82.0f;
+            if (button("##bcancel", T[Q_CANCEL], cx, fy, 190.0f, 54.0f, 20.0f, cBtn, cBtnLine, 1.5f, 9.0f)) scr = S_MAIN;
+            if (!files) {
+                if (button("##buse", T[Q_USE_FOLDER], right - 360.0f, fy, 360.0f, 54.0f, 21.0f, cPlay, cRed, 2.0f, 9.0f)) {
+                    SDL_strlcpy(g_tex_dir, qb.path, sizeof g_tex_dir);
+                    g_tex_hd = 1; config_save(); tex_ok = 1; scr = S_MAIN;
+                }
+            } else textR(right - twR(17.0f, T[Q_HINT_PICK]), fy + 18.0f, 17.0f, cDim, T[Q_HINT_PICK]);
+        } else {   /* the main screen: the picture and the hint on the left, the tab's page on the right (the reference image) */
+            const char* dev = hn && hn[0] ? (SDL_strstr(hn, "Quest2") ? "Quest 2" : hn) : "Quest";
+            {   /* the Umbrella emblem on the left, the card's own "Security Clearance" bar-code band along the bottom */
+                if (texUmb) dl->AddImage((ImTextureID)(intptr_t)texUmb, ImVec2(112.0f, 157.0f), ImVec2(112.0f + 376.0f, 157.0f + 376.0f * umbH / umbW));
+                if (texBand) {
+                    float bw = 640.0f, bh = bw * bandH / bandW;
+                    dl->AddImage((ImTextureID)(intptr_t)texBand, ImVec2((PW - bw) * 0.5f, PH - bh - 44.0f), ImVec2((PW + bw) * 0.5f, PH - 44.0f));
+                }
+            }
+            if (!disc) {   /* first start: only the disc */
+                text(cx, by + 20.0f, 42.0f, cWhite, T[Q_DISC_TITLE]);
+                dl->AddText(FR, FS * 21.0f, ImVec2(cx, by + 84.0f), cGray, T[Q_DISC_TEXT], nullptr, right - cx);
+                if (bad) text(cx, by + 190.0f, 19.0f, IM_COL32(240, 120, 110, 255), T[Q_DISC_BAD]);
+                if (button("##disc", T[Q_CHOOSE_DISC], cx, by + 230.0f, 330.0f, 72.0f, 26.0f, cPlay, cRed, 2.0f, 12.0f)) browse_start(1);
+            } else if (tab == 0) {   /* play */
+                char sub[160];
+                text(cx, by, 44.0f, cWhite, T[Q_READY]);
+                SDL_snprintf(sub, sizeof sub, "%s", T[Q_APPLIED]);
+                text(cx, by + 58.0f, 20.0f, cGray, sub);
+                {   /* the card's lines: label in grey, value in white */
+                    char v1[64], v2[64];
+                    SDL_snprintf(v1, sizeof v1, "%dx", g_config.scale ? g_config.scale : rec);
+                    SDL_snprintf(v2, sizeof v2, "%s", T[Q_OKSHORT]);
+                    const char* lab[2] = { T[Q_RES], T[Q_TAB_DISC] };
+                    const char* val[2] = { v1, v2 };
+                    for (int k = 0; k < 2; k++) {
+                        float fy = by + 100.0f + k * 38.0f;
+                        text(cx, fy, 20.0f, cGray, lab[k]);
+                        text(cx + 190.0f, fy, 20.0f, cWhite, val[k]);
+                        dl->AddLine(ImVec2(cx, fy + 36.0f), ImVec2(right, fy + 36.0f), IM_COL32(38, 32, 30, 255), 1.0f);
+                    }
+                }
+                float y = by + 206.0f;
+                {   /* the update */
+                    int us = and_update_state();
+                    char tag[64], msg[160];
+                    and_update_tag(tag, sizeof tag);
+                    if (us == 3 || us == 4 || us == 5 || us == 6) {
+                        float bw = right - cx, bh = 62.0f;
+                        dl->AddRectFilled(ImVec2(cx, y), ImVec2(cx + bw, y + bh), us == 6 ? IM_COL32(70, 22, 24, 255) : IM_COL32(18, 52, 30, 255), 12.0f);
+                        dl->AddRect(ImVec2(cx, y), ImVec2(cx + bw, y + bh), us == 6 ? IM_COL32(200, 70, 70, 255) : IM_COL32(60, 150, 90, 255), 12.0f, 0, 1.5f);
+                        dl->AddCircleFilled(ImVec2(cx + 26.0f, y + bh * 0.5f), 7.0f, us == 6 ? IM_COL32(240, 110, 100, 255) : IM_COL32(60, 220, 110, 255), 16);
+                        const float ty = y + (bh - 20.0f) * 0.5f - 1.0f;
+                        if (us == 3) {
+                            SDL_snprintf(msg, sizeof msg, T[Q_UPD_NEW], tag);
+                            text(cx + 46.0f, ty, 20.0f, cWhite, msg);
+                            const char* bl = upd_perm ? T[Q_PERM_BTN] : T[Q_UPD_GET];
+                            float w = tw(18.0f, bl) + 40.0f;
+                            if (button("##upd", bl, cx + bw - w - 12.0f, y + 10.0f, w, bh - 20.0f, 18.0f, IM_COL32(20, 90, 40, 255), IM_COL32(111, 224, 140, 255), 1.5f, 8.0f)) {
+                                if (!and_can_install()) { upd_perm = 1; and_request_install(); }
+                                else { upd_perm = 0; and_update_download(); }
+                            }
+                            if (upd_perm) { if (and_can_install()) upd_perm = 0; else dl->AddText(FR, FS * 16.0f, ImVec2(cx + 46.0f, y + bh + 6.0f), cGray, T[Q_UPD_PERM], nullptr, bw); }
+                        } else if (us == 4) {
+                            SDL_snprintf(msg, sizeof msg, "%s %d%%", T[Q_UPD_DOWN], and_update_pct());
+                            text(cx + 46.0f, ty, 20.0f, cWhite, msg);
+                        } else if (us == 5) text(cx + 46.0f, ty, 20.0f, cWhite, T[Q_UPD_INSTALL]);
+                        else {
+                            text(cx + 46.0f, ty, 20.0f, cWhite, T[Q_UPD_FAIL]);
+                            float w = tw(18.0f, T[Q_UPD_RETRY]) + 40.0f;
+                            if (button("##updr", T[Q_UPD_RETRY], cx + bw - w - 12.0f, y + 10.0f, w, bh - 20.0f, 18.0f, IM_COL32(80, 20, 20, 255), cWhite, 1.5f, 8.0f)) and_update_download();
+                        }
+                        y += bh + (upd_perm && us == 3 ? 40.0f : 22.0f);
+                    }
+                    (void)upd_asked;
+                }
+                {   /* the PLAY button: its bottom level with the emblem's, a gradient and a bevel */
+                    const float py = 530.0f - 104.0f, ph2 = 104.0f;   /* (the emblem's bottom: 150 + 380) */
+                    for (int g = 0; g < 16; g++) {   /* a smooth gradient: 16 clipped strips, light at the top, dark at the bottom */
+                        float t = g / 15.0f;
+                        dl->PushClipRect(ImVec2(cx, py + ph2 * g / 16.0f), ImVec2(right, py + ph2 * (g + 1) / 16.0f + 0.5f), true);
+                        dl->AddRectFilled(ImVec2(cx, py), ImVec2(right, py + ph2), IM_COL32((int)(196 - 70 * t), (int)(42 - 18 * t), (int)(50 - 18 * t), 255), 14.0f);
+                        dl->PopClipRect();
+                    }
+                    dl->AddRect(ImVec2(cx + 3.0f, py + 3.0f), ImVec2(right - 3.0f, py + ph2 - 3.0f), IM_COL32(255, 140, 140, 70), 12.0f, 0, 1.5f);
+                    if (button("##play", T[Q_PLAY], cx, py, right - cx, ph2, 46.0f, IM_COL32(0, 0, 0, 0), cRed, 3.0f, 14.0f)) done = 1;
+                }
+            } else if (tab == 1) {   /* disc */
+                text(cx, by, 44.0f, cWhite, T[Q_TAB_DISC]);
+                dl->AddText(FR, FS * 21.0f, ImVec2(cx, by + 62.0f), cGray, T[Q_DISC_PAGE], nullptr, right - cx);
+                text(cx, by + 130.0f, 22.0f, IM_COL32(111, 224, 140, 255), T[Q_DISC_OK]);
+                if (bad) text(cx, by + 170.0f, 19.0f, IM_COL32(240, 120, 110, 255), T[Q_DISC_BAD]);
+                if (button("##change", T[Q_CHANGE_DISC], cx, by + 210.0f, 330.0f, 72.0f, 26.0f, cPlay, cRed, 2.0f, 12.0f)) browse_start(1);
+            } else if (tab == 2) {   /* textures */
+                text(cx, by, 44.0f, cWhite, T[Q_TAB_TEX]);
+                dl->AddText(FR, FS * 21.0f, ImVec2(cx, by + 62.0f), cGray, T[Q_TEX_PAGE], nullptr, right - cx);
+                if (tex_ok || g_tex_dir[0]) text(cx, by + 130.0f, 22.0f, IM_COL32(111, 224, 140, 255), T[Q_TEX_OK]);
+                if (button("##addtex", T[Q_ADD_TEX], cx, by + 210.0f, 330.0f, 72.0f, 26.0f, cPlay, cRed, 2.0f, 12.0f)) browse_start(2);
+            } else {   /* settings */
+                float y = by;
+                const float rowH = 76.0f;   /* five rows = the emblem's height (380) */
+                char id[32];
+                auto row = [&](const char* label) {
+                    text(cx, y + (rowH - 21.0f) * 0.5f - 1.0f, 21.0f, cWhite, label);
+                    dl->AddLine(ImVec2(cx, y + rowH), ImVec2(right, y + rowH), IM_COL32(38, 32, 30, 255), 1.0f);
+                };
+                auto seg = [&](const char* sid, const char* label, float x, float w, bool on, bool recd) -> bool {
+                    return button(sid, label, x, y + (rowH - 44.0f) * 0.5f, w, 44.0f, 19.0f, on ? IM_COL32(58, 26, 24, 255) : IM_COL32(0, 0, 0, 0), on ? cRed : (recd ? IM_COL32(47, 180, 87, 255) : IM_COL32(90, 74, 69, 255)), 1.5f, 8.0f);
+                };
+                {   /* resolution: 1x, 2x (and 3x on a Quest 3), the recommended one with a green border */
+                    row(T[Q_RES]);
+                    float x = right;
+                    for (int v = q3 ? rec + 1 : rec; v >= rec; v--) {   /* only the recommended resolution (and, on a stronger headset, the one above it) */
+                        char lb[48];
+                        if (v == rec) SDL_snprintf(lb, sizeof lb, "%dx  %s", v, T[Q_REC]); else SDL_snprintf(lb, sizeof lb, "%dx", v);
+                        float w = tw(19.0f, lb) + 32.0f;
+                        x -= w;
+                        SDL_snprintf(id, sizeof id, "##res%d", v);
+                        if (seg(id, lb, x, w, g_config.scale == v, v == rec)) { g_config.scale = v; config_save(); }
+                        x -= 8.0f;
+                    }
+                    y += rowH;
+                }
+                {   /* turning */
+                    const char* lb[4] = { T[Q_SMOOTH], "30°", "45°", "90°" };
+                    row(T[Q_TURN]);
+                    float x = right;
+                    for (int v = 3; v >= 0; v--) {
+                        float w = tw(19.0f, lb[v]) + 32.0f;
+                        x -= w;
+                        SDL_snprintf(id, sizeof id, "##turn%d", v);
+                        if (seg(id, lb[v], x, w, g_vr_turn == turn_v[v], false)) { g_vr_turn = turn_v[v]; config_save(); }
+                        x -= 8.0f;
+                    }
+                    y += rowH;
+                }
+                {   /* comfort */
+                    const char* lb[3] = { T[Q_OFF], T[Q_MEDIUM], T[Q_STRONG] };
+                    row(T[Q_COMFORT]);
+                    float x = right;
+                    for (int v = 2; v >= 0; v--) {
+                        float w = tw(19.0f, lb[v]) + 32.0f;
+                        x -= w;
+                        SDL_snprintf(id, sizeof id, "##comf%d", v);
+                        if (seg(id, lb[v], x, w, g_vr_comfort == comfort_v[v], false)) { g_vr_comfort = comfort_v[v]; config_save(); }
+                        x -= 8.0f;
+                    }
+                    y += rowH;
+                }
+                {   /* aim */
+                    const char* lb[3] = { T[Q_LASER], T[Q_DOT], T[Q_NOSIGHT] };
+                    row(T[Q_SIGHT]);
+                    float x = right;
+                    for (int v = 2; v >= 0; v--) {
+                        float w = tw(19.0f, lb[v]) + 32.0f;
+                        x -= w;
+                        SDL_snprintf(id, sizeof id, "##sight%d", v);
+                        if (seg(id, lb[v], x, w, g_vr_sight == sight_v[v], false)) { g_vr_sight = sight_v[v]; config_save(); }
+                        x -= 8.0f;
+                    }
+                    y += rowH;
+                }
+                {   /* HD textures */
+                    const char* lb[2] = { T[Q_OFF], T[Q_ON] };
+                    row(T[Q_HDTEX]);
+                    float x = right;
+                    for (int v = 1; v >= 0; v--) {
+                        float w = tw(19.0f, lb[v]) + 32.0f;
+                        x -= w;
+                        SDL_snprintf(id, sizeof id, "##hd%d", v);
+                        if (seg(id, lb[v], x, w, (g_tex_hd != 0) == (v != 0), false)) { g_tex_hd = v; config_save(); }
+                        x -= 8.0f;
+                    }
+                }
+            }
+        }
+        {   /* the window's rounded corners: the corners outside the rounding are painted black (the world around it is black) */
+            const float R = 62.0f;
+            for (int c = 0; c < 4; c++) {
+                float sx = (c & 1) ? -1.0f : 1.0f, sy = (c & 2) ? -1.0f : 1.0f;
+                ImVec2 C((c & 1) ? PW : 0.0f, (c & 2) ? PH : 0.0f), O(C.x + sx * R, C.y + sy * R), prev(C.x, C.y + sy * R);
+                for (int i = 1; i <= 24; i++) {
+                    float th = 1.5707963f * i / 24.0f;
+                    ImVec2 q(O.x - sx * R * cosf(th), O.y - sy * R * sinf(th));
+                    dl->AddTriangleFilled(C, prev, q, IM_COL32(0, 0, 0, 255));
+                    prev = q;
+                }
+            }
+        }
+        if (scr == S_MAIN) {   /* bottom right: the version, level with the bottom of the bar-code band */
+            char ft[96];
+            SDL_snprintf(ft, sizeof ft, "v%s  ·  90 Hz", g_vr_version ? g_vr_version : "");
+            text(PW - 50.0f - tw(15.0f, ft), PH - 44.0f - 24.0f, 15.0f, cDim, ft);
+        }
+        if (point) {   /* where the controller points */
+            ImVec2 m(mu * PW, mv * PH);
+            dl->AddCircleFilled(m, 8.0f, IM_COL32(111, 224, 140, down ? 255 : 200));
+            dl->AddCircle(m, 11.0f, IM_COL32(20, 60, 30, 230), 24, 2.0f);
+        }
+        ImGui::End();
+        ImGui::Render();
+        {   /* the headset's grade on every colour the panel draws (the fonts are white masks tinted by these) */
+            static unsigned char lut[256];
+            static float lut_ig = -1.0f;
+            float ig = gs_vr_grade_ig();
+            if (ig != lut_ig) { lut_ig = ig; for (int q = 0; q < 256; q++) lut[q] = (unsigned char)(255.0f * powf(q / 255.0f, ig) + 0.5f); }
+            ImDrawData* dd = ImGui::GetDrawData();
+            for (int ln = 0; ln < dd->CmdListsCount; ln++) {
+                ImDrawList* l = dd->CmdLists[ln];
+                for (int vi = 0; vi < l->VtxBuffer.Size; vi++) {
+                    unsigned char* c = (unsigned char*)&l->VtxBuffer[vi].col;   /* ABGR in memory: R, G, B, A */
+                    c[0] = lut[c[0]]; c[1] = lut[c[1]]; c[2] = lut[c[2]];
+                }
+            }
+        }
+        glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+        glDisable(GL_SCISSOR_TEST);
+        glViewport(0, 0, (int)(PW * SS), (int)(PH * SS));
+        glClearColor(0, 0, 0, 1);
+        glClear(GL_COLOR_BUFFER_BIT);
+        ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+        xr_quad_source(fbo);
+        xr_frame_end_quad_rect(0, 0, (int)(PW * SS), (int)(PH * SS));
+        xr_quad_source(0);
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        {   /* test aid (env.txt RECVX_LAUNCHER_SHOT=1): the panel as a picture, once - launcher_shot.bmp in the app's folder */
+            static int nshot;
+            if (SDL_getenv("RECVX_LAUNCHER_SHOT") && ++nshot == 90) {
+                unsigned char* px = (unsigned char*)SDL_malloc(2520 * 1520 * 4);   /* (not static: the game library must fit the PS2 address window, android/loader.c) */
+                glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+                glReadPixels(0, 0, 2520, 1520, GL_RGBA, GL_UNSIGNED_BYTE, px);
+                glBindFramebuffer(GL_FRAMEBUFFER, 0);
+                if (FILE* f = fopen("launcher_shot.bmp", "wb")) {
+                    unsigned char hd[54] = { 'B', 'M' };
+                    unsigned int sz = 54 + 2520 * 1520 * 3, off = 54, hs = 40, w = 2520, h = 1520;
+                    unsigned short pl = 1, bp = 24;
+                    memcpy(hd + 2, &sz, 4); memcpy(hd + 10, &off, 4); memcpy(hd + 14, &hs, 4); memcpy(hd + 18, &w, 4); memcpy(hd + 22, &h, 4); memcpy(hd + 26, &pl, 2); memcpy(hd + 28, &bp, 2);
+                    fwrite(hd, 1, 54, f);
+                    for (int y = 0; y < 1520; y++)
+                        for (int x = 0; x < 2520; x++) { const unsigned char* q = px + (y * 2520 + x) * 4; unsigned char bgr[3] = { q[2], q[1], q[0] }; fwrite(bgr, 1, 3, f); }
+                    fclose(f);
+                    host_log("launcher: picture written (launcher_shot.bmp)\n");
+                }
+            }
+        }
+        SDL_GL_SwapWindow(win);
+    }
+    io.DisplayFramebufferScale = ImVec2(1.0f, 1.0f);
+    if (texUmb) glDeleteTextures(1, &texUmb);
+    if (texBand) glDeleteTextures(1, &texBand);
+    if (fbo) glDeleteFramebuffers(1, &fbo);
+    if (fbo_tex) glDeleteTextures(1, &fbo_tex);
+    xr_screen_lock(0, 0);
+    g_vr_request = 1;
+    config_save();
+    return 1;
+}
+#endif

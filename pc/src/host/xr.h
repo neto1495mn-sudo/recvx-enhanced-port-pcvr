@@ -74,5 +74,9 @@ void         xr_frame_end_held(void);             /* the eye images at the last 
 void         xr_frame_end_quad(int w, int h);     /* the window's back buffer (w x h) on the cinema screen */
 void         xr_frame_end_quad_rect(int x, int y, int w, int h);   /* a part of it (the game's picture) */
 void         xr_frame_end_none(void);
+void         xr_screen_lock(int on, int angle);   /* the cinema screen stays where it appears (angle: its width in degrees, 0 = the usual); the launcher */
+void         xr_quad_source(unsigned fbo);   /* the cinema screen shows this framebuffer (0: the window's back buffer) */
+const char*  xr_headset_name(void);   /* the runtime's name for the headset ("" before xr_init) */
+int          xr_quad_pointer(float* u, float* v, int* down);   /* the right controller's ray on the cinema screen (0..1 from the top left); the trigger */
 
 #endif

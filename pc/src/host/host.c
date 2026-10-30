@@ -83,8 +83,13 @@ float pc_overlay_x(float x)
     return overlay_stretch ? 320.0f + (x - 320.0f) * pc_hor_scale() : x;
 }
 
+#ifdef __ANDROID__
+#define PC_DEF_CINEMA_BARS 2   /* the headset: no cutscene bars (the setting is hidden until the code; config.c moves older saved files) */
+#else
+#define PC_DEF_CINEMA_BARS 1
+#endif
 HostConfig g_config = { .window_w = 1280, .window_h = 960, .vsync = 1, .log_level = 1, .music_volume = 100, .sfx_volume = 100, .interpolate = 1, .frame_blend = 0, .aspect = 2, .show_fps = 1, .show_ping = 1,
-                       .screen_filter = 1, .cinema_bars = 1, .screen_effects = 1, .native_3d = 1, .model_cull = 1, .native_tex = 1, .quick_knife = 1,
+                       .screen_filter = 1, .cinema_bars = PC_DEF_CINEMA_BARS, .screen_effects = 1, .native_3d = 1, .model_cull = 1, .native_tex = 1, .quick_knife = 1,
                        .skip_doors = 1, .skip_intro = 1, .battle_unlocked = 1, .contrast = 100, .gamma = 10 };   /* first-start defaults; recvx.ini overrides */
 SDL_Window* g_window;
 SDL_GLContext g_gl;
@@ -277,6 +282,75 @@ static void pick_iso(void)
     while (!SDL_GetAtomicInt(&done)) { SDL_Event ev; SDL_WaitEventTimeout(&ev, 50); }
 }
 
+#ifdef __ANDROID__
+/* Quest: the disc image is chosen inside the headset launcher (overlay.cpp overlay_launcher_xr): the system's file selector
+   in the background, the launcher polls for the answer */
+static int disc_ok;
+static SDL_AtomicInt disc_pick_done;
+static char disc_pick_path[1024];
+static void disc_prepare(void)
+{
+    extern void fontsz_from_iso(void);
+    extern void plates_from_iso(void);
+    fontsz_from_iso();
+    plates_from_iso();
+}
+int host_disc_ok(void) { return disc_ok; }
+static void SDLCALL disc_cb(void* ud, const char* const* files, int filter)
+{
+    (void)ud; (void)filter;
+    disc_pick_path[0] = 0;
+    if (!files) host_log("file selector: %s\n", SDL_GetError());
+    else if (files[0]) SDL_strlcpy(disc_pick_path, files[0], sizeof(disc_pick_path));
+    SDL_SetAtomicInt(&disc_pick_done, 1);
+}
+void host_disc_pick_start(void)
+{
+    static const SDL_DialogFileFilter filters[] = { { "PS2 disc image (*.iso)", "iso" }, { "All files", "*" } };
+    SDL_PropertiesID props = SDL_CreateProperties();
+    SDL_SetAtomicInt(&disc_pick_done, 0);
+    SDL_SetPointerProperty(props, SDL_PROP_FILE_DIALOG_FILTERS_POINTER, (void*)filters);
+    SDL_SetNumberProperty(props, SDL_PROP_FILE_DIALOG_NFILTERS_NUMBER, SDL_arraysize(filters));
+    SDL_ShowFileDialogWithProperties(SDL_FILEDIALOG_OPENFILE, disc_cb, NULL, props);
+    SDL_DestroyProperties(props);
+}
+/* a disc image from the launcher's own file browser: 1 open (and remembered), -2 would not open (the old one stays) */
+int host_disc_set(const char* path)
+{
+    char old[1024];
+    SDL_strlcpy(old, g_config.iso_path, sizeof(old));
+    if (!cdvd_open_image(path)) {
+        host_log("launcher: cannot open the chosen disc image '%s'\n", path);
+        if (old[0]) cdvd_open_image(old);
+        return -2;
+    }
+    SDL_strlcpy(g_config.iso_path, path, sizeof(g_config.iso_path));
+    config_save();
+    disc_ok = 1;
+    disc_prepare();
+    return 1;
+}
+/* 0 still choosing, 1 a new disc is open, -1 nothing chosen, -2 the file would not open (the old disc stays) */
+int host_disc_pick_poll(void)
+{
+    char old[1024];
+    if (!SDL_GetAtomicInt(&disc_pick_done)) return 0;
+    SDL_SetAtomicInt(&disc_pick_done, 0);
+    if (!disc_pick_path[0]) return -1;
+    SDL_strlcpy(old, g_config.iso_path, sizeof(old));
+    if (!cdvd_open_image(disc_pick_path)) {
+        host_log("launcher: cannot open the chosen disc image '%s'\n", disc_pick_path);
+        if (old[0]) cdvd_open_image(old);
+        return -2;
+    }
+    SDL_strlcpy(g_config.iso_path, disc_pick_path, sizeof(g_config.iso_path));
+    config_save();
+    disc_ok = 1;
+    disc_prepare();
+    return 1;
+}
+#endif
+
 /* The game (the decomp's main loop, VU, GIF recording) runs on its own thread; the main
    thread renders (host/render.c). */
 static int SDLCALL game_thread(void* ud)
@@ -364,6 +438,10 @@ int main(int argc, char** argv)
     bind_apply_source();   /* Gamepad only: gamepads also in the background */
     { extern void update_check(void); update_check(); }   /* VR: a newer release on GitHub (host/update.c) */
 
+#ifdef __ANDROID__
+    disc_ok = g_config.iso_path[0] && cdvd_open_image(g_config.iso_path);   /* (the launcher asks for it when it is missing) */
+    if (disc_ok) disc_prepare();
+#else
     if (!iso_given && (!g_config.iso_path[0] || !cdvd_open_image(g_config.iso_path))) {
         pick_iso();
         if (!g_config.iso_path[0]) { usage(); host_fatal("no game disc image selected (or start with: recvx <image.iso>)"); }
@@ -375,6 +453,7 @@ int main(int argc, char** argv)
     }
     { extern void fontsz_from_iso(void); fontsz_from_iso(); }
     { extern void plates_from_iso(void); plates_from_iso(); }   /* vr151: the title's plate texture (glue/font_glue.c) */   /* vr138: translations' letter widths (glue/font_glue.c) */
+#endif
 
 #ifdef __ANDROID__
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);   /* Android (Quest): OpenGL ES 3.2 - the shaders are converted (gs_gl.c compile) */
@@ -405,14 +484,20 @@ int main(int argc, char** argv)
     SDL_GL_SetSwapInterval(g_config.vsync ? 1 : 0);
     gs_renderer_init();
     overlay_init(g_window, g_gl);   /* (before the launcher; it was after xr_init) */
+#ifndef __ANDROID__
     if (g_launcher && !no_launcher) {   /* vr120: the launcher - VR or desktop, the VR and graphics settings (overlay.cpp) */
         extern int overlay_launcher(void);
         if (!overlay_launcher()) exit(0);
     }
+#endif
     if (xr_init() && g_vr_stereo) {   /* --vr: after the GL entry points are loaded */
         g_tps.on = 1;              /* stereo needs the free camera: the third-person hook hands it to the head */
         g_config.interpolate = 1;  /* replays of the executed frame (eyes, cinema in-betweens) */
     }
+#ifdef __ANDROID__
+    if (!no_launcher && !SDL_getenv("RECVX_NO_LAUNCHER")) { extern int overlay_launcher_xr(void); overlay_launcher_xr(); }   /* in the headset, before the game starts */
+    if (!disc_ok) host_fatal("no game disc image selected");
+#endif
     audio_init();
 
     stream_init();

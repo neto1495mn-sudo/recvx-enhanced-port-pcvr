@@ -424,9 +424,29 @@ static const char* present_fs =
     "  o = vec4(c, 1.0);\n"
     "}\n";
 
+/* The headset's picture grade: a gamma curve (1 / g) on the game's own picture as it is drawn onto the eye images, the cinema screen and the launcher,
+   in the same present pass (no extra pass). The Quest 2's LCD shows the game's colours darker than the PC does; a plain brightness scale
+   (the compositor's colour scale) brightens linearly and blows the highlights white, a gamma curve lifts the mid-tones and keeps the whites.
+   Android: 1.6 (measured by eye with the player: 1.7 was too light, 1.4 too dark); RECVX_VR_GAMMA (env.txt) overrides (1 = none). */
+static float vr_grade_ig(void)
+{
+    static int init;
+    static float ig = 1.0f;
+    if (!init) {
+        const char* e = SDL_getenv("RECVX_VR_GAMMA");
+        init = 1;
+#ifdef __ANDROID__
+        ig = 1.0f / 1.6f;
+#endif
+        if (e) { float g = (float)SDL_atof(e); if (g > 0.2f) ig = 1.0f / g; }
+    }
+    return ig;
+}
+
 static int picture(float* b, float* k, float* ig)
 {
     *b = g_config.brightness / 200.0f; *k = g_config.contrast / 100.0f; *ig = 10.0f / (g_config.gamma > 0 ? g_config.gamma : 10);
+    if (xr_active() && vr_grade_ig() != 1.0f) { *ig *= vr_grade_ig(); return 1; }   /* the headset's grade (the cinema screen: draw_display) */
     return g_config.brightness != 0 || g_config.contrast != 100 || g_config.gamma != 10;
 }
 float gs_picture(float c)
@@ -4061,6 +4081,7 @@ static void draw_area_to(GLuint tex, int rt_vw, int rt_vh, int w, int h)
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glUniform1i(up_tex, 0);
+    glUniform4f(up_pic, 0.0f, 1.0f, vr_grade_ig(), vr_grade_ig() != 1.0f ? 1.0f : 0.0f);   /* the headset's grade, in this pass */
     glUniform4f(up_rect, x0 / rt_vw, 0.0f, (x0 + dw) / rt_vw, 480.0f / rt_vh);
     glBindVertexArray(present_vao);
     glDrawArrays(0x0005 /* GL_TRIANGLE_STRIP */, 0, 4);
@@ -4140,6 +4161,9 @@ static void hold_keep_and_dim(int e, int w, int h, GLuint cur)
         glDisable(GL_BLEND);
     }
 }
+/* the headset's grade as a gamma exponent (1 = none): the launcher grades its own colours and pictures with it (overlay.cpp) */
+float gs_vr_grade_ig(void) { return vr_grade_ig(); }
+
 /* a held frame: the kept eye images at brightness vr_fade into the swapchain, shown at the kept poses */
 static int present_vr_held(void)
 {
@@ -4780,6 +4804,26 @@ static uint64_t gs_present_vr(const struct Frame* cur, float t)
             rx_s += (want - rx_s) * (k > 1.0f ? 1.0f : k);
             if (want == 0.0f && fabsf(rx_s) < 0.02f) rx_s = 0.0f;
         } else rx_s = 0.0f;
+        {   /* diagnosis (vr_debug_log): how long a smooth turn goes on after the stick is let go (the dropout hold and the easing) */
+            extern float g_vr_rx_raw;
+            extern int g_vr_debug_log;
+            static int rel;
+            static uint64_t t_rel;
+            static double deg;
+            static unsigned nlr;
+            float raw = fabsf(g_vr_rx_raw);
+            if (g_vr_debug_log) {
+                if (!rel && fabsf(rx_s) > 0.6f && raw < 0.15f) { rel = 1; t_rel = SDL_GetTicksNS(); deg = 0.0; }
+                if (rel) {
+                    deg += fabs((double)rx_s) * 120.0 * (double)tdt;
+                    if (raw > 0.3f) rel = 0;
+                    else if (rx_s == 0.0f) {
+                        if (nlr++ < 80) host_log("vr-diag: smooth turn release: the stick sent < 0.15, the view kept turning %.0f ms, %.1f degrees\n", (double)(SDL_GetTicksNS() - t_rel) * 1e-6, deg);
+                        rel = 0;
+                    }
+                }
+            }
+        }
         if (rx_s != 0.0f) {
             int tot = SDL_GetAtomicInt(&g_vr_turn_total);
             float ahead = (float)(int)((unsigned)tot - (unsigned)SDL_GetAtomicInt(&g_vr_turn_taken)) * 1e-6f;
