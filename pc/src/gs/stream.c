@@ -566,6 +566,10 @@ static const Frame* sort_frame;
 static int by_mesh(const void* a, const void* b)
 {
     uint32_t x = sort_frame->in[*(const uint32_t*)a].mesh, y = sort_frame->in[*(const uint32_t*)b].mesh;
+    if (x == y) {   /* (then by the number of groups: the neighbour search of stream_match takes the ones of the same structure) */
+        uint32_t gx = sort_frame->in[*(const uint32_t*)a].ng, gy = sort_frame->in[*(const uint32_t*)b].ng;
+        if (gx != gy) return gx < gy ? -1 : 1;
+    }
     return x < y ? -1 : x > y ? 1 : (int)(*(const uint32_t*)a - *(const uint32_t*)b);
 }
 
@@ -612,6 +616,7 @@ static uint64_t gpos(const Frame* f, const Group* g, uint32_t v)
    rotating GS memory, so a mesh's texture address changes between frames; the tags
    identify the geometry. */
 static int32_t* pair; static size_t cap_pair;
+static size_t crowd_fail_lo = (size_t)-1; static unsigned crowd_fail_run;   /* stream_match: failures in a row on one crowd of identical instances */
 static long inst_pair(const Frame* p, const Inst* a, const Frame* c, const Inst* b)
 {
     int64_t sum = 0, n = 0, total = 0, near = 0;
@@ -717,10 +722,14 @@ int stream_match(const Frame* p, const Frame* c)
     sort_frame = p;
     qsort(order, p->nin, sizeof(*order), by_mesh);
     memset(used, 0, p->nin);
+    crowd_fail_run = 0;
+    long walk_drift = 0;   /* where the last pair left off, relative to the instance index (the neighbours search below) */
 
     for (size_t i = 0; i < c->nin; i++) {
         const Inst* b = &c->in[i];
         size_t lo = 0, hi = p->nin, best = (size_t)-1;
+        size_t last_m = (size_t)-1;   /* the candidate inst_pair scored last */
+        size_t scan_lo, scan_hi = (size_t)-1, cur_loN = (size_t)-1;   /* the full scan's range */
         long best_d = 2 * JUMP + 1;
         int fx = b->mesh & 1;
         if (!b->ng) continue;
@@ -730,15 +739,61 @@ int stream_match(const Frame* p, const Frame* c)
             size_t m = (lo + hi) / 2;
             if (p->in[order[m]].mesh < b->mesh) lo = m + 1; else hi = m;
         }
-        for (size_t m = lo; m < p->nin && p->in[order[m]].mesh == b->mesh && best_d; m++) {
+        scan_lo = lo;
+        {   /* Many instances of one mesh (RM_3210: 1615 instances, ~17 ms a game frame on a Quest 2 - 530 thousand inst_pair calls, 330 for each
+               instance, nearly all turned away at once for another structure). The candidates are sorted by (mesh, number of groups, index): the ones
+               of the same structure, and the instances come in drawing order, so the partner is almost always where the last pair left off - its
+               neighbours (6 each side) first; the whole scan only when none of them is near. */
+            size_t loN = lo, hiN, a2 = lo, b2 = p->nin;
+            while (a2 < b2) { size_t m = (a2 + b2) / 2; const Inst* q = &p->in[order[m]]; if (q->mesh < b->mesh || (q->mesh == b->mesh && q->ng < b->ng)) a2 = m + 1; else b2 = m; }
+            loN = a2; b2 = p->nin;
+            while (a2 < b2) { size_t m = (a2 + b2) / 2; const Inst* q = &p->in[order[m]]; if (q->mesh < b->mesh || (q->mesh == b->mesh && q->ng <= b->ng)) a2 = m + 1; else b2 = m; }
+            hiN = a2;
+            if (hiN > loN) {
+                long want = (long)i + walk_drift;
+                size_t pos;
+                a2 = loN; b2 = hiN;
+                while (a2 < b2) { size_t m = (a2 + b2) / 2; if ((long)order[m] < want) a2 = m + 1; else b2 = m; }
+                pos = a2;
+                for (int step = 0; step <= 6 && best_d; step++) {
+                    for (int sg = 0; sg < 2; sg++) {
+                        long m = sg ? (long)pos - step : (long)pos + step;
+                        const Inst* a;
+                        long d;
+                        if (step == 0 && sg) continue;
+                        if (m < (long)loN || m >= (long)hiN || used[m]) continue;
+                        a = &p->in[order[m]];
+                        d = inst_pair(p, a, c, b); last_m = (size_t)m;
+                        if (d >= 0 && d < best_d) { best_d = d; best = (size_t)m; }
+                        if (step == 0 && best != (size_t)-1 && best_d < 8 * 16) goto chosen;   /* the expected partner, within 8 px: that is it */
+                    }
+                }
+                if (best != (size_t)-1 && best_d < JUMP) goto chosen;   /* a near partner among the neighbours */
+                cur_loN = loN;
+                if (hiN - loN > 200) {   /* a crowd of identical instances (the rain: ~1000, fast, no partner near its place): the full scan is not worth 1000 calls each -
+                                            only the 96 each side of the expected place, and after 6 failures in a row on this crowd, none until one succeeds */
+                    if (crowd_fail_lo == loN && crowd_fail_run >= 6) scan_hi = scan_lo;
+                    else { scan_lo = pos > loN + 96 ? pos - 96 : loN; scan_hi = pos + 96 < hiN ? pos + 96 : hiN; }
+                }
+            }
+        }
+        for (size_t m = scan_lo; m < p->nin && m < scan_hi && p->in[order[m]].mesh == b->mesh && best_d; m++) {
             const Inst* a = &p->in[order[m]];
             long d;
             if (used[m]) continue;
             d = inst_pair(p, a, c, b);
+            last_m = m;
             if (d >= 0 && d < best_d) { best_d = d; best = m; }
+        }
+    chosen:
+        if (best != (size_t)-1) walk_drift = (long)order[best] - (long)i;
+        if (cur_loN != (size_t)-1) {   /* (the crowd's failures in a row) */
+            if (best == (size_t)-1) { if (crowd_fail_lo == cur_loN) crowd_fail_run++; else { crowd_fail_lo = cur_loN; crowd_fail_run = 1; } }
+            else crowd_fail_run = 0;
         }
         if (best == (size_t)-1) { for (uint32_t k = 0; k < b->ng; k++) no_inst += c->g[b->g0 + k].nv; continue; }
         used[best] = 1;
+        if (last_m != best)   /* (the last one scored is the chosen one: its pairs are in place already) */
         inst_pair(p, &p->in[order[best]], c, b);   /* the pairs of the chosen instance */
         {
             for (uint32_t k = 0; k < b->ng; k++) {
