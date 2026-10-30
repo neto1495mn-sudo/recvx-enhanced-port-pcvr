@@ -1195,3 +1195,74 @@ extern "C" int overlay_launcher(void)
     }
     return result;
 }
+
+/* ---- the in-headset frame-rate readout (ini vr_fps, VR settings "Show frame rate"): a small panel drawn with ImGui into its own
+   picture (512 x 96, transparent around a dark rounded box), which xr.c shows as a head-locked quad. "Real" is the game's own
+   frames per second (30), "Interpolated" what the headset gets (90). Called a couple of times a second, never from inside an
+   ImGui frame. Returns the GL texture (0 if the overlay is not ready). */
+extern "C" unsigned overlay_fps_panel(int real, int shown, int* w, int* h)
+{
+    static GLuint fbo, tex;
+    static int lang = -1;
+    const int PWID = 512, PHEI = 96;
+    char line[96];
+    if (!ready) return 0;
+    if (lang < 0) {   /* the device's language, as the launcher: pt, es, else English */
+        int nl = 0;
+        SDL_Locale** loc = SDL_GetPreferredLocales(&nl);
+        lang = 0;
+        if (loc && nl > 0 && loc[0] && loc[0]->language) {
+            if (!SDL_strcasecmp(loc[0]->language, "pt")) lang = 1;
+            else if (!SDL_strcasecmp(loc[0]->language, "es")) lang = 2;
+        }
+        SDL_free(loc);
+    }
+    if (!fbo) {
+        glGenTextures(1, &tex);
+        glBindTexture(GL_TEXTURE_2D, tex);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, PWID, PHEI, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glGenFramebuffers(1, &fbo);
+        glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    }
+    *w = PWID; *h = PHEI;
+    SDL_snprintf(line, sizeof line, "Real %d    %s %d", real, lang == 0 ? "Interpolated" : "Interpolado", shown);
+    ImGuiIO& io = ImGui::GetIO();
+    ImVec2 old_ds = io.DisplaySize, old_fs = io.DisplayFramebufferScale;
+    io.DisplaySize = ImVec2((float)PWID, (float)PHEI);
+    io.DisplayFramebufferScale = ImVec2(1, 1);
+    ImGui_ImplOpenGL3_NewFrame();
+    ImGui::NewFrame();
+    ImGui::SetNextWindowPos(ImVec2(0, 0));
+    ImGui::SetNextWindowSize(ImVec2((float)PWID, (float)PHEI));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(0, 0, 0, 0));
+    ImGui::Begin("##fpspanel", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoBackground);
+    ImGui::PopStyleColor();
+    ImGui::PopStyleVar(2);
+    {
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        ImFont* f = ImGui::GetFont();
+        float fs = 34.0f;
+        ImVec2 ts = f->CalcTextSizeA(fs, FLT_MAX, 0.0f, line);
+        dl->AddRectFilled(ImVec2(2, 2), ImVec2(PWID - 2.0f, PHEI - 2.0f), IM_COL32(8, 7, 9, 190), 26.0f);
+        dl->AddRect(ImVec2(2, 2), ImVec2(PWID - 2.0f, PHEI - 2.0f), IM_COL32(190, 40, 48, 255), 26.0f, 0, 2.5f);
+        dl->AddText(f, fs, ImVec2((PWID - ts.x) * 0.5f, (PHEI - ts.y) * 0.5f), IM_COL32(245, 240, 235, 255), line);
+    }
+    ImGui::End();
+    ImGui::Render();
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    glDisable(GL_SCISSOR_TEST);
+    glViewport(0, 0, PWID, PHEI);
+    glClearColor(0, 0, 0, 0);
+    glClear(GL_COLOR_BUFFER_BIT);
+    ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    io.DisplaySize = old_ds;
+    io.DisplayFramebufferScale = old_fs;
+    return tex;
+}

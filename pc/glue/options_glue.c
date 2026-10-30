@@ -137,7 +137,7 @@ void pc_options_mouse_back(int port, int level)
 }
 
 /* ---------------------------------------------------------------- the pages */
-enum { K_PAGE, K_SET, K_DEVICE, K_BIND, K_HEAD, K_GROUP, K_RESET, K_BACK };   /* K_HEAD, K_GROUP: headings */
+enum { K_PAGE, K_SET, K_DEVICE, K_BIND, K_HEAD, K_GROUP, K_RESET, K_ADV, K_BACK };   /* K_HEAD, K_GROUP: headings */
 typedef struct Row { int kind, idx; } Row;
 
 #define MAX_ROWS 80
@@ -168,11 +168,42 @@ static int nrows;
 
 static const char* const heads[] = { "", "THIRD PERSON (KEYBOARD AND MOUSE)", "HOTKEYS" };
 
+/* Quest: settings the end user does not need are hidden until the code (the left grip twice, X, Y, X: g_extras_unlocked, extras_code
+   below) - hidden, not removed: the code shows them again. Pages: Gameplay (its only heading, GENERAL, holds all of its rows),
+   Controls and Third person; rows: the cutscene bars, the frame blend, the whole WINDOW group and the RENDER group of the
+   Display page (they keep the values the headset runs with). */
+int g_adv_settings;   /* ini adv_settings: the player chose "Advanced settings" (Quest): the hidden pages and rows show (not the EXTRAS cheats: only the code) */
+static int adv_confirm;   /* the "Advanced settings" row asked "sure?" and waits for A (yes) or B (no) */
+static int adv_shown(void) { return g_extras_unlocked || g_adv_settings; }
+
+static int page_hidden(int p)
+{
+    if (p == SP_EXTRAS) return !g_extras_unlocked;   /* vr218 */
+#ifdef __ANDROID__
+    if (!adv_shown() && (p == SP_GAMEPLAY || p == SP_CONTROLS || p == SP_TPS)) return 1;
+#endif
+    return 0;
+}
+
+static int row_hidden(const Setting* s)
+{
+#ifdef __ANDROID__
+    static const char* const names[] = { "Cutscene bars", "Frame blend (trail)", "Fullscreen", "Window size", "VSync", "Frame rate limit", "Show frame rate",
+                                         "Native 3D renderer", "Native textures", "Cull off-screen models", "Display-rate frames" };
+    if (adv_shown() || s->page != SP_DISPLAY) return 0;
+    for (size_t k = 0; k < sizeof(names) / sizeof(names[0]); k++)
+        if (!strcmp(s->label, names[k])) return 1;
+#else
+    (void)s;
+#endif
+    return 0;
+}
+
 /* every row of the page (none is left out: what F1 shows of a page, this shows too), headings first */
 static void page_rows(void)
 {
     for (int i = 0; i < g_settings_n && nrows < MAX_ROWS - 3; i++)
-        if (g_settings[i].page == st.page) {
+        if (g_settings[i].page == st.page && !row_hidden(&g_settings[i])) {
             if (g_settings[i].group) rows[nrows++] = (Row){ K_GROUP, i };
             rows[nrows++] = (Row){ K_SET, i };
         }
@@ -183,6 +214,9 @@ static void build_rows(void)
     nrows = 0;
     rows[nrows++] = (Row){ K_PAGE, 0 };
     page_rows();
+#ifdef __ANDROID__
+    if (st.page == SP_VR) rows[nrows++] = (Row){ K_ADV, 0 };   /* the way to the hidden settings without the code */
+#endif
     if (st.page == SP_CONTROLS) {   /* then the bindings */
         int last = -1;
         rows[nrows++] = (Row){ K_DEVICE, 0 };
@@ -213,7 +247,7 @@ static void set_page(int p)
 {
     int dir = p < st.page ? -1 : 1;
     st.page = (p + SP_COUNT) % SP_COUNT;
-    if (st.page == SP_EXTRAS && !g_extras_unlocked) st.page = (st.page + dir + SP_COUNT) % SP_COUNT;   /* vr218: hidden until unlocked */
+    for (int k = 0; k < SP_COUNT && page_hidden(st.page); k++) st.page = (st.page + dir + SP_COUNT) % SP_COUNT;   /* vr218: hidden until unlocked */
     st.sel = 0; st.top = 0;
     CallSystemSe(0, 2);
 }
@@ -257,6 +291,23 @@ static int activate(const Row* r)
         settings_save_later();
         say(st.dev ? "Gamepad bindings reset to the defaults" : "Keyboard bindings reset to the defaults");
         CallSystemSe(0, 3);
+        return 0;
+    case K_ADV:
+        if (g_adv_settings) {   /* shown: hide them again */
+            g_adv_settings = 0; adv_confirm = 0;
+            settings_save_later();
+            say("Advanced settings hidden");
+            CallSystemSe(0, 2);
+        } else if (!adv_confirm) {
+            adv_confirm = 1;
+            say("Show the advanced settings? A: yes, B: no");
+            CallSystemSe(0, 3);
+        } else {
+            adv_confirm = 0; g_adv_settings = 1;
+            settings_save_later();
+            say("Advanced settings shown");
+            CallSystemSe(0, 3);
+        }
         return 0;
     case K_BACK: CallSystemSe(0, 0); return 1;
     case K_SET:
@@ -339,7 +390,11 @@ static void draw_row(int i, int sel)
         pc_ui_text(320 - w / 2, y - 2, t, 0.72f, sel ? pulse() : 0xFFE8E0C0);
         pc_ui_arrow(320 - w / 2 - 14, y + 9, -1, col);
         pc_ui_arrow(320 + w / 2 + 14, y + 9, 1, col);
-        snprintf(t, sizeof(t), "%d/%d", st.page + 1, g_extras_unlocked ? SP_COUNT : SP_COUNT - 1);   /* vr218 */
+        {   /* vr218: the number of the page among the visible ones */
+            int vis = 0, idx = 0;
+            for (int q = 0; q < SP_COUNT; q++) if (!page_hidden(q)) { vis++; if (q <= st.page) idx = vis; }
+            snprintf(t, sizeof(t), "%d/%d", idx, vis);
+        }
         pc_ui_text(560, y + 2, t, 0.45f, 0xFF909090);
         pc_ui_text(48, y + 2, "L1  R1", 0.45f, 0xFF909090);
         return;
@@ -357,6 +412,10 @@ static void draw_row(int i, int sel)
         snprintf(val, sizeof(val), "%s", st.dev ? "Gamepad" : "Keyboard and mouse");
         break;
     case K_RESET: pc_ui_text(X_LABEL, y, "RESET TO DEFAULTS", SC_ROW, col); return;
+    case K_ADV:
+        pc_ui_text(X_LABEL, y, "ADVANCED SETTINGS", SC_ROW, col);
+        pc_ui_text(X_VALUE + 6, y + 2, adv_confirm ? "Sure?  A yes   B no" : g_adv_settings ? "Shown - A hides" : "Hidden - A shows", 0.5f, adv_confirm ? 0xFFE0C080 : 0xFFC0C0C0);
+        return;
     case K_BACK: pc_ui_text(X_LABEL, y, "BACK", SC_ROW, col); return;
     case K_BIND: {
         int conflict = bind_conflict(r->idx, st.dev);
@@ -413,6 +472,7 @@ static void draw_help(void)
     case K_PAGE: snprintf(t, sizeof(t), "Left/right or L1/R1 change the page, up/down choose a setting. Changes are saved at once; F1 shows the same settings."); break;
     case K_DEVICE: snprintf(t, sizeof(t), "%s", st.dev ? bind_pad_desc() : "The game's buttons, third-person keys and hotkeys."); break;
     case K_RESET: snprintf(t, sizeof(t), "All %s bindings back to the defaults.", st.dev ? "gamepad" : "keyboard and mouse"); break;
+    case K_ADV: snprintf(t, sizeof(t), "Shows the settings left out of this menu (gameplay, controls, third person, window and render options). Meant for people who know what they change."); break;
     case K_BACK: snprintf(t, sizeof(t), "Back to the OPTION screen (also cancel or a right click)."); break;
     case K_BIND: {
         int c = bind_conflict(r->idx, st.dev);
@@ -501,6 +561,11 @@ static int input(int port)
         st.wait_release = 0;
     }
     extras_code();   /* vr218 */
+    if (adv_confirm && (rows[st.sel].kind != K_ADV || (press & cancel))) {   /* B, or the cursor left the row: the question is dropped (B does not leave the menu then) */
+        int by_cancel = (press & cancel) != 0;
+        adv_confirm = 0;
+        if (by_cancel) { CallSystemSe(0, 0); say("Cancelled"); return 0; }
+    }
     hit = row_at(mt.x, mt.y);
     if (hit >= 0 && (mt.moved || mt.left) && hit != st.sel) { st.sel = hit; CallSystemSe(0, 2); }
     if (rows[st.sel].kind == K_BIND && hit == st.sel && (mt.moved || mt.left)) st.slot = mt.x >= 360 + 120;

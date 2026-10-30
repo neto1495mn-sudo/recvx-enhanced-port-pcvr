@@ -135,6 +135,8 @@ static int lost;                /* the session ended for good: back to the deskt
 static double hz;               /* from the predicted display period */
 static int64_t chain_fmt;
 static GLuint blit_fbo;
+int g_vr_fps;   /* ini vr_fps: the frame-rate readout in the headset (fps_layer) */
+static Chain fps_chain;
 
 static Chain quad_chain, eye_chain[2];
 static XrFrameState fs;
@@ -698,10 +700,68 @@ unsigned int xr_eye_target(int e, int w, int h)
 
 void xr_eye_release(int e) { if (e >= 0 && e < 2) chain_release(&eye_chain[e]); }
 
-static void end_frame(const XrCompositionLayerBaseHeader* const* layers, uint32_t n)
+/* the frame-rate readout (VR settings "Show frame rate"): "Real" = the game's own frames per second, "Interpolated" = the images
+   the headset gets. A small head-locked quad, its picture made by overlay.cpp a couple of times a second */
+extern uint64_t g_vr_frame_seq;
+extern unsigned overlay_fps_panel(int real, int shown, int* w, int* h);
+static int fps_layer(XrCompositionLayerQuad* q)
+{
+    static uint64_t t0, imgs, seq0;
+    static int real, shown, pw, ph, have;
+    uint64_t now = SDL_GetTicksNS();
+    imgs++;
+    if (!t0) { t0 = now; seq0 = g_vr_frame_seq; imgs = 0; }
+    if (now - t0 >= 500000000ull) {
+        double dt = (double)(now - t0) * 1e-9;
+        real = (int)((double)(g_vr_frame_seq - seq0) / dt + 0.5);
+        shown = (int)((double)imgs / dt + 0.5);
+        t0 = now; seq0 = g_vr_frame_seq; imgs = 0;
+        {   /* a new picture: acquire an image of the quad's swapchain, copy the panel into it */
+            unsigned src = overlay_fps_panel(real, shown, &pw, &ph);
+            GLuint tex;
+            if (src && (tex = chain_acquire(&fps_chain, pw, ph))) {
+                GLuint rfbo = 0;
+                glDisable(GL_FRAMEBUFFER_SRGB);
+                glDisable(GL_SCISSOR_TEST);
+                glGenFramebuffers(1, &rfbo);
+                glBindFramebuffer(GL_READ_FRAMEBUFFER, rfbo);
+                glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, src, 0);
+                glBindFramebuffer(GL_DRAW_FRAMEBUFFER, blit_fbo);
+                glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
+                glBlitFramebuffer(0, 0, pw, ph, 0, 0, pw, ph, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+                glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
+                glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
+                glBindFramebuffer(GL_FRAMEBUFFER, 0);
+                glDeleteFramebuffers(1, &rfbo);
+                chain_release(&fps_chain);
+                have = 1;
+            }
+        }
+    }
+    if (!have || !fps_chain.h || !view_space) return 0;
+    q->type = XR_TYPE_COMPOSITION_LAYER_QUAD;
+    q->next = NULL;
+    q->layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
+    q->space = view_space;
+    q->eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+    memset(&q->subImage, 0, sizeof(q->subImage));
+    q->subImage.swapchain = fps_chain.h;
+    q->subImage.imageRect.extent.width = fps_chain.w;
+    q->subImage.imageRect.extent.height = fps_chain.ht;
+    q->pose.orientation.x = q->pose.orientation.y = q->pose.orientation.z = 0.0f; q->pose.orientation.w = 1.0f;
+    q->pose.position.x = -0.17f; q->pose.position.y = -0.23f; q->pose.position.z = -0.9f;
+    q->size.width = 0.26f; q->size.height = 0.26f * (float)fps_chain.ht / (float)fps_chain.w;
+    return 1;
+}
+
+static void end_frame(const XrCompositionLayerBaseHeader* const* layers_in, uint32_t n)
 {
     XrFrameEndInfo ei = { XR_TYPE_FRAME_END_INFO };
+    XrCompositionLayerQuad fpsq;
+    const XrCompositionLayerBaseHeader* two[2];
+    const XrCompositionLayerBaseHeader* const* layers = layers_in;
     if (!in_frame) return;
+    if (g_vr_fps && n == 1 && fps_layer(&fpsq)) { two[0] = layers_in[0]; two[1] = (const XrCompositionLayerBaseHeader*)&fpsq; layers = two; n = 2; }
     ei.displayTime = fs.predictedDisplayTime;
     ei.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
     ei.layerCount = n;
