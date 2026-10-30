@@ -427,6 +427,25 @@ static void read_actions(XrTime t)
     }
     in.buttons = (get_b(a_a) ? VRB_A : 0) | (get_b(a_b) ? VRB_B : 0) | (get_b(a_x) ? VRB_X : 0) | (get_b(a_y) ? VRB_Y : 0) |
                  (get_b(a_menu) ? VRB_MENU : 0) | (get_b(a_lclick) ? VRB_LSTICK : 0) | (get_b(a_rclick) ? VRB_RSTICK : 0);
+    {   /* Hold X for 2 s: the game in progress is saved to save 15 (the keyboard's F9); hold Y for 2 s: back to the title, which loads save 15 (F10) - in the
+           headset there is no keyboard. The controller buzzes when the hold is reached; a quick tap still goes to the game (X the map, Y the inventory), on release. */
+        typedef struct { int down, fired, pulse; uint64_t t; } Hold;
+        static Hold hx, hy;
+        extern void pc_testsave_request(void);
+        extern void pc_quickload_request(void);
+        uint64_t now = SDL_GetTicksNS();
+        Hold* hs[2] = { &hx, &hy };
+        const unsigned bits[2] = { VRB_X, VRB_Y };
+        for (int k = 0; k < 2; k++) {
+            Hold* h = hs[k];
+            int pr = (in.buttons & bits[k]) != 0;
+            if (pr && !h->down) { h->down = 1; h->fired = 0; h->t = now; }
+            if (pr && !h->fired && now - h->t >= 2000000000ull) { h->fired = 1; if (k == 0) pc_testsave_request(); else pc_quickload_request(); xr_haptic(1, 1.0f, 300); }
+            if (!pr && h->down) { h->down = 0; if (!h->fired && now - h->t < 600000000ull) h->pulse = 8; }
+            in.buttons &= ~bits[k];
+            if (h->pulse > 0) { in.buttons |= bits[k]; h->pulse--; }
+        }
+    }
     for (int hnd = 0; hnd < 2; hnd++) {
         XrSpace sp = hnd ? aiml_space : aim_space;
         XrSpaceLocation loc = { XR_TYPE_SPACE_LOCATION };

@@ -608,8 +608,17 @@ static SaveInfo* saves;   /* by slot (lobby.h: the card's 0..14 or native save n
 static int n_saves;
 static unsigned char save_buf[LOBBY_SAVE_BYTES];   /* the host's chosen save, read when the game starts */
 static int quickload;   /* F10 pressed: the title loads save 15 (test aid, with F9's save anywhere) */
+static volatile int testsave_req, quickload_req;   /* the Touch controller's X / Y held for 2 s (xr.c): F9's save here, F10's back to the title with save 15 */
+int g_vr_savespot;   /* ini vr_savespot: the game starts in save 15 at once (a missing save: the title as usual) */
+void pc_testsave_request(void) { testsave_req = 1; }
+void pc_quickload_request(void) { quickload_req = 1; }
 int pc_quickload_take(void)
 {
+    static int boot = 1;
+    if (boot) {   /* the first title after the start loads save 15 at once when ini vr_savespot is on */
+        boot = 0;
+        if (g_vr_savespot) quickload = 1;
+    }
     if (!quickload) return 0;
     quickload = 0;
     if (!lobby_read_save(14, save_buf)) { host_log("quickload: save 15 cannot be read\n"); return 0; }
@@ -1470,6 +1479,19 @@ void lobby_frame(void)
         host_log("test: back to the title at hand-off %u\n", hand);
         bhReturnTitle();
         title = NULL;
+    }
+    if (testsave_req) {   /* the same save asked for by X held on the Touch controller; kept for a few seconds while the game is not in play */
+        static int waited;
+        if (sys && plp && (sys->tk_flg & 0x80) && !(sys->ss_flg & 0x400000)) { testsave_req = 0; waited = 0; slot = 14; goto write_save; }
+        if (++waited > 300) { testsave_req = 0; waited = 0; host_log("save here refused (the game is not in play)\n"); }
+    }
+    if (quickload_req) {   /* Y held on the Touch controller: as F10 */
+        quickload_req = 0;
+        if (!quickload) {
+            quickload = 1;
+            host_log("quickload: Y held\n");
+            if (sys && (sys->tk_flg & 0x80)) bhReturnTitle();
+        }
     }
     {   /* F9: the game in progress written now to save 15, as RECVX_TEST_SAVE does (a test aid: a save anywhere) */
         static int was;
