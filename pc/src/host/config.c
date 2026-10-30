@@ -4,6 +4,7 @@ extern int g_vr_fps;   /* xr.c */
 extern int g_adv_settings;   /* glue/options_glue.c */
 extern int g_vr_scale, g_vr_eye_height, g_vr_fov, g_vr_turn, g_vr_hand_aim, g_vr_fx_fix, g_vr_gun_min, g_vr_hand_offset, g_vr_slash_speed, g_vr_hit_tilt, g_vr_danger_fx, g_vr_eye_shape, g_vr_screen_angle, g_vr_left_mirror, g_vr_dmg_head, g_vr_dmg_body, g_vr_dmg_arm, g_vr_dmg_leg, g_vr_recoil, g_vr_haptics, g_vr_hud_dist, g_vr_hud_angle, g_vr_sight, g_vr_sight_size, g_vr_holster, g_vr_hud_y, g_vr_roomscale, g_vr_manual_reload, g_vr_prompts, g_vr_dmg_body_max, g_vr_wake_shots, g_vr_precise_hits, g_vr_barrel_pitch, g_vr_hud_dist, g_vr_hud_angle, g_vr_aim_walk, g_vr_cam_steady, g_vr_move_direct, g_vr_heart_sound, g_vr_close_push, g_vr_bite_push, g_vr_comfort, g_update_check, g_tex_hd_per_frame, g_tex_loaders, g_tex_upload, g_vr_dyn_res, g_launcher, g_launcher_lang;
 extern int g_vr_savespot;
+extern char g_tex_dir[1024];   /* gs/texreplace.c: a folder of replacement textures chosen in the launcher */
 extern int g_tex_hd, g_tex_hd_log, g_tex_hd_mb, g_tex_hd_max, g_fast_doors, g_vr_debug_log, g_vr_door_fade, g_vr_shadows, g_vr_debug_cores, g_vr_interpolate, g_vr_interp_body;   /* gs/texreplace.c */
 static int g_vr_cfg_ver;   /* ini vr_cfg_ver: the VR settings' version, to move older saved values to new defaults */   /* pc/glue/vr_glue.c */
 #include "../ps2_platform.h"
@@ -197,6 +198,7 @@ void config_load(void)
         else if (!strncmp(line, "coop_server =", 13)) { if (sscanf(line + 13, " %127s", g_coop.server) != 1) g_coop.server[0] = 0; continue; }   /* empty: no server */
         else if (sscanf(line, " coop_name = %15[^\r\n]", g_coop.name) == 1) continue;
         else if (sscanf(line, " iso = %1023[^\r\n]", g_config.iso_path) == 1) continue;
+        else if (sscanf(line, " tex_dir = %1023[^\r\n]", g_tex_dir) == 1) continue;
         else if (sscanf(line, " %63[a-z_0-9] = %127[^\r\n]", k, val) == 2 && bind_ini_line(k, trim(val))) continue;
         else if (sscanf(line, " %63[a-z_0-9] = %d", k, &v) == 2)
             for (size_t i = 0; i < SDL_arraysize(keys); i++)
@@ -251,6 +253,7 @@ static int write_ini(FILE* f, void* ud)
         fprintf(f, "\n");
     }
     if (g_config.iso_path[0]) fprintf(f, "iso = %s\n", g_config.iso_path);
+    if (g_tex_dir[0]) fprintf(f, "tex_dir = %s\n", g_tex_dir);
     bind_ini_write(f);
     return 0;
 }

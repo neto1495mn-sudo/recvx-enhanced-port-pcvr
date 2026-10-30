@@ -268,6 +268,25 @@ static void pick_iso(void)
     while (!SDL_GetAtomicInt(&done)) { SDL_Event ev; SDL_WaitEventTimeout(&ev, 50); }
 }
 
+/* a disc image chosen in the launcher (overlay.cpp): 1 open (and remembered), -2 would not open (the old one stays) */
+int host_disc_set(const char* path)
+{
+    char old[1024];
+    extern void fontsz_from_iso(void);
+    extern void plates_from_iso(void);
+    SDL_strlcpy(old, g_config.iso_path, sizeof(old));
+    if (!cdvd_open_image(path)) {
+        host_log("launcher: cannot open the chosen disc image '%s'\n", path);
+        if (old[0]) cdvd_open_image(old);
+        return -2;
+    }
+    SDL_strlcpy(g_config.iso_path, path, sizeof(g_config.iso_path));
+    config_save();
+    fontsz_from_iso();
+    plates_from_iso();
+    return 1;
+}
+
 /* The game (the decomp's main loop, VU, GIF recording) runs on its own thread; the main
    thread renders (host/render.c). */
 static int SDLCALL game_thread(void* ud)
