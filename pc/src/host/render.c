@@ -43,6 +43,7 @@ static double present_hz(void)
 
 /* vr123: the game frames' arrival on an even grid (a frame arriving a few ms early or late does not move it),
    for the VR in-between images by the clock (gs_gl.c) */
+uint64_t g_vr_frame_seq;   /* game frames executed (gs_gl.c: the game time by the headset's display times is pulled to their arrival) */
 double g_vr_frame_ref, g_vr_frame_period = 1001.0 / 30000.0 * 1e9;
 
 void render_loop(void)
@@ -90,6 +91,7 @@ void render_loop(void)
                 if (g_vr_frame_ref <= 0.0 || fabs(d) > period * 0.5) g_vr_frame_ref = nw;
                 else g_vr_frame_ref += period + 0.1 * d;
                 g_vr_frame_period = period;
+                g_vr_frame_seq++;
             }
             prof_push(PROF_INTERP);
             interp = g_config.interpolate && stream_match(cur, f);
@@ -132,6 +134,7 @@ void render_loop(void)
                 float x, y;
                 int fl = stream_point_at(interp ? prev : NULL, cur, t, &x, &y);
                 overlay_point(fl, x, y);            }
+            { extern int g_vr_interp_now; g_vr_interp_now = interp; }
             swap = gs_present(cur, t);
             shown++;
             if (trace) fprintf(trace, "%llu %.3f %llu %llu\n", (unsigned long long)gs_frame_count(), t, (unsigned long long)(now / 1000),

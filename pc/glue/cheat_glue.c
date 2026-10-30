@@ -76,6 +76,24 @@ static void read_names(void)
    player on the enemy's motion set (en01sub.c); the new room frees it, and the room change
    would animate from it (crash in bhSetMotion), so take the player's own set back first, as
    the game does when a grab ends. */
+/* whether the disc has the room the teleport would load: the game's own table of room files (ps2_dvd_image.c), the name as adxwrap.c builds it */
+extern char* rdx_files[];
+extern int rdx_image_data_max;
+extern int pc_mod_exists(const char* name);   /* audio/adx.c */
+static int tp_room_exists(int stg, int rom)
+{
+    char nm[24];
+    snprintf(nm, sizeof(nm), "RM_%d%02d", stg, rom);   /* (any variant of the room: RM_3210, RM_1121...) */
+    for (int i = 0; i < rdx_image_data_max; i++)
+        if (!strncmp(rdx_files[i], nm, strlen(nm))) return 1;
+    for (int v = 0; v < 10; v++) {   /* a room of the mods folder (adxwrap.c opens it before the table): RM_<stage><room><variant>.RDX */
+        char mf[32];
+        snprintf(mf, sizeof(mf), "%s%d.RDX", nm, v);
+        if (pc_mod_exists(mf)) return 1;
+    }
+    return 0;
+}
+
 static void teleport(int stg, int rom, int pos)
 {
     static const char* pl = (const char*)-1;
@@ -299,6 +317,11 @@ void cheat_frame(void)
     g_cheat.slots = slots;
     for (i = 0; i < 12; i++) g_cheat.inv[i] = inv[i];
 
+    {   /* once: the teleport's room check on the real table (RM_0100 exists, RM_0200 does not) - the log shows it worked on this build */
+        static int logged;
+        extern void host_log(const char* fmt, ...);
+        if (!logged) { logged = 1; host_log("cheat: teleport room check: stage 0 room 10 -> %d, room 20 -> %d, room 22 -> %d; stage 3 room 21 -> %d\n", tp_room_exists(0, 10), tp_room_exists(0, 20), tp_room_exists(0, 22), tp_room_exists(3, 21)); }
+    }
     if (g_cheat.inf_health && plp->hp < max_hp) plp->hp = max_hp;
 
     req = __atomic_exchange_n(&g_cheat.request, 0, __ATOMIC_ACQ_REL);
@@ -318,6 +341,12 @@ void cheat_frame(void)
         /* the game's own door transition (door type 255 skips the animation), under the
            conditions the door trigger checks (hitchk.c) */
         if ((sys->gm_flg & 0x9) || (sys->cb_flg & 0x1)) g_cheat.result = "can't teleport now";
+        else if (!tp_room_exists(g_cheat.tp_stg, g_cheat.tp_rom)) {   /* the room file is built from stage + room (stage 0, room 20 = RM_0200): one that is not on the disc is never
+                                                                         loaded - the game sat on a black screen for good (the user's "room 20" / "room 22") */
+            static char msg[48];
+            snprintf(msg, sizeof(msg), "no such room (RM_%d%02d0)", g_cheat.tp_stg, g_cheat.tp_rom);
+            g_cheat.result = msg;
+        }
         else {
             teleport(g_cheat.tp_stg, g_cheat.tp_rom, g_cheat.tp_pos);
             g_cheat.result = "teleporting";

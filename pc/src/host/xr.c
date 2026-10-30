@@ -375,6 +375,30 @@ static void send_haptics(void)
     }
 }
 
+/* The Touch thumbsticks and triggers drop out for a moment mid-use (measured on a Quest 2, raw at 90 Hz: the left stick fell from ~1.0 to 0.0-0.3 in ONE
+   reading - 11 ms, no thumb does that - and came back within 10-110 ms, 3-6 times in 10 s; the game then saw 0 for 1-4 frames, left its walk and the
+   footsteps cut). After a control has been held (>0.7) for 150 ms, a fall of more than 0.4 in one reading keeps the last value until it is back above
+   0.7 or STICK_HOLD_MS has passed (a real release springs back the same way and is delayed by as much); a slower fall (2-3 readings) is covered for 50 ms.
+   Built in, not configurable. */
+#define STICK_HOLD_MS 130
+typedef struct { float mprev, px, py, lx0, ly0, bx, by; int masking; uint64_t t_mask, t_big, t_since; unsigned nev, masked, last_n; } AxisHold;
+static void axis_hold(AxisHold* a, const char* name, float* x, float* y, uint64_t now, int hold_ms)
+{
+    float m = sqrtf(*x * *x + *y * *y), rx = *x, ry = *y;
+    if (m > 0.7f) { a->masking = 0; if (!a->t_since) a->t_since = now; a->t_big = now; a->bx = rx; a->by = ry; }
+    else if (m < 0.2f && !a->masking && now - a->t_big > 300000000ull) a->t_since = 0;
+    if (!a->masking && a->t_since && now - a->t_since >= 150000000ull && a->mprev > 0.7f && m < a->mprev - 0.4f) {
+        a->masking = 1; a->t_mask = now; a->lx0 = a->px; a->ly0 = a->py; a->nev++;
+    }
+    if (a->masking) {
+        if (m > 0.7f || now - a->t_mask > (uint64_t)hold_ms * 1000000ull) { if (m <= 0.7f) a->t_since = 0; a->masking = 0; }
+        else { *x = a->lx0; *y = a->ly0; a->masked++; }
+    }
+    if (!a->masking && m <= 0.7f && a->t_since && now - a->t_since >= 150000000ull && now - a->t_big <= 50000000ull) { *x = a->bx; *y = a->by; a->masked++; }
+    if (a->nev && (a->nev == 1 || (a->nev % 10) == 0) && a->nev != a->last_n) { a->last_n = a->nev; host_log("vr: %s hold: %u drops held, %u images\n", name, a->nev, a->masked); }
+    a->mprev = m; a->px = rx; a->py = ry;
+}
+
 static void read_actions(XrTime t)
 {
     XrActiveActionSet as = { aset, XR_NULL_PATH };
@@ -393,6 +417,14 @@ static void read_actions(XrTime t)
     get_v(a_rstick, &in.rx, &in.ry);
     in.ltrig = get_f(a_ltrig); in.rtrig = get_f(a_rtrig);
     in.lgrip = get_f(a_lgrip); in.rgrip = get_f(a_rgrip);
+    {   /* the dropout hold of the walking controls: the left stick, the right stick (the turn) and the left trigger (run) */
+        static AxisHold hl, hr, ht;
+        uint64_t now = SDL_GetTicksNS();
+        float zero = 0.0f;
+        axis_hold(&hl, "left stick", &in.lx, &in.ly, now, STICK_HOLD_MS);
+        axis_hold(&hr, "right stick", &in.rx, &in.ry, now, STICK_HOLD_MS);
+        axis_hold(&ht, "left trigger", &in.ltrig, &zero, now, STICK_HOLD_MS);
+    }
     in.buttons = (get_b(a_a) ? VRB_A : 0) | (get_b(a_b) ? VRB_B : 0) | (get_b(a_x) ? VRB_X : 0) | (get_b(a_y) ? VRB_Y : 0) |
                  (get_b(a_menu) ? VRB_MENU : 0) | (get_b(a_lclick) ? VRB_LSTICK : 0) | (get_b(a_rclick) ? VRB_RSTICK : 0);
     for (int hnd = 0; hnd < 2; hnd++) {

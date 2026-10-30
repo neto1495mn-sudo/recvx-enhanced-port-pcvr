@@ -55,6 +55,9 @@ static RenderTarget rts[MAX_RT];
 enum { FIRST_NONE, FIRST_COVER, FIRST_READ };
 static struct { int how, x0, y0, x1, y1; } first[MAX_RT];   /* COVER: area overwritten (physical pixels, x0..x1-1) */
 static uint64_t frame_no;
+static int walk_smooth_on(void);
+static void walk_smooth(const void* cur, const float dl[3], float t, float out[3]);
+static void walk_smooth_reset(void);
 static uint32_t stat_prims, stat_flushes, stat_reloads, stat_decodes, stat_decode_px;
 uint64_t gs_frame_count(void) { extern uint64_t stream_game_frames(void); return stream_game_frames(); }
 
@@ -2866,7 +2869,7 @@ static int present_vr_stereo_(const struct Frame* cur, float t)
     }
     {   /* vr67: walking moves the play space (W) once a game frame: in between, the play space at t
            (still scenery and characters move with the body at the headset's rate) */
-        const struct Frame* pf = g_vr_interpolate && t < 0.999f ? stream_prev_frame(cur) : NULL;
+        const struct Frame* pf = g_vr_interpolate && (t < 0.999f || walk_smooth_on()) ? stream_prev_frame(cur) : NULL;
         const VrView* pv = pf ? stream_frame_vr(pf) : NULL;
         float Wt[16], iWt[16], mv = 0.0f, zs = sqrtf(v->W[0] * v->W[0] + v->W[1] * v->W[1] + v->W[2] * v->W[2]);
         float dl[3];
@@ -2882,7 +2885,14 @@ static int present_vr_stereo_(const struct Frame* cur, float t)
                 steady = b2 < 1e-6f ? a2 < 0.25f * zs * zs * 0.01f : (ab > 0.7f * sqrtf(a2 * b2) && a2 > 0.25f * b2);
                 if (a2 < 1e-8f) steady = 1;   /* not moving */
             }
-            if (mv < 0.5f && steady) {   /* not a jump (a room change), not a wall */
+            if (walk_smooth_on() && mv < 0.5f) {   /* (steadiness no longer matters: the smoothing takes the uneven steps) */
+                float sh[3];
+                walk_smooth(cur, dl, t, sh);
+                memcpy(Wt, v->W, sizeof(Wt));
+                for (int k = 0; k < 3; k++) Wt[12 + k] -= sh[k];
+                if (vr_mat_invert(iWt, Wt)) use = 1;
+            } else if (walk_smooth_on()) walk_smooth_reset();   /* a jump: start over */
+            else if (mv < 0.5f && steady) {   /* not a jump (a room change), not a wall */
                 memcpy(Wt, v->W, sizeof(Wt));
                 for (int k = 0; k < 3; k++) Wt[12 + k] -= (1.0f - t) * dl[k];
                 if (vr_mat_invert(iWt, Wt)) use = 1;
@@ -2971,7 +2981,7 @@ static int present_vr_stereo_(const struct Frame* cur, float t)
     }
     float chT[16];
     int chars = 0;
-    if (g_vr_interpolate && t < 0.999f) {   /* in between two game frames: the characters at t */
+    if (g_vr_interpolate && (t < 0.999f || t > 1.001f)) {   /* in between two game frames (or a little past the newer one): the characters at t */
         const struct Frame* pf = stream_prev_frame(cur);
         const VrView* pv = pf ? stream_frame_vr(pf) : NULL;
         if (pv && pv->valid) {
@@ -3070,6 +3080,45 @@ static int present_vr_stereo_(const struct Frame* cur, float t)
     return ok;
 }
 
+int g_vr_interp_now;     /* render.c: the frame shown is interpolated (matched with the previous one) */
+float g_vr_t_used = 1.0f;   /* the t of the image last shown (render.c logs the motion by it) */
+static int g_vr_clock_t = -1;   /* RECVX_VR_CLOCK=0: the old mix (the last image of a frame at a fixed t = 1) */
+
+/* The walking shown smoothed: the body's step per game frame is uneven (0 then double, a short step among full ones: the game's wall check, a
+   frame that moved less), and gliding each frame's own step makes that a 30 Hz hitch - the world pulled back for a moment. The displayed
+   position follows the frames' position by its own smoothed speed (steady walking: no lag at all) with a gentle pull to the true position.
+   RECVX_WALK_SMOOTH=0: the old glide. Positions in game units, relative to the frame shown: out = how far behind it the world is shown. */
+static int walk_smooth_on(void)
+{
+    static int f = -1;
+    if (f < 0) f = SDL_getenv("RECVX_WALK_SMOOTH") && SDL_atoi(SDL_getenv("RECVX_WALK_SMOOTH")) == 0 ? 0 : 1;
+    return f;
+}
+static void walk_smooth_reset(void);
+static struct { const void* cur; uint64_t fno; float Q[3], S[3], vs[3]; int valid; uint64_t ns; } ws_st;
+static void walk_smooth_reset(void) { memset(&ws_st, 0, sizeof(ws_st)); }
+static void walk_smooth(const void* cur, const float dl[3], float t, float out[3])
+{
+    extern double g_vr_frame_period;
+    uint64_t now = SDL_GetTicksNS();
+    float dt = ws_st.ns ? (float)(now - ws_st.ns) * 1e-9f : 0.0f, P = g_vr_frame_period > 1e6 ? (float)(g_vr_frame_period * 1e-9) : 0.0334f;
+    float Pt[3];
+    ws_st.ns = now;
+    if (dt > 0.05f) dt = 0.05f;
+    if (cur != ws_st.cur || frame_no != ws_st.fno) {   /* a new game frame: its step joins the position, and the speed */
+        float a = 1.0f - expf(-P / 0.07f);
+        for (int k = 0; k < 3; k++) { ws_st.Q[k] += dl[k]; ws_st.vs[k] += (dl[k] / P - ws_st.vs[k]) * a; }
+        ws_st.cur = cur; ws_st.fno = frame_no;
+    }
+    for (int k = 0; k < 3; k++) Pt[k] = ws_st.Q[k] - (1.0f - t) * dl[k];
+    if (!ws_st.valid) { memcpy(ws_st.S, Pt, sizeof(Pt)); ws_st.valid = 1; }
+    else {
+        float c = 1.0f - expf(-dt / 0.05f);
+        for (int k = 0; k < 3; k++) ws_st.S[k] += ws_st.vs[k] * dt + c * (Pt[k] - ws_st.S[k]);
+    }
+    for (int k = 0; k < 3; k++) out[k] = ws_st.Q[k] - ws_st.S[k];
+}
+
 /* VR present: one headset frame. Stereo when the frame has a VR camera, else the cinema
    screen (the window image as usual). The window always mirrors. */
 static uint64_t gs_present_vr(const struct Frame* cur, float t)
@@ -3082,8 +3131,65 @@ static uint64_t gs_present_vr(const struct Frame* cur, float t)
     if (fr == 1) {   /* vr123: an in-between image at the time the headset shows it (after its wait), not by
                         counting images - a headset image shown late no longer holds the turn back */
         extern double g_vr_frame_ref, g_vr_frame_period;
-        double tc = g_vr_frame_period > 1e6 ? ((double)SDL_GetTicksNS() - g_vr_frame_ref) / g_vr_frame_period : 1.0;
-        if (t < 1.0f) t = tc < 0.0 ? 0.0f : tc > 1.0 ? 1.0f : (float)tc;
+        double tn = (double)SDL_GetTicksNS();
+        {   /* the time the headset SHOWS this image (OpenXR display time, evenly spaced) in our clock, not when its wait returned
+               (that came bunched when we ran behind: the same game time over two images, then a jump) */
+            static double off;   /* display time - our clock, smoothed */
+            static int have_off;
+            int64_t dsp = xr_display_time_ns();
+            if (dsp > 0 && SDL_getenv("RECVX_VR_DISPLAYCLOCK") == NULL) {
+                double x = (double)dsp - tn;
+                if (!have_off || fabs(x - off) > 20e6) { off = x; have_off = 1; } else off += 0.02 * (x - off);
+                tn = (double)dsp - off;
+            }
+        }
+        double tc = g_vr_frame_period > 1e6 ? (tn - g_vr_frame_ref) / g_vr_frame_period : 1.0;
+        {   /* The game time advances by the exact distance between the headset's display times (always regular), and is only gently pulled to the
+               clock above by the frames' arrival: when the headset changed how far ahead it shows (28 -> 40 ms in the log, every ~8 s) the clock above,
+               smoothed against that distance, was wrong for a moment - 4-9 images a second off their time, the walking "pulled".
+               RECVX_VR_PLL=0: the clock above alone. */
+            extern uint64_t g_vr_frame_seq;
+            static double phi;
+            static uint64_t seq0;
+            static int64_t d0;
+            static int pll = -1, have;
+            int64_t dsp = xr_display_time_ns();
+            if (pll < 0) pll = !(SDL_getenv("RECVX_VR_PLL") && SDL_atoi(SDL_getenv("RECVX_VR_PLL")) == 0);
+            static double bias = -1.0;
+            if (bias < -0.5) { const char* e = SDL_getenv("RECVX_VR_BIAS"); bias = e ? SDL_atof(e) : 0.25; }   /* (the frames arrive at phase ~0.75 of this clock: aligned to ~1.0) */
+            if (pll && dsp > 0 && g_vr_frame_period > 1e6) {
+                double tcb = tc + bias;
+                if (!have || g_vr_frame_seq < seq0) { phi = tcb; have = 1; seq0 = g_vr_frame_seq; }
+                else {
+                    double step = dsp > d0 && dsp - d0 < 60000000 ? (double)(dsp - d0) / g_vr_frame_period : 0.0;
+                    double err;
+                    phi += step;
+                    if (g_vr_frame_seq != seq0) { phi -= (double)(g_vr_frame_seq - seq0); if (g_vr_frame_seq - seq0 > 1) phi = tcb; seq0 = g_vr_frame_seq; }
+                    err = tcb - phi;
+                    if (fabs(err) > 0.5) phi = tcb; else phi += 0.04 * err;
+                }
+                d0 = dsp;
+                tc = phi;
+            } else have = 0;
+        }
+        if (g_vr_clock_t < 0) g_vr_clock_t = SDL_getenv("RECVX_VR_CLOCK") ? SDL_atoi(SDL_getenv("RECVX_VR_CLOCK")) != 0 : 1;
+        /* every image of an interpolated frame by the clock (the last one of three was a fixed t = 1 while the others were
+           the clock's: the world's steps came uneven, a stop then a jump, 30 times a second) */
+        {   /* t may go a little past 0 and 1 (RECVX_VR_MARGIN, default 0.3; 0 = clamped as before): a game frame arrives a few ms early or late (its
+               execution takes 1-6 ms in RM_3210) and the clock reached t = 1 / came back to t < 0 with the image held at the end of the range and then
+               a jump (the log: ~3 images a second "stopped" and 8-12 off their time). The pair is extrapolated by that little - the movement goes on
+               in the same direction. */
+            static double margin = -1.0;
+            if (margin < 0.0) { const char* e = SDL_getenv("RECVX_VR_MARGIN"); margin = e ? SDL_atof(e) : 0.3; if (margin > 0.5) margin = 0.5; }
+            if (g_vr_interp_now && g_vr_clock_t && margin > 0.0) {
+                t = tc < -margin ? (float)-margin : tc > 1.0 + margin ? (float)(1.0 + margin) : (float)tc;
+                g_vr_t_used = t;
+                goto t_done;
+            }
+        }
+        if (t < 1.0f || (g_vr_clock_t && g_vr_interp_now)) t = tc < 0.0 ? 0.0f : tc > 1.0 ? 1.0f : (float)tc;
+        t_done:
+        g_vr_t_used = t;
         vr_turn_t = tc < -0.5 ? -0.5f : tc > 1.5 ? 1.5f : (float)tc;   /* vr125: at most half a game frame ahead or behind */
     }
     {   /* vr141: the smooth turn by the headset's clock - the stick read each headset image, turned by the time since the last
