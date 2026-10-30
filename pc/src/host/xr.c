@@ -570,9 +570,11 @@ static void read_actions(XrTime t)
                  (get_b(a_menu) ? VRB_MENU : 0) | (get_b(a_lclick) ? VRB_LSTICK : 0) | (get_b(a_rclick) ? VRB_RSTICK : 0);
     {   /* RECVX_TEST_SAVESPOT (env.txt; a test aid, to be removed with the rest of it): hold X for 2 s to save the game here as save
            15 (pc_testsave_request, lobby_glue.c; the controller buzzes); the game's own X (the map, Square) only gets a quick tap, on release */
-        static int on = -1, down, fired, pulse;
+        static int down, fired, pulse;
         static uint64_t t_down;
-        if (on < 0) { const char* e = SDL_getenv("RECVX_TEST_SAVESPOT"); on = e && SDL_strcmp(e, "load") != 0; }   /* "load": only the boot load (lobby_glue.c), no X trigger - a controller resting on a table can read X as held and save over save 15 */
+        extern int g_extras_unlocked;   /* settings.c: the developer code (left grip twice, X, Y, X) - the hold is not for the end user */
+        int on = g_extras_unlocked;
+        if (!on) { down = 0; pulse = 0; }
         if (on) {
             uint64_t now = SDL_GetTicksNS();
             int x = (in.buttons & VRB_X) != 0;
