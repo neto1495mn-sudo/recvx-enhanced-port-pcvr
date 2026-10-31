@@ -1035,10 +1035,18 @@ float AdvEasyDispMessage(float PosX, float PosY, unsigned int MessageNo)
                 SearchFlag = 0; 
                 break; 
             case 65281:
-                SizeX += 14.0f; 
+#ifdef TARGET_PC
+                SizeX += pc_font_space();   /* a language's space (pc/glue/lang_glue.c) */
+#else
+                SizeX += 14.0f;
+#endif
                 break; 
             default: 
+#ifdef TARGET_PC
+                SizeX += (pc_font_width(nmp[x]) >= 0) ? pc_font_width(nmp[x]) : FontSz[nmp[x]];   /* a language's font */
+#else
                 SizeX += FontSz[nmp[x]]; 
+#endif
                 break; 
             } 
         } 
@@ -1121,10 +1129,18 @@ float AutoSaveLoadEasyDispMessage(float PosX, float PosY, unsigned char* ucpMsbT
                 SearchFlag = 0; 
                 break; 
             case 65281:
-                SizeX += 14.0f * FontScaleX; 
+#ifdef TARGET_PC
+                SizeX += pc_font_space() * FontScaleX;   /* a language's space (pc/glue/lang_glue.c) */
+#else
+                SizeX += 14.0f * FontScaleX;
+#endif
                 break; 
             default: 
+#ifdef TARGET_PC
+                SizeX += FontScaleX * ((pc_font_width(nmp[x]) >= 0) ? pc_font_width(nmp[x]) : FontSz[nmp[x]]);   /* a language's font */
+#else
                 SizeX += FontScaleX * FontSz[nmp[x]]; 
+#endif
                 break; 
             } 
         } 
@@ -1596,6 +1612,13 @@ void DisplayTitleBg()
     
     AdvEasyDrawTextureS(1, 0xFFFFFFFF, qp, 0.15f, 1, 192); 
     
+#ifdef TARGET_PC
+    if (lang_eu_picture(2))   /* a European title picture: its copyright is the first block alone (pc/glue/lang_glue.c) */
+    {
+        return;
+    }
+    
+#endif
     SetQuadPos(348.0f, 418.0f, 240.0f, 32.0f, qp); 
     SetQuadUv2(272.0f, 432.0f, 240.0f, 32.0f, 1, qp); 
     
@@ -1618,6 +1641,15 @@ void DisplayPressStartPlate(float FadeRate)
     temp = 0.5f;
     
     AdvEasyDrawTextureS(1, ((unsigned int)FadeRate << 24) | 0xFFFFFF, qp, FadeRate, 1, temp);
+#ifdef TARGET_PC
+    if (lang_picture(2) == 1)   /* the French title picture: "APPUYEZ SUR" on the row above (pc/glue/lang_glue.c) */
+    {
+        SetQuadPos(64.0f, 272.0f, 512.0f, 32.0f, qp);
+        SetQuadUv2(0, 0.0f, 512.0f, 32.0f, 1, qp);
+        AdvEasyDrawTextureS(1, ((unsigned int)FadeRate << 24) | 0xFFFFFF, qp, FadeRate, 1, temp);
+    }
+
+#endif
 }
 
 // 95.58% matching

@@ -1162,6 +1162,13 @@ void PageScroll()
         fv->pagewait00--;
     }
     
+#ifdef TARGET_PC
+    if (pc_lang_file_page(parts_22b->pos[0], 64.0f, fv->filenum, fv->bufnum - 280 - fsheader[fv->filenum]))   /* the Japanese file pages are pictures (pc/glue/lang_glue.c) */
+    {
+        return;
+    }
+
+#endif
     bhDispMessage(parts_22b->pos[0], 64.0f, -1.0f, 1, fv->bufnum, 0, 0);
 }
 
@@ -1649,5 +1656,9 @@ int PlayPageCheck()
         page_end00 = 7;
     }
     
+#ifdef TARGET_PC
+    return pc_lang_page_end(page_end00);   /* the language's manual hides other pages (pc/glue/lang_glue.c) */
+#else
     return page_end00;
+#endif
 }

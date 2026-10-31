@@ -79,6 +79,10 @@ void bhSetRoom()
         *romp = (unsigned int)sys->rdtp + *romp;
     }
     
+#ifdef TARGET_PC
+    rom->mesp = pc_lang_room_mes(rom->mesp);   /* the language's messages (pc/glue/lang_glue.c) */
+    
+#endif
     cp = rom->cutp;
     
     for (i = 0; i < rom->cut_n; i++, cp++)

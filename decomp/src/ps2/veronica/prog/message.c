@@ -93,7 +93,11 @@ void bhControlMessage(int mode)
             pos.y += 30.0f * FontScaleCR;
             continue;
         case 65281:
+#ifdef TARGET_PC
+            pos.x += pc_font_space() * FontScaleX;   /* a language's space (pc/glue/lang_glue.c: Japanese 28) */
+#else
             pos.x += 14.0f * FontScaleX;
+#endif
             continue;
         case 65282:
             if ((sys->mes_tim != 0) || (((sys->st_flg & 0x4000)) || ((sys->st_flg & 0x800)))) 
@@ -374,8 +378,29 @@ void bhDispFont(NJS_POINT2* pos, int code, int color, float pri)
     njColorBlendingMode(0, 8);
     njColorBlendingMode(1, 6);
     
+#ifdef TARGET_PC
+    NJS_POINT2 at;
+
+    {
+        void* tl = &sys->ef_tlist;
+        float dx = 0;
+
+        code = pc_font_glyph(code, &tl, &dx);   /* the cell in its language's font (pc/glue/lang_glue.c); a subtitle's own font */
+
+        if (code < 0)
+        {
+            return;
+        }
+
+        njSetTexture((NJS_TEXLIST*)tl);
+        at.x = pos->x + dx * FontScaleX;   /* (a glyph drawn left of its cell's start: proportional letters) */
+        at.y = pos->y;
+        pos = &at;
+    }
+#else
     njSetTexture(&sys->ef_tlist);
-    
+#endif
+
     njSetTextureNum(code / 324);
     
     p2c.p = p;
@@ -462,8 +487,29 @@ void bhDispFontEx(NJS_POINT2* pos, int code, unsigned int argb, float pri)
     njColorBlendingMode(0, 8);
     njColorBlendingMode(1, 6);
     
+#ifdef TARGET_PC
+    NJS_POINT2 at;
+
+    {
+        void* tl = &sys->ef_tlist;
+        float dx = 0;
+
+        code = pc_font_glyph(code, &tl, &dx);   /* the cell in its language's font (pc/glue/lang_glue.c); a subtitle's own font */
+
+        if (code < 0)
+        {
+            return;
+        }
+
+        njSetTexture((NJS_TEXLIST*)tl);
+        at.x = pos->x + dx * FontScaleX;   /* (a glyph drawn left of its cell's start: proportional letters) */
+        at.y = pos->y;
+        pos = &at;
+    }
+#else
     njSetTexture(&sys->ef_tlist);
-    
+#endif
+
     njSetTextureNum(code / 324);
     
     p2c.p = p;
@@ -544,9 +590,13 @@ int bhDispItemName(NJS_POINT2* pos, int id, int color, int count, float pri)
             
             pos->x += FontScaleX * bhGetFontSize(cd);
         } 
-        else 
+        else
         {
+#ifdef TARGET_PC
+            pos->x += pc_font_space() * FontScaleX;   /* a language's space (pc/glue/lang_glue.c) */
+#else
             pos->x += 14.0f * FontScaleX;
+#endif
         }
         
         num++;
@@ -614,7 +664,11 @@ int bhDispMessage(float px, float py, float pri, int mes_typ, int mes_idx, int c
             pos.y += 30.0f * FontScaleCR;
             continue;
         case 65281:
+#ifdef TARGET_PC
+            pos.x += pc_font_space() * FontScaleX;   /* a language's space (pc/glue/lang_glue.c: Japanese 28) */
+#else
             pos.x += 14.0f * FontScaleX;
+#endif
             continue;
         case 65282:
             dp++;
@@ -718,9 +772,13 @@ int bhDispMessageEx(float px, float py, float pri, int mes_typ, int mes_idx, uns
             pos.y += 30.0f * FontScaleCR;
             continue;
         case 65281:
+#ifdef TARGET_PC
+            pos.x += pc_font_space() * FontScaleX;   /* a language's space (pc/glue/lang_glue.c) */
+#else
             pos.x += 14.0f * FontScaleX;
-            
-            if ((cflg != 0) && (--count <= 0)) 
+#endif
+
+            if ((cflg != 0) && (--count <= 0))  
             {
                 return 0;
             }
@@ -1006,6 +1064,15 @@ void bhDispTimeEx(NJS_POINT2* pos, unsigned int flg, int time, unsigned int argb
 // this function is not present on the Japanese version
 float bhGetFontSize(unsigned short code)
 {
+#ifdef TARGET_PC
+    float w = pc_font_width(code);   /* a language's font: its own widths (pc/glue/lang_glue.c) */
+
+    if (w >= 0)
+    {
+        return w;
+    }
+
+#endif
     if (code >= 108) 
     {
         return 0;
@@ -1032,7 +1099,11 @@ float bhMesLen(unsigned short* dp)
         case 65280:
             continue;
         case 65281:
+#ifdef TARGET_PC
+            len += FontScaleX * pc_font_space();   /* a language's space (pc/glue/lang_glue.c) */
+#else
             len += FontScaleX * 14.0f;
+#endif
             continue;
         case 65282:
             dp++;

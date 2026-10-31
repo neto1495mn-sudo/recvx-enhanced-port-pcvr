@@ -516,7 +516,11 @@ void bhEne22(BH_PWORK* epw)
 
     bhEne22_MainLoop(epw);
 
+#ifdef TARGET_PC
+    if (!pc_enemy_refused && ((plp->mode0 == 4) || (plp->mode0 == 6)))   /* not another enemy's hold (eneset.c) */
+#else
     if ((plp->mode0 == 4) || (plp->mode0 == 6))
+#endif
     {
         if (plp->mode2 == 0)
         {

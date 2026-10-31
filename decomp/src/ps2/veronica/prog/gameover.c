@@ -432,7 +432,11 @@ void bhMainGameOver()
         
         break;
     case 2:
+#ifdef TARGET_PC
+        sys->mes_tp = (unsigned short*)pc_lang_mes(3, cnt_mes);   /* the language's (pc/glue/lang_glue.c) */
+#else
         sys->mes_tp = cnt_mes;
+#endif
         
         bhDispMessageEx(264.0f, 211.0f, -0.9f, 2, 0, (gv->count << 24) | 0xE0E0E0, 0);
         

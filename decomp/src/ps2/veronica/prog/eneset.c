@@ -172,6 +172,10 @@ static BH_PWORK* pc_running;               /* the enemy whose code runs (bhContr
    enemy's code changed it (its parts and children count as the holder). Per player: co-op runs
    an enemy against the partner's work (coop_glue.c swaps plp). */
 static struct { BH_PWORK* pl; BH_PWORK* by; } pc_held[2];
+/* set while the code of an enemy runs on a player another enemy holds: types that step the hold of any
+   held player (the albinoid's and Monster Steve's bhEne22 / bhEne17 PlyDG*) leave that one alone; they
+   read their own motion table with the holder's motion (an infant albinoid's 42: crash) */
+int pc_enemy_refused;
 
 static BH_PWORK* pc_root(BH_PWORK* ep)   /* a part's or child's parent enemy */
 {
@@ -233,7 +237,9 @@ static void pc_call_enemy(BH_PWORK* ep, int slot)
     if (pc_held[h].by && (!(pl->flg & 0x4) || !(pc_held[h].by->flg & 0x1))) pc_held[h].by = NULL;
     if (pc_held[h].by && pc_root(ep) != pc_root(pc_held[h].by)) {
         BH_PWORK keep = *pl;
+        pc_enemy_refused = 1;
         f(ep);
+        pc_enemy_refused = 0;
         busy = pl->mode0 != keep.mode0 && (pl->mode0 == 4 || pl->mode0 == 6);   /* it started a grab */
         *pl = keep;
         /* refused: a zombie would play its grab on nobody (and its bites would drive the other holder's

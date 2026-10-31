@@ -157,10 +157,10 @@ void* ps2_dma_alloc(int slot, uint32_t len)
 #ifdef _WIN32
     p = VirtualAlloc(NULL, len, MEM_COMMIT | MEM_RESERVE | MEM_TOP_DOWN, PAGE_READWRITE);
 #else
-    p = mmap(NULL, len, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    p = mmap((void*)(uintptr_t)PS2_WINDOW_END, len, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     if (p == MAP_FAILED) p = NULL;
 #endif
-    if (p && (uintptr_t)p < 0x40000000u) { dma_unmap(p, len); p = NULL; }   /* (it would read as a PS2 address) */
+    if (p && (uintptr_t)p < PS2_WINDOW_END) { dma_unmap(p, len); p = NULL; }   /* (it would read as a PS2 address) */
     if (!p) return NULL;
     dma_host[slot].base = (uint32_t)(uintptr_t)p;
     dma_host[slot].len = len;

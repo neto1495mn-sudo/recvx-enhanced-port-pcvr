@@ -352,7 +352,11 @@ void bhEne17(BH_PWORK* epw)
     NJS_POINT3 pd;
 
     bhEne17_MainLoop(epw);
+#ifdef TARGET_PC
+    if (!pc_enemy_refused && ((plp->mode0 == 4) || (plp->mode0 == 6))) {   /* not another enemy's hold (eneset.c) */
+#else
     if ((plp->mode0 == 4) || (plp->mode0 == 6)) {
+#endif
         if (plp->mode2 == 0) {
             bhEne17_PlyDG00(plp, epw);
         } else {

@@ -103,16 +103,33 @@ void bhSetPad()
         
         if (!(sys->cb_flg & 0x2)) 
         { 
+#ifdef TARGET_PC
+            sys->mes_tp = (unsigned short*)pc_lang_mes(0, pdm_mes);   /* the language's (pc/glue/lang_glue.c) */
+#else
             sys->mes_tp = pdm_mes;
+#endif
             
             argb = ((int)(128.0f + (127.0f * njSin((sys->eor_ct & 0xF) * 2048))) << 24) | 0xE0E000; 
             
+#ifdef TARGET_PC
+            bhDispMessageEx(320.0f - (bhMesLen(sys->mes_tp) / 2.0f), 88.0f, -0.9f, 2, 0, argb, 0);   /* (centred: the language's) */
+            bhDispMessageEx(320.0f - (bhMesLen(sys->mes_tp) / 2.0f), 88.0f, -0.9f, 2, 0, -2039808, 0);
+#else
             bhDispMessageEx(320.0f - (bhMesLen(pdm_mes) / 2.0f), 88.0f, -0.9f, 2, 0, argb, 0);    
             bhDispMessageEx(320.0f - (bhMesLen(pdm_mes) / 2.0f), 88.0f, -0.9f, 2, 0, -2039808, 0); 
+#endif
             
+#ifdef TARGET_PC
+            sys->mes_tp = (unsigned short*)pc_lang_mes(1, pdm_palmes);   /* the language's (pc/glue/lang_glue.c) */
+#else
             sys->mes_tp = pdm_palmes; 
+#endif
             
+#ifdef TARGET_PC
+            bhDispMessageEx(320.0f - (bhMesLen(sys->mes_tp) / 2.0f), 392.0f, -0.9f, 2, 0, argb, 0);
+#else
             bhDispMessageEx(320.0f - (bhMesLen(pdm_palmes) / 2.0f), 392.0f, -0.9f, 2, 0, argb, 0); 
+#endif
         }
     }
     else
