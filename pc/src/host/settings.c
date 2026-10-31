@@ -2,6 +2,7 @@
    docs/ARCHITECTURE.md "Settings": to add a setting, add its variable's ini key in config.c and
    one entry here; both menus show it (F1 on the CO-OP and EXTRAS pages only with SET_F1). Rows
    are in menu order, .group starts a heading. */
+#include "lang.h"
 #include "../ps2_platform.h"
 #include "settings.h"
 #include "coop.h"
@@ -129,6 +130,24 @@ static int vr_comfort_get(void) { return g_vr_comfort <= 0 ? 0 : g_vr_comfort <=
 static void vr_comfort_set(int v) { if (v >= 0 && v < 3) g_vr_comfort = vr_comfort_v[v]; }
 
 #define V(x) ((int*)&(x))
+static int lang_n(void) { int n = 0; for (int l = 0; l < LANG_COUNT; l++) n += lang_installed(l); return n; }
+static int lang_any(void) { return lang_n() > 1; }   /* the rows only with an imported language */
+static int lang_at(int v) { for (int l = 0; l < LANG_COUNT; l++) if (lang_installed(l) && v-- == 0) return l; return LANG_EN; }
+static int lang_get(void) { int v = 0; for (int l = 0; l < g_lang && l < LANG_COUNT; l++) v += lang_installed(l); return lang_installed(g_lang) ? v : 0; }
+static void lang_set(int v) { g_lang = lang_at(v); }
+static const char* lang_name(int v, char* b, int n) { snprintf(b, n, "%s", lang_names[lang_at(v)]); return b; }
+static const char* lang_locked(void)
+{
+    if (lang_n() < 2) return "No other language is installed.";
+    return pc_in_game() ? "Change it on the title screen." : NULL;
+}
+/* Subtitles: Off and the installed languages with subtitles, whatever the game's language (lang.h g_subtitles) */
+static int subs_n(void) { int n = 1; for (int l = 0; l < LANG_COUNT; l++) n += lang_has_subtitles(l); return n; }
+static int subs_at(int v) { for (int l = 0; l < LANG_COUNT; l++) if (lang_has_subtitles(l) && --v == 0) return l; return -1; }
+static int subs_get(void) { int v = 1, s = lang_sub(); for (int l = 0; l < s; l++) v += lang_has_subtitles(l); return s < 0 ? 0 : v; }
+static void subs_set(int v) { g_subtitles = subs_at(v) < 0 ? 0 : 2 + subs_at(v); }
+static const char* subs_name(int v, char* b, int n) { snprintf(b, n, "%s", subs_at(v) < 0 ? tr("Off") : lang_names[subs_at(v)]); return b; }
+static const char* subs_locked(void) { return subs_n() < 2 ? "No language with subtitles is installed." : NULL; }
 const Setting g_settings[] = {
     { SP_VR, "Snap turn", NULL, 0, 5, 1, .get = vr_turn_get, .set = vr_turn_set, .name = vr_turn_name, .group = "COMFORT",
       .help = "Right stick: turn in steps of this many degrees, or Smooth for a continuous turn." },
@@ -169,6 +188,10 @@ const Setting g_settings[] = {
 
     { SP_GAMEPLAY, "Exit to desktop", NULL, .flags = SET_ACTION, .apply = quit_desktop, .group = "GENERAL",
       .help = "Closes the game now. Progress since the last save is lost." },
+    { SP_GAMEPLAY, "Language", NULL, 0, 0, 1, .get = lang_get, .set = lang_set, .name = lang_name, .count = lang_n, .locked = lang_locked,
+      .help = "The game's text. Import a language with F9. Applies from the next screen." },
+    { SP_GAMEPLAY, "Subtitles", NULL, 0, 0, 1, .get = subs_get, .set = subs_set, .name = subs_name, .count = subs_n, .locked = subs_locked,
+      .help = "Cutscene subtitles in this language, also with the game in another one." },
     { SP_GAMEPLAY, "Skip intro", V(g_config.skip_intro), 0, 1, 1, .flags = SET_RESTART, .help = "Boot straight into the title menu: no warning screen, logos or intro movie." },
     { SP_GAMEPLAY, "Skip door animations", V(g_config.skip_doors), 0, 1, 1, .help = "Room transitions use the game's load screen instead of the door, stairs or ladder animation." },
     { SP_GAMEPLAY, "Battle Game unlocked", V(g_config.battle_unlocked), 0, 1, 1,

@@ -7,6 +7,7 @@
  * our own and posed, lit and drawn in a small scene of their own in front of the picture.
  * Networking stays in pc/glue/coop_glue.c: the lobby only sets g_coop and requests.
  */
+#include "../src/host/lang.h"
 #include "../../decomp/include/ps2/veronica/prog/types.h"
 #include "../../decomp/include/ps2/veronica/prog/main.h"
 #include "../../decomp/include/ps2/veronica/prog/adv.h"
@@ -192,21 +193,23 @@ static void plates_check(void)
 static void plate_word(const PlateLetter* L, int n, float x, float y, unsigned int col, unsigned int shadow, float scale)
 {
     QUAD q;
+    int tex = lang_us_plates(2) ? 0 : 1;   /* (every language's picture: our words from the US plates) */
     for (int i = 0; i < n; i++) {
         if (L[i].bw) {   /* two halves: the top of one letter over the bottom of another, centred */
             SetQuadPos(x, y, L[i].w * scale, 18.0f * scale, &q);   /* vr153: the V down to 18 (it was cut at 16) */
             SetQuadUv2(L[i].u, L[i].v, L[i].w, 18.0f, 1, &q);
-            AdvEasyDrawTextureS(1, col, &q, 0.5f, 1, shadow);
+            AdvEasyDrawTextureS(tex, col, &q, 0.5f, 1, shadow);
             SetQuadPos(x + (L[i].w - L[i].bw) * scale / 2, y + 17.0f * scale, L[i].bw * scale, 16.0f * scale, &q);   /* (one row over) */
             SetQuadUv2(L[i].bu, L[i].bv + 17, L[i].bw, 16.0f, 1, &q);
-            AdvEasyDrawTextureS(1, col, &q, 0.5f, 1, shadow);
+            AdvEasyDrawTextureS(tex, col, &q, 0.5f, 1, shadow);
         } else {
             SetQuadPos(x, y, L[i].w * scale, 33.0f * scale, &q);
             SetQuadUv2(L[i].u, L[i].v, L[i].w, 33.0f, 1, &q);
-            AdvEasyDrawTextureS(1, col, &q, 0.5f, 1, shadow);
+            AdvEasyDrawTextureS(tex, col, &q, 0.5f, 1, shadow);
         }
         x += (L[i].w + 1) * scale;
     }
+    if (!tex) AdvEasySetTextureList(0);   /* the title's textures again */
 }
 static float plate_w(const PlateLetter* L, int n, float scale) { float w = 0; for (int i = 0; i < n; i++) w += (L[i].w + 1) * scale; return w; }
 

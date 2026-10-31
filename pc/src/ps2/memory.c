@@ -130,9 +130,47 @@ void ps2_memory_init(void)
 }
 char ps2_window_probe;
 
+/* blocks of host memory outside the window that DMA reads (textures of our own: lang_glue.c), above the window
+   (never a physical PS2 address below 0x10000000), which ps2_dma_ptr passes through as host pointers. One per
+   slot; a new one replaces the slot's last. */
+static struct { uint32_t base, len; } dma_host[4];
+static void dma_unmap(void* p, uint32_t len)
+{
+#ifdef _WIN32
+    (void)len;
+    VirtualFree(p, 0, MEM_RELEASE);
+#else
+    munmap(p, len);
+#endif
+}
+void* ps2_dma_alloc(int slot, uint32_t len)
+{
+    void* p;
+    if (slot < 0 || slot >= 4) return NULL;
+    if (dma_host[slot].base) {
+        uint32_t n = dma_host[slot].len;
+        dma_host[slot].len = 0;
+        dma_unmap((void*)(uintptr_t)dma_host[slot].base, n);
+        dma_host[slot].base = 0;
+    }
+    if (!len) return NULL;
+#ifdef _WIN32
+    p = VirtualAlloc(NULL, len, MEM_COMMIT | MEM_RESERVE | MEM_TOP_DOWN, PAGE_READWRITE);
+#else
+    p = mmap(NULL, len, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (p == MAP_FAILED) p = NULL;
+#endif
+    if (p && (uintptr_t)p < 0x40000000u) { dma_unmap(p, len); p = NULL; }   /* (it would read as a PS2 address) */
+    if (!p) return NULL;
+    dma_host[slot].base = (uint32_t)(uintptr_t)p;
+    dma_host[slot].len = len;
+    return p;
+}
+
 /* DMA MADR/TADR/ADDR field -> host pointer */
 void* ps2_dma_ptr(uint32_t addr)
 {
+    for (int i = 0; i < 4; i++) if (addr - dma_host[i].base < dma_host[i].len) return (void*)(uintptr_t)addr;
     if (addr & 0x80000000u) return (void*)(uintptr_t)(PS2_SPR_BASE | (addr & (PS2_SPR_SIZE - 1)));
     if ((addr & 0xF0000000u) == 0x70000000u) return (void*)(uintptr_t)(PS2_SPR_BASE | (addr & (PS2_SPR_SIZE - 1)));
     if (addr < 0x10000000u) addr |= PS2_WINDOW; /* physical address (masked with 0x0FFFFFFF) */

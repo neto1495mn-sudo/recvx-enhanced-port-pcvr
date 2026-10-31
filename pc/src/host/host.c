@@ -12,6 +12,8 @@
 #include "lobby.h"
 #include "bindings.h"
 #include "settings.h"
+#include "lang.h"
+#include "../import/import.h"
 void render_loop(void);
 #include <SDL3/SDL.h>
 #include <stdarg.h>
@@ -119,6 +121,7 @@ void host_pump_events(void)
 {
     SDL_Event ev;
     bind_test_frame();
+    if (__atomic_exchange_n(&g_import_reload, 0, __ATOMIC_ACQ_REL)) lang_scan();
     while (SDL_PollEvent(&ev)) {
         if (ev.type == SDL_EVENT_GAMEPAD_ADDED || ev.type == SDL_EVENT_GAMEPAD_REMOVED) { extern void pad_devices_changed(void); pad_devices_changed(); }
         if (bind_event(&ev)) continue;   /* a "press a key" of the settings */
@@ -436,6 +439,8 @@ int main(int argc, char** argv)
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMEPAD))
         host_fatal("SDL_Init: %s", SDL_GetError());
     bind_apply_source();   /* Gamepad only: gamepads also in the background */
+    lang_scan();   /* the installed languages (lang.h) */
+    tr_init();
     { extern void update_check(void); update_check(); }   /* VR: a newer release on GitHub (host/update.c) */
 
 #ifdef __ANDROID__

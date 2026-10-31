@@ -90,6 +90,17 @@ int   pc_skip_door_demo(void);
 int   pc_mod_file_size(const char* name);
 void* pc_mod_open(const char* name);
 int   pc_model_cull(void);      /* actors/objects off-screen are skipped (bhCheckClipModel/Point) */
+/* languages (pc/glue/lang_glue.c, docs/LANGUAGES.md): the language font's width of a glyph (< 0: the game's own);
+   bhSetRoom's message table in the language */
+float pc_font_width(unsigned short code);
+float pc_font_space(void);      /* a space's (0xFF01) advance at scale 1 */
+int   pc_font_glyph(int code, void** texlist, float* dx);   /* bhDispFont: the cell to draw (-1 none); *texlist another font's; *dx its shift */
+const unsigned short* pc_lang_mes(int which, const unsigned short* us);   /* the executable's short texts (lang.h LM_*) */
+int   pc_lang_file_page(float x, float y, int file, int page);   /* a file page as the language's picture (1 drawn) */
+int   pc_lang_page_end(int us);   /* PlayPageCheck: the playing manual's hidden pages in the language's layout */
+unsigned int* pc_lang_room_mes(unsigned int* mesp);
+int   lang_picture(int adv);    /* the language of the ADV.AFS picture read last (0: English) */
+int   lang_eu_picture(int adv); /* ... is a European one (its title layout) */
 int   pc_frame_blend(void);     /* PS2_swap blends the new frame 75% over the previous one (motion trail) */
 unsigned int pc_noclip(void);   /* F2 cheat: player flags whose enemy/wall push bhControlPlayer skips */
 int   pc_inf_ammo(void);      /* F2 cheat (pc/glue/cheat_glue.c): bhCheckBullet/bhCountBullet as for an unlimited weapon */
