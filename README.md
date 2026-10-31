@@ -26,7 +26,7 @@ decompilation by AshfordFamily. All credit for the PC port goes to them.
 
 ### How to play in VR
 
-1. Download `RE-Code-Veronica-X-PC-Port-VR-v1.4.1-windows.zip` from the [Releases](https://github.com/neto1495mn-sudo/recvx-enhanced-port-pcvr/releases)
+1. Download `RE-Code-Veronica-X-PC-Port-VR-v1.4.2-windows.zip` from the [Releases](https://github.com/neto1495mn-sudo/recvx-enhanced-port-pcvr/releases)
    page and unpack it anywhere.
 2. Start your OpenXR runtime (tested only on a Quest 2 through Virtual Desktop / VDXR).
 3. Run `recvx_vr.exe` (or `PLAY_VR.bat`). On the first start, pick your own `.iso` of the game (PS2, NTSC-U,
@@ -37,6 +37,26 @@ decompilation by AshfordFamily. All credit for the PC port goes to them.
    (see "The VR page" below).
 
 When a newer version is out, the game says so when it starts (see "Update check" below).
+
+### What's new in 1.4.2
+
+**Languages**
+- **French, German, Spanish, Japanese and Russian**: press F9 on the PC window and import them from your own disc image of that release, then pick Language and Subtitles in the settings. The game's text and cutscene subtitles change; the VR and enhanced menus stay in English.
+- **Translated discs**: a disc with a larger font, such as the Russian fan translation, now shows its letters properly when played directly.
+
+**New launcher**
+- A new look with Play, Disc, Textures and Settings tabs, and resolution from 2x to 8x (4x recommended).
+
+**Smoother and steadier**
+- Higher frame rate in heavy rooms such as the rain room.
+- **Show frame rate** option in the VR settings, shown in the headset.
+- Walking no longer stops by itself when the stick reading drops for an instant, and running no longer cancels by itself.
+- The camera no longer jumps forward after climbing stairs.
+
+**Fixes**
+- Fixed a crash with the albinoid adult while a young one holds the player.
+- Third person: the grenade launcher aims at the crosshair with another character model.
+- "Cannot reserve game memory" at start-up happens less often, and the message names the program in the way.
 
 ### What's new in 1.4.1
 

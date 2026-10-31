@@ -19,8 +19,8 @@ BEGIN
             VALUE "FileDescription", "Recvx-VR"
             VALUE "ProductName", "Recvx-VR"
             VALUE "InternalName", "Recvx-VR"
-            VALUE "FileVersion", "1.4.1"
-            VALUE "ProductVersion", "1.4.1"
+            VALUE "FileVersion", "1.4.2"
+            VALUE "ProductVersion", "1.4.2"
         END
     END
     BLOCK "VarFileInfo"
