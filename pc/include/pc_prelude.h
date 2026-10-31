@@ -96,6 +96,7 @@ int   pc_lang_page_end(int us);   /* PlayPageCheck: the playing manual's hidden 
 unsigned int* pc_lang_room_mes(unsigned int* mesp);
 int   lang_picture(int adv);    /* the language of the ADV.AFS picture read last (0: English) */
 int   lang_eu_picture(int adv); /* ... is a European one (its title layout) */
+extern int pc_enemy_refused;       /* eneset.c: the enemy's code runs on a player another enemy holds (its changes are undone) */
 int   pc_frame_blend(void);     /* PS2_swap blends the new frame 75% over the previous one (motion trail) */
 unsigned int pc_noclip(void);   /* F2 cheat: player flags whose enemy/wall push bhControlPlayer skips */
 int   pc_inf_ammo(void);      /* F2 cheat (pc/glue/cheat_glue.c): bhCheckBullet/bhCountBullet as for an unlimited weapon */
