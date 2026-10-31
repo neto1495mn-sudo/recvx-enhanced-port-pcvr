@@ -395,6 +395,7 @@ int main(int argc, char** argv)
 {
     atexit(end_process);   /* vr144 */
     setvbuf(stdout, NULL, _IONBF, 0); /* the game's printf diagnostics */
+    ps2_memory_init();   /* first: a DLL loaded later (WinHTTP's, the GPU driver's) moves aside, one loaded before can't */
     argv = pc_utf8_argv(argc, argv);   /* paths are UTF-8 everywhere (fileio.h) */
     { char* cwd = SDL_GetCurrentDirectory(); if (cwd) { SDL_strlcpy(start_dir, cwd, sizeof(start_dir)); SDL_free(cwd); } }
     parse_args(argc, argv);
@@ -431,7 +432,6 @@ int main(int argc, char** argv)
     { extern void profile_start(void); profile_start(); }   /* --profile-samples (host/profile.c) */
     config_load();
     parse_args(argc, argv);   /* command line overrides the saved settings */
-    ps2_memory_init();
 
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMEPAD))
         host_fatal("SDL_Init: %s", SDL_GetError());
