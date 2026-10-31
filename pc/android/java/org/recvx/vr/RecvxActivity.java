@@ -44,6 +44,22 @@ public class RecvxActivity extends SDLActivity {
         super.onActivityResult(requestCode, resultCode, data);
     }
 
+    /* the game library cannot be loaded (android/loader.c writes why): a 2D panel says so, instead of an app that only restarts */
+    @Override
+    public void loadLibraries() {
+        new File(getFilesDir(), "start_error.txt").delete();
+        try {
+            super.loadLibraries();
+        } catch (UnsatisfiedLinkError | SecurityException e) {
+            Intent i = new Intent(this, RecvxErrorActivity.class);
+            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            i.putExtra("reason", String.valueOf(e.getMessage()));
+            startActivity(i);
+            android.os.Process.killProcess(android.os.Process.myPid());   /* (not SDL's own message box, under the panel; the panel has its own process) */
+            throw e;
+        }
+    }
+
     @Override
     protected String[] getLibraries() {
         return new String[] { "recvxloader" };

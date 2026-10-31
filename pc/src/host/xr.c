@@ -311,6 +311,28 @@ static void chain_release(Chain* c)
     c->acquired = 0;
 }
 
+#ifdef __ANDROID__
+/* Flat frames (menus, inventory, scenes) submit no eye image. An eye image taken ahead (chain_poll) for a frame that turned out flat stayed
+   waiting on a submission that never came: each xrWaitSwapchainImage blocked ~2 s (the runtime: "Missing previous frame submission",
+   "Failed to retire next frame") and the inventory ran at 1 image a second. Given back at the first flat frame, and not polled during them. */
+static int flat_frames;
+static void eyes_give_back(void)
+{
+    for (int k = 0; k < 2; k++) {
+        Chain* c = &eye_chain[k];
+        if (c->pre) {
+            XrSwapchainImageWaitInfo wi = { XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO };
+            uint64_t t0 = SDL_GetTicksNS();
+            wi.timeout = XR_INFINITE_DURATION;
+            xrWaitSwapchainImage(c->h, &wi);
+            c->pre = 0; c->acquired = 1;
+            host_log("vr: eye %d image taken ahead, given back for a flat frame (waited %.1f ms)\n", k, (SDL_GetTicksNS() - t0) / 1e6);
+        }
+        chain_release(c);
+    }
+}
+#endif
+
 static int pick_format(void)
 {
     int64_t fmts[256];   /* (the Quest's runtime lists more than 64) */
@@ -909,7 +931,7 @@ int xr_frame_ready(void)
     r = w_st == 2;
     if (w_st == 0) SDL_BroadcastCondition(w_cv);
     SDL_UnlockMutex(w_mx);
-    if (r && !eyes_ready()) { xt.eyes_not_ready++; r = 0; }   /* (the headset's eye images still in use: game frames meanwhile) */
+    if (r && !flat_frames && !eyes_ready()) { xt.eyes_not_ready++; r = 0; }   /* (the headset's eye images still in use: game frames meanwhile) */
     return r;
 }
 /* render loop: how long until the headset wants its next image (0: now or unknown), by the images' own rhythm - a game frame
@@ -1236,6 +1258,9 @@ void xr_frame_end_none(void)
 
 void xr_frame_end_stereo(void)
 {
+#ifdef __ANDROID__
+    flat_frames = 0;
+#endif
     XrCompositionLayerProjection proj = { XR_TYPE_COMPOSITION_LAYER_PROJECTION };
     XrCompositionLayerProjectionView pv[2] = { { XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW }, { XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW } };
     const XrCompositionLayerBaseHeader* layers[1];
@@ -1298,6 +1323,8 @@ void xr_frame_end_quad_rect(int x, int y, int w, int h)
     GLuint tex;
     if (!in_frame) return;
 #ifdef __ANDROID__
+    flat_frames = 1;
+    eyes_give_back();
     /* Android (Quest): the cinema screen (menus, inventory, scenes) at half the window's size - the window is the panel's
        3664x1920: the copy and the compositor's sampling of it kept the swapchain busy (the log: 17-19 ms waiting to
        acquire it, 45 images a second) */

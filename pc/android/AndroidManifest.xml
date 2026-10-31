@@ -35,5 +35,6 @@
                 <category android:name="com.oculus.intent.category.VR" />
             </intent-filter>
         </activity>
+        <activity android:name="org.recvx.vr.RecvxErrorActivity" android:label="RE Code Veronica X" android:process=":error" android:exported="false" />
     </application>
 </manifest>

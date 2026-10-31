@@ -92,6 +92,10 @@ static void spr_taken(void)
     host_fatal("Cannot reserve game memory at 0x%08X. Restart the computer and try again.", PS2_SPR_BASE);
 }
 
+#ifdef __ANDROID__
+unsigned int g_ps2_spr_base = 0x7F000000u;   /* set by android/loader.c */
+#endif
+
 void ps2_memory_init(void)
 {
 #ifdef _WIN32
@@ -109,8 +113,13 @@ void ps2_memory_init(void)
         }
     }
 #else
+#ifdef __ANDROID__
+    void* spr = mmap((void*)(uintptr_t)PS2_SPR_BASE, PS2_SPR_SIZE, PROT_READ | PROT_WRITE,
+                     MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);   /* (over the reservation of android/loader.c) */
+#else
     void* spr = mmap((void*)(uintptr_t)PS2_SPR_BASE, PS2_SPR_SIZE, PROT_READ | PROT_WRITE,
                      MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
+#endif
     if (spr != (void*)(uintptr_t)PS2_SPR_BASE) spr_taken();
     dl_iterate_phdr(unprotect_cb, NULL);
 #endif

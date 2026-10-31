@@ -84,12 +84,13 @@ uint64_t ps2_vblank_count(void);
 #endif
 /* the 16 KB scratchpad, at its real EE address on the PC (the platform code builds packets at literal scratchpad
    addresses). Android (Quest): the ART boot image is mapped near 0x70000000 and its place changes at every boot (it
-   covered the scratchpad on some boots: the app never started, 3 dots) - the scratchpad is at the end of the PS2 window,
-   where nothing else is mapped (0x50000000 | addr and PS2_WINDOW | addr stay identities). Every user of the address goes
+   covered the scratchpad on some boots: the app never started, 3 dots) - the scratchpad is at 0x7F000000 or the next free address of a list (android/loader.c), far above
+   the boot image and still an address of the 0x7xxxxxxx kind (0xF0000000 tests, 0x40000000 and 0x30000000 aliases keep working). Every user of the address goes
    through PS2_SPR_BASE (WORKBASE, SPR_ADDR in the decomp's headers). */
 #ifndef PS2_SPR_BASE
 #ifdef __ANDROID__
-#define PS2_SPR_BASE 0x50000000u
+extern unsigned int g_ps2_spr_base;   /* the first free one of a list, chosen by android/loader.c */
+#define PS2_SPR_BASE g_ps2_spr_base
 #else
 #define PS2_SPR_BASE 0x70000000u
 #endif

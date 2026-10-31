@@ -762,7 +762,7 @@ void Ps2AddPrim3D(unsigned long prim, void* dp, unsigned int num)
 #ifdef TARGET_PC
         pc_ot_poly = pc_effect_poly();   /* frame interpolation: drawn later from the ordering table */
 #endif
-        Ps2AddOT((void*)0x70000000, num, ((float*)p)[(12 * num) + 3], prim);
+        Ps2AddOT((void*)WORKBASE, num, ((float*)p)[(12 * num) + 3], prim);
     }
     else 
     {
@@ -1010,7 +1010,7 @@ void Ps2AddPrim3DEx(unsigned long prim, void* dp, unsigned int num)
 
     if ((prim & 0x20000000000000)) 
     {
-        Ps2AddOT((void*)0x70000000, num, ((float*)p)[(12 * num) + 3], prim);
+        Ps2AddOT((void*)WORKBASE, num, ((float*)p)[(12 * num) + 3], prim);
     }
     else 
     {
@@ -1111,14 +1111,14 @@ void Ps2AddPrim3DExNative(unsigned long prim, void* dp, unsigned int num, int mo
             else if (ViewType == 1) key = 0.33333334f * ((float)(int)(v[j].fX * 16.0f) / 16.0f + (float)(int)(v[j].fY * 16.0f) / 16.0f + z0);
             else key = MAX(MAX(z0, z1), z2);
             pc_native_packet(h);
-            Ps2AddOT((void*)0x70000000, 1, key, prim);
+            Ps2AddOT((void*)WORKBASE, 1, key, prim);
         }
         return;
     }
     pc_native_packet(pc_native_prim3d((unsigned int)((prim >> 47) & 0x7FF), (const VU1_PRIM_BUF*)dp, (int)num, ot, &zavg));
     if (ot) 
     {
-        Ps2AddOT((void*)0x70000000, 1, zavg, prim);
+        Ps2AddOT((void*)WORKBASE, 1, zavg, prim);
     }
     else 
     {
@@ -1371,7 +1371,7 @@ void Ps2AddPrim3DEx1P(unsigned long prim, void* dp, unsigned int num)
 
     if ((Ps2_albinoid_flag == 0) && ((prim & 0x20000000000000))) 
     {
-        Ps2AddOT((void*)0x70000000, num, Ps2AddPrimPrio, prim);
+        Ps2AddOT((void*)WORKBASE, num, Ps2AddPrimPrio, prim);
     }
     else 
     {
@@ -3133,7 +3133,7 @@ void Ps2AddPrim3DExI(unsigned long prim, void* dp, unsigned int num)
                         max = fz[2][2];
                     }
                     
-                    Ps2AddOT((void*)0x70000000, 3, max, prim);
+                    Ps2AddOT((void*)WORKBASE, 3, max, prim);
                     break;
                 }
                 case 1:
@@ -3142,7 +3142,7 @@ void Ps2AddPrim3DExI(unsigned long prim, void* dp, unsigned int num)
                     
                     max = zsum = fz[0][0] + fz[0][1] + fz[0][2]; 
                     
-                    Ps2AddOT((void*)0x70000000, 3, 0.33333334f * max, prim);
+                    Ps2AddOT((void*)WORKBASE, 3, 0.33333334f * max, prim);
                     break;
                 }
                 case 2:
@@ -3165,7 +3165,7 @@ void Ps2AddPrim3DExI(unsigned long prim, void* dp, unsigned int num)
                         max = fz[2][2];
                     }
                     
-                    Ps2AddOT((void*)0x70000000, 3, max, prim);
+                    Ps2AddOT((void*)WORKBASE, 3, max, prim);
                     break;
                 }
                 }
@@ -3174,7 +3174,7 @@ void Ps2AddPrim3DExI(unsigned long prim, void* dp, unsigned int num)
             return;
         }
         
-        Ps2AddOT((void*)0x70000000, num, ((float*)p)[(12 * num) + 3], prim);
+        Ps2AddOT((void*)WORKBASE, num, ((float*)p)[(12 * num) + 3], prim);
     }
     else 
     {

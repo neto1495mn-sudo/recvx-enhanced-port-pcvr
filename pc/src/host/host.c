@@ -118,7 +118,15 @@ void host_fatal(const char* fmt, ...)
     vsnprintf(buf, sizeof(buf), fmt, ap);
     va_end(ap);
     fprintf(stderr, "fatal: %s\n", buf);
+#ifdef __ANDROID__
+    {   /* no message box: a headset app never shows it and the player stays on the three loading dots */
+        extern int __android_log_print(int, const char*, const char*, ...);
+        __android_log_print(6, "recvx", "fatal: %s", buf);
+        host_log("fatal: %s\n", buf);
+    }
+#else
     SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "recvx", buf, g_window);
+#endif
     exit(1);
 }
 
@@ -432,6 +440,7 @@ int main(int argc, char** argv)
     host_log("recvx-enhanced-recomp " RECVX_VERSION "\n");
 #ifdef __ANDROID__
     host_log("android: built " __DATE__ " " __TIME__ " (the version above is from the last cmake configure)\n");
+    { extern unsigned int g_ps2_spr_base; host_log("android: scratchpad at 0x%08X\n", g_ps2_spr_base); }
 #endif
     if (profile_path[0]) { extern void prof_open_csv(const char*); prof_open_csv(profile_path); }
 #ifndef _WIN32
