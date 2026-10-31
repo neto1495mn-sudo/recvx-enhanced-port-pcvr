@@ -46,7 +46,9 @@ for so in ('librecvx.so', 'librecvxloader.so'):
 
 # manifest -> base, then the dex and the libraries (stored, page-aligned by zipalign -p)
 base = os.path.join(out, 'base.apk')
-run(tool('aapt2'), 'link', '-o', base, '--manifest', os.path.join(HERE, 'AndroidManifest.xml'), '-I', JAR)
+resz = os.path.join(out, 'res.zip')   # the icon and the banner (res/drawable-nodpi)
+run(tool('aapt2'), 'compile', '--dir', os.path.join(HERE, 'res'), '-o', resz)
+run(tool('aapt2'), 'link', '-o', base, '--manifest', os.path.join(HERE, 'AndroidManifest.xml'), '-I', JAR, '-R', resz)
 with zipfile.ZipFile(base, 'a') as z:
     z.write(os.path.join(out, 'classes.dex'), 'classes.dex', compress_type=zipfile.ZIP_DEFLATED)
     for so in ('librecvx.so', 'librecvxloader.so'):

@@ -109,7 +109,7 @@ public class RecvxActivity extends SDLActivity {
         return false;
     }
 
-    /* looks at GitHub's releases for one with an .apk, newer than cur ("1.4.1"); one HTTPS request, nothing about the player sent */
+    /* looks at GitHub's releases for one with an .apk, newer than cur ("1.4.2"); one HTTPS request, nothing about the player sent */
     public static void updateCheck(final String cur) {
         if (updState == 1 || updState == 4) return;
         updState = 1;
