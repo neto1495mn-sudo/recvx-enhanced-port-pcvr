@@ -102,7 +102,7 @@ int import_run(int src, int what)
     int n = 0, r;
     ImportProgress* pg = &g_import_progress;
     pg->done = pg->total = pg->failed = 0;
-    snprintf(pg->phase, sizeof(pg->phase), tr("Reading disc..."));
+    snprintf(pg->phase, sizeof(pg->phase), "%s", tr("Reading disc..."));
     source_dir(src, dir, sizeof(dir));
     SDL_CreateDirectory(dir);   /* (creates the parents too) */
     if (import_sources[src].cat == IMPORT_CAT_LANGUAGES) {

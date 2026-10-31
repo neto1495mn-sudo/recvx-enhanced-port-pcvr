@@ -525,7 +525,7 @@ int ob2_extract(const char* isopath, const char* outdir, int what, ImportItem* i
     *count = 0;
     if (!f) { snprintf(pg->phase, sizeof(pg->phase), tr("Cannot open disc image: %s"), isopath); return -1; }
     if (!imp_iso_find(f, "SYSTEM.CNF", &cnf_off, &cnf_size) || !imp_read_at(f, cnf_off, cnf, cnf_size < 127 ? cnf_size : 127) || !strstr(cnf, "SLUS_209.84")) {
-        snprintf(pg->phase, sizeof(pg->phase), tr("Use a US Resident Evil Outbreak File #2 disc (SLUS-20984)."));
+        snprintf(pg->phase, sizeof(pg->phase), "%s", tr("Use a US Resident Evil Outbreak File #2 disc (SLUS-20984)."));
         fclose(f);
         return -1;
     }
@@ -533,7 +533,7 @@ int ob2_extract(const char* isopath, const char* outdir, int what, ImportItem* i
     for (int i = 0; top && i < nfiles && !rom; i++)
         if (!SDL_strcasecmp(top[i].name, "romdata_usa.afs")) rom = imp_afs_list(f, top[i].off, top[i].size, &nrom);
     free(top);
-    if (!rom) { snprintf(pg->phase, sizeof(pg->phase), tr("Required game data not found. Check the selected disc image.")); fclose(f); return -1; }
+    if (!rom) { snprintf(pg->phase, sizeof(pg->phase), "%s", tr("Required game data not found. Check the selected disc image.")); fclose(f); return -1; }
 
     /* what to extract (all character models are in romdata_usa.afs; the scenario archives hold rooms,
        objects and effects only): the players (P<chr>_<costume>.nbd), their cutscene (EP) and high-detail
