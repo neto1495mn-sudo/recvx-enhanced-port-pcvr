@@ -30,7 +30,11 @@
 #define PS2_PTRADD(X, n) ((char*)(X) += (n))
 #endif
 
+#ifdef PS2_SPR_BASE
+#define SPR_ADDR(_val) ((PS2_SPR_BASE) | _val)
+#else
 #define SPR_ADDR(_val) ((0x70000000) | _val)
+#endif
 
 #define JOIN_TAGS(_lo, _hi) ((_lo) | ((long)(_hi) << 0x20))
 

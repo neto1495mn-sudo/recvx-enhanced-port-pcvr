@@ -80,6 +80,14 @@ static void spr_taken(void)
         }
     if (f) fclose(f);
 #endif
+#ifdef __ANDROID__
+    {   /* the log is not open yet and a message box would never show in a headset app: say it in logcat (tag recvx) and end,
+           instead of staying on the three loading dots */
+        extern int __android_log_print(int, const char*, const char*, ...);
+        __android_log_print(6, "recvx", "Cannot reserve the scratchpad at 0x%08X (used by: %s)\n", PS2_SPR_BASE, who[0] ? who : "?");
+        _exit(3);
+    }
+#endif
     if (who[0]) host_fatal("Cannot reserve game memory at 0x%08X: it is used by\n%s\n\nClose the program that adds it (an overlay or antivirus), or restart the computer.", PS2_SPR_BASE, who);
     host_fatal("Cannot reserve game memory at 0x%08X. Restart the computer and try again.", PS2_SPR_BASE);
 }

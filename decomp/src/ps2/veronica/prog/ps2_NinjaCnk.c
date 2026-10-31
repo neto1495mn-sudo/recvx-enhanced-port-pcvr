@@ -2214,7 +2214,7 @@ CHUNK_HEAD* njCnkCsUvh(CHUNK_HEAD* pCnk)
             
             while (TRUE) 
             {
-                ulpP = (Ps2_chunk_buff_flip != 0) ? (void*)0x70002000 : (void*)0x70002F40;
+                ulpP = (Ps2_chunk_buff_flip != 0) ? (void*)SPR_ADDR(0x2000) : (void*)SPR_ADDR(0x2F40);
                 
                 p = (void*)&ulpP[6];
                 
@@ -2735,7 +2735,7 @@ CHUNK_HEAD* njCnkCsUvn(CHUNK_HEAD* pCnk)
             
             while (TRUE) 
             {
-                ulpP = (Ps2_chunk_buff_flip != 0) ? (void*)0x70002000 : (void*)0x70002F40;
+                ulpP = (Ps2_chunk_buff_flip != 0) ? (void*)SPR_ADDR(0x2000) : (void*)SPR_ADDR(0x2F40);
                 
                 p = (void*)&ulpP[6];
                 

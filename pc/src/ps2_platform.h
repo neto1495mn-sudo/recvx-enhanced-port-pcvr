@@ -82,7 +82,18 @@ uint64_t ps2_vblank_count(void);
 #endif
 #define PS2_WINDOW_END (PS2_WINDOW + 0x10000000u)
 #endif
+/* the 16 KB scratchpad, at its real EE address on the PC (the platform code builds packets at literal scratchpad
+   addresses). Android (Quest): the ART boot image is mapped near 0x70000000 and its place changes at every boot (it
+   covered the scratchpad on some boots: the app never started, 3 dots) - the scratchpad is at the end of the PS2 window,
+   where nothing else is mapped (0x50000000 | addr and PS2_WINDOW | addr stay identities). Every user of the address goes
+   through PS2_SPR_BASE (WORKBASE, SPR_ADDR in the decomp's headers). */
+#ifndef PS2_SPR_BASE
+#ifdef __ANDROID__
+#define PS2_SPR_BASE 0x50000000u
+#else
 #define PS2_SPR_BASE 0x70000000u
+#endif
+#endif
 #define PS2_SPR_SIZE 0x4000u
 void  ps2_memory_init(void);
 void* ps2_dma_alloc(int slot, uint32_t len);   /* host memory DMA reads, above the window (slot 0..3, replaces its last; 0: none) */

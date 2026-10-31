@@ -2423,7 +2423,11 @@ typedef struct {
 
 #define GS_COORD(v) ((unsigned int)((v) * 16))
 
+#ifdef PS2_SPR_BASE
+#define WORKBASE (PS2_SPR_BASE)   /* (Android: not 0x70000000, see PS2_SPR_BASE in pc_prelude.h) */
+#else
 #define WORKBASE (0x70000000)
+#endif
 
 #define DMAnext             (2<<28)
 #define DMAend  (7<<28)
