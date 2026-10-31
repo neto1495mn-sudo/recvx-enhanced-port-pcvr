@@ -172,30 +172,24 @@ static const char* const heads[] = { "", "THIRD PERSON (KEYBOARD AND MOUSE)", "H
    below) - hidden, not removed: the code shows them again. Pages: Gameplay (its only heading, GENERAL, holds all of its rows),
    Controls and Third person; rows: the cutscene bars, the frame blend, the whole WINDOW group and the RENDER group of the
    Display page (they keep the values the headset runs with). */
-int g_adv_settings;   /* ini adv_settings: the player chose "Advanced settings" (Quest): the hidden pages and rows show (not the EXTRAS cheats: only the code) */
+int g_adv_settings;   /* ini adv_settings: the player chose "Advanced settings" (Quest and PC): the hidden pages and rows show, the EXTRAS cheats too (not the hold-to-save: only the code) */
 static int adv_confirm;   /* the "Advanced settings" row asked "sure?" and waits for A (yes) or B (no) */
 static int adv_shown(void) { return g_extras_unlocked || g_adv_settings; }
 
 static int page_hidden(int p)
 {
-    if (p == SP_EXTRAS) return !g_extras_unlocked;   /* vr218 */
-#ifdef __ANDROID__
+    if (p == SP_EXTRAS) return !adv_shown();   /* the cheats: "Advanced settings" or the code (the hold-to-save is only the code: xr.c) */
     if (!adv_shown() && (p == SP_GAMEPLAY || p == SP_CONTROLS || p == SP_TPS)) return 1;
-#endif
     return 0;
 }
 
 static int row_hidden(const Setting* s)
 {
-#ifdef __ANDROID__
     static const char* const names[] = { "Cutscene bars", "Frame blend (trail)", "Fullscreen", "Window size", "VSync", "Frame rate limit", "Show frame rate",
                                          "Native 3D renderer", "Native textures", "Cull off-screen models", "Display-rate frames" };
     if (adv_shown() || s->page != SP_DISPLAY) return 0;
     for (size_t k = 0; k < sizeof(names) / sizeof(names[0]); k++)
         if (!strcmp(s->label, names[k])) return 1;
-#else
-    (void)s;
-#endif
     return 0;
 }
 
@@ -214,9 +208,7 @@ static void build_rows(void)
     nrows = 0;
     rows[nrows++] = (Row){ K_PAGE, 0 };
     page_rows();
-#ifdef __ANDROID__
     if (st.page == SP_VR) rows[nrows++] = (Row){ K_ADV, 0 };   /* the way to the hidden settings without the code */
-#endif
     if (st.page == SP_CONTROLS) {   /* then the bindings */
         int last = -1;
         rows[nrows++] = (Row){ K_DEVICE, 0 };
@@ -472,7 +464,7 @@ static void draw_help(void)
     case K_PAGE: snprintf(t, sizeof(t), "Left/right or L1/R1 change the page, up/down choose a setting. Changes are saved at once; F1 shows the same settings."); break;
     case K_DEVICE: snprintf(t, sizeof(t), "%s", st.dev ? bind_pad_desc() : "The game's buttons, third-person keys and hotkeys."); break;
     case K_RESET: snprintf(t, sizeof(t), "All %s bindings back to the defaults.", st.dev ? "gamepad" : "keyboard and mouse"); break;
-    case K_ADV: snprintf(t, sizeof(t), "Shows the settings left out of this menu (gameplay, controls, third person, window and render options). Meant for people who know what they change."); break;
+    case K_ADV: snprintf(t, sizeof(t), "Shows the settings left out of this menu (gameplay, controls, third person, window and render options, and the extras). Meant for people who know what they change."); break;
     case K_BACK: snprintf(t, sizeof(t), "Back to the OPTION screen (also cancel or a right click)."); break;
     case K_BIND: {
         int c = bind_conflict(r->idx, st.dev);
