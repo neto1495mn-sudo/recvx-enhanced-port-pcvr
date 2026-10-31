@@ -7,6 +7,13 @@
 #include "../src/ps2_platform.h"
 
 extern unsigned char FontSz[126];
+int lang_exe_font(const unsigned char* x, uint32_t n, unsigned* count, const unsigned char** table);   /* import/lang.c */
+
+/* a disc whose own font has more letters than FontSz (the Russian fan translation: 192), played directly: their
+   widths; without them bhGetFontSize gives letters from 108 up no width, and they are drawn on top of each other */
+static unsigned char disc_w[256];
+static int disc_nw;
+float pc_disc_font_width(unsigned short code) { return code < disc_nw ? disc_w[code] : -1; }
 
 void fontsz_from_iso(void)
 {
@@ -16,10 +23,19 @@ void fontsz_from_iso(void)
     n = (size + 2047) / 2048;
     exe = malloc((size_t)n * 2048);
     if (!exe) return;
-    if (cdvd_read_sectors(lsn, n, exe))
+    if (cdvd_read_sectors(lsn, n, exe)) {
+        unsigned count = 0;
+        const unsigned char* table = NULL;
+        disc_nw = 0;
+        if (lang_exe_font(exe, size, &count, &table) && count > 126 && count <= 256) {
+            memcpy(disc_w, table, count);
+            disc_nw = (int)count;
+            host_log("font: the disc's font has %u letters, their widths from its executable\n", count);
+        }
         /* the first 16 widths (space, punctuation) are the same in every version seen */
         for (uint32_t i = 0; i + 126 <= size; i++)
             if (memcmp(exe + i, FontSz, 16) == 0) { memcpy(FontSz, exe + i, 126); break; }
+    }
     free(exe);
 }
 
