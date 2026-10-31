@@ -2,7 +2,7 @@
 <!-- Android (Quest): the game as an SDL app; RecvxActivity loads librecvx.so at the PS2 address window
      (android/loader.c). Built by android/build_apk.py. -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="org.recvx.vr" android:versionCode="142" android:versionName="1.4.2" android:installLocation="auto">
+    package="org.recvx.vr" android:versionCode="143" android:versionName="1.4.3" android:installLocation="auto">
     <uses-sdk android:minSdkVersion="29" android:targetSdkVersion="32" />
     <uses-feature android:glEsVersion="0x00030000" />
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
