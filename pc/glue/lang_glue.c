@@ -402,7 +402,7 @@ float pc_font_width(unsigned short code)
 {
     int c = code, l = other_of(&c);
     if (l >= 0) return c == LANG_OTHER_SPACE ? space_of(l) : width_of(l, c);
-    if (!font_lang || !info[font_lang].ok) return -1;
+    if (!font_lang || !info[font_lang].ok) { extern float pc_disc_font_width(unsigned short); return pc_disc_font_width(code); }
     return width_of(font_lang, code);
 }
 float pc_font_space(void) { return space_of(font_lang); }

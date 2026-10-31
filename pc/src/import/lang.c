@@ -262,6 +262,9 @@ static int exe_font(const unsigned char* x, uint32_t n, unsigned* count, const u
     return 0;
 }
 
+/* (font_glue.c: the disc being played) */
+int lang_exe_font(const unsigned char* x, uint32_t n, unsigned* count, const unsigned char** table) { return exe_font(x, n, count, table); }
+
 /* the European font's widths: right after FontSz (the English one, its code 95 changed) */
 static int exe_widths(const unsigned char* x, uint32_t n, unsigned char* w)
 {
