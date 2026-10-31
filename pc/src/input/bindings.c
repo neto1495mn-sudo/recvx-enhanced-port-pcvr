@@ -38,6 +38,7 @@ const BindRow bind_rows[B_COUNT] = {
     [B_SETTINGS] = { "settings", "Settings overlay", BG_HOTKEY, 0 },
     [B_CHEATS] = { "cheats", "Cheat menu", BG_HOTKEY, 0 },
     [B_COOP] = { "coop", "Co-op window", BG_HOTKEY, 0 },
+    [B_IMPORT] = { "import", "Import window", BG_HOTKEY, 0 },
     [B_FULLSCREEN] = { "fullscreen", "Fullscreen", BG_HOTKEY, 0 },
     [B_NOCLIP_UP] = { "noclip_up", "Noclip fly up", BG_HOTKEY, 0 },
     [B_NOCLIP_DOWN] = { "noclip_down", "Noclip fly down", BG_HOTKEY, 0 },
@@ -49,7 +50,7 @@ const int bind_order[B_COUNT] = {
     B_START, B_SELECT, B_R3, B_L3, B_QUICKTURN, B_QUICKKNIFE, B_TRADE,
     B_TPS_FWD, B_TPS_BACK, B_TPS_LEFT, B_TPS_RIGHT, B_TPS_RUN, B_TPS_ACTION, B_TPS_CANCEL, B_TPS_STATUS,
     B_TPS_MAP, B_TPS_AIM, B_TPS_FIRE, B_TPS_QUICKTURN,
-    B_TPS_TOGGLE, B_SETTINGS, B_CHEATS, B_COOP, B_FULLSCREEN, B_NOCLIP_UP, B_NOCLIP_DOWN, B_VR_RECENTER,
+    B_TPS_TOGGLE, B_SETTINGS, B_CHEATS, B_COOP, B_IMPORT, B_FULLSCREEN, B_NOCLIP_UP, B_NOCLIP_DOWN, B_VR_RECENTER,
 };
 
 static const int defaults[2][B_COUNT][BIND_SLOTS] = {
@@ -63,7 +64,7 @@ static const int defaults[2][B_COUNT][BIND_SLOTS] = {
         [B_TPS_STATUS] = { SC(TAB) }, [B_TPS_MAP] = { SC(M) }, [B_TPS_AIM] = { MB(SDL_BUTTON_RIGHT) },
         [B_TPS_FIRE] = { MB(SDL_BUTTON_LEFT) },
         [B_QUICKKNIFE] = { SC(SPACE) }, [B_TRADE] = { SC(T) },
-        [B_TPS_TOGGLE] = { SC(F5) }, [B_SETTINGS] = { SC(F1) }, [B_CHEATS] = { SC(F2) }, [B_COOP] = { SC(F3) },
+        [B_TPS_TOGGLE] = { SC(F5) }, [B_SETTINGS] = { SC(F1) }, [B_CHEATS] = { SC(F2) }, [B_IMPORT] = { SC(F9) }, [B_COOP] = { SC(F3) },
         [B_FULLSCREEN] = { SC(F11) }, [B_NOCLIP_UP] = { SC(R), SC(PAGEUP) }, [B_NOCLIP_DOWN] = { SC(F), SC(PAGEDOWN) },
         [B_VR_RECENTER] = { SC(F8) },
     },

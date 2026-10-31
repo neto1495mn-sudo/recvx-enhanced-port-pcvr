@@ -15,6 +15,8 @@ static int g_vr_cfg_ver;   /* ini vr_cfg_ver: the VR settings' version, to move 
 #include "enemies.h"
 #include "bindings.h"
 #include "modern.h"
+#include "lang.h"
+#include "../import/import.h"
 #include "../net/rdv_proto.h"
 #include <SDL3/SDL.h>
 #include <stdio.h>
@@ -25,6 +27,7 @@ static const struct { const char* key; int* val; int lo, hi; } keys[] = {
     { "window_h", &g_config.window_h, 240, 16384 },
     { "fullscreen", &g_config.fullscreen, 0, 1 },
     { "vsync", &g_config.vsync, 0, 1 },
+    { "subtitles", &g_subtitles, 0, 1 + LANG_COUNT },     /* cutscene subtitles: 0 off, 1 the game language's, 2 + LANG_* (lang.h) */
     { "fps_limit", &g_config.fps_limit, 0, 5 },
     { "scale", &g_config.scale, 0, 8 },
     { "aspect", &g_config.aspect, 0, 2 },
@@ -199,6 +202,21 @@ void config_load(void)
         else if (sscanf(line, " coop_name = %15[^\r\n]", g_coop.name) == 1) continue;
         else if (sscanf(line, " iso = %1023[^\r\n]", g_config.iso_path) == 1) continue;
         else if (sscanf(line, " tex_dir = %1023[^\r\n]", g_tex_dir) == 1) continue;
+        else if (sscanf(line, " import_dir = %1023[^\r\n]", g_import.dir) == 1) continue;   /* F9 imports (pc/src/import) */
+        else if (sscanf(line, " language = %7s", val) == 1) { for (int l = 0; l < LANG_COUNT; l++) if (!strcmp(val, lang_codes[l])) g_lang = l; continue; }
+        else if (!strncmp(line, "import_", 7)) {   /* import_<key>_iso */
+            int done = 0;
+            for (int s = 0; s < IMPORT_SOURCES && !done; s++) {
+                size_t n = strlen(import_sources[s].key);
+                const char* v = line + 7 + n;
+                if (strncmp(line + 7, import_sources[s].key, n) || strncmp(v, "_iso", 4)) continue;
+                v += 4;
+                while (*v == ' ' || *v == '=') v++;
+                snprintf(g_import.iso[s], sizeof(g_import.iso[s]), "%.*s", (int)strcspn(v, "\r\n"), v);
+                done = 1;
+            }
+            if (done) continue;
+        }
         else if (sscanf(line, " %63[a-z_0-9] = %127[^\r\n]", k, val) == 2 && bind_ini_line(k, trim(val))) continue;
         else if (sscanf(line, " %63[a-z_0-9] = %d", k, &v) == 2)
             for (size_t i = 0; i < SDL_arraysize(keys); i++)
@@ -254,6 +272,9 @@ static int write_ini(FILE* f, void* ud)
     }
     if (g_config.iso_path[0]) fprintf(f, "iso = %s\n", g_config.iso_path);
     if (g_tex_dir[0]) fprintf(f, "tex_dir = %s\n", g_tex_dir);
+    if (g_import.dir[0]) fprintf(f, "import_dir = %s\n", g_import.dir);
+    for (int s = 0; s < IMPORT_SOURCES; s++) if (g_import.iso[s][0]) fprintf(f, "import_%s_iso = %s\n", import_sources[s].key, g_import.iso[s]);
+    if (g_lang) fprintf(f, "language = %s\n", lang_codes[g_lang]);
     bind_ini_write(f);
     return 0;
 }

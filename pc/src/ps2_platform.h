@@ -74,6 +74,7 @@ uint64_t ps2_vblank_count(void);
 #define PS2_SPR_BASE 0x70000000u
 #define PS2_SPR_SIZE 0x4000u
 void  ps2_memory_init(void);
+void* ps2_dma_alloc(int slot, uint32_t len);   /* host memory DMA reads, above the window (slot 0..3, replaces its last; 0: none) */
 void* ps2_dma_ptr(uint32_t addr);
 
 /* dma.c / vif.c / gs */

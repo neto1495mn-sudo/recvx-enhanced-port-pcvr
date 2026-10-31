@@ -3,6 +3,8 @@
  * keeps running but receives no pad input. Settings are applied immediately and saved
  * to <save_dir>/recvx.ini.
  */
+#include "lang.h"
+#include "../import/import.h"
 #include "../ps2_platform.h"
 extern "C" {
 #include "../audio/audio.h"
@@ -33,7 +35,7 @@ extern "C" int xr_active(void);   /* vr132 */
 extern "C" void pad_set_game_input_enabled(int on);
 
 static SDL_Window* win;
-static bool ready, visible, cheats_visible, coop_visible;
+static bool ready, visible, cheats_visible, coop_visible, import_visible;
 static bool tps_key_wait;   /* the next key pressed becomes the third-person toggle key */
 
 void overlay_init(void* window, void* gl_context)
@@ -72,8 +74,12 @@ int overlay_event(const void* e)
         coop_visible = !coop_visible;
         return 1;
     }
+    if (bind_hotkey(ev, B_IMPORT)) {
+        import_visible = !import_visible;
+        return 1;
+    }
     ImGui_ImplSDL3_ProcessEvent(ev);
-    if (!visible && !cheats_visible && !coop_visible) return 0;
+    if (!visible && !cheats_visible && !coop_visible && !import_visible) return 0;
     return (ev->type == SDL_EVENT_KEY_DOWN || ev->type == SDL_EVENT_KEY_UP || ev->type == SDL_EVENT_TEXT_INPUT ||
             ev->type == SDL_EVENT_MOUSE_BUTTON_DOWN || ev->type == SDL_EVENT_MOUSE_BUTTON_UP || ev->type == SDL_EVENT_MOUSE_WHEEL);
 }
@@ -640,11 +646,96 @@ static const char* lobby_hint(void)
     }
 }
 
+/* F9: languages from the player's own disc images (pc/src/import, docs/LANGUAGES.md) */
+static char picked[1024];
+static SDL_AtomicInt picked_src = { -1 };
+static void SDLCALL import_picked(void* ud, const char* const* files, int filter)
+{
+    (void)filter;
+    if (files && files[0]) { SDL_strlcpy(picked, files[0], sizeof(picked)); SDL_SetAtomicInt(&picked_src, (int)(intptr_t)ud); }
+}
+
+extern "C" char g_lang_us_iso[1024];   /* import/lang.c */
+static void import_window(void)
+{
+    static int was_running;
+    ImportProgress* pg = &g_import_progress;
+    int running = __atomic_load_n(&pg->running, __ATOMIC_ACQUIRE);
+    if (was_running && !running) lang_scan();
+    was_running = running;
+    int ps = SDL_GetAtomicInt(&picked_src);
+    if (ps >= 0) {   /* a disc image chosen in the file selector */
+        SDL_strlcpy(g_import.iso[ps], picked, sizeof(g_import.iso[ps]));
+        SDL_SetAtomicInt(&picked_src, -1);
+        settings_save_later();
+    }
+    ImGui::SetNextWindowPos(ImVec2(60, 60), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(820, 560), ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin(tr("Import (F9)"), &import_visible)) { ImGui::End(); return; }
+    for (int s = 0; s < IMPORT_SOURCES; s++) {
+        const ImportSource* src = &import_sources[s];
+        char label[128], dir[1100];
+        if (src->cat != IMPORT_CAT_LANGUAGES) continue;   /* (the character models are not in this version) */
+        SDL_snprintf(label, sizeof(label), "%s (%s)", src->title, src->serial);
+        if (!ImGui::CollapsingHeader(label, ImGuiTreeNodeFlags_DefaultOpen)) continue;
+        ImGui::PushID(s);
+        if (src->help) ImGui::TextWrapped("%s", tr(src->help));   /* (the Russian translation's author) */
+        ImGui::TextWrapped(tr("Disc image: %s"), g_import.iso[s][0] ? g_import.iso[s] : tr("(none chosen)"));
+        ImGui::BeginDisabled(running != 0);
+        if (ImGui::Button(tr("Choose Disc Image..."))) {
+            static const SDL_DialogFileFilter filters[] = { { "PS2 disc image (*.iso)", "iso" }, { "All files", "*" } };
+            SDL_ShowOpenFileDialog(import_picked, (void*)(intptr_t)s, win, filters, 2, g_import.iso[s][0] ? g_import.iso[s] : NULL, false);
+        }
+        import_source_dir(s, dir, sizeof(dir));
+        ImGui::TextDisabled(tr("Output: %s"), dir);
+        ImGui::BeginDisabled(!g_import.iso[s][0]);
+        if (ImGui::Button(tr("Import Languages"))) {
+            SDL_strlcpy(g_lang_us_iso, g_config.iso_path, sizeof(g_lang_us_iso));   /* (a language import reads the US text) */
+            import_start(s, 0);
+        }
+        ImGui::EndDisabled();
+        ImGui::EndDisabled();
+        if (running || pg->total) {
+            char ov[64];
+            SDL_snprintf(ov, sizeof(ov), "%d / %d", pg->done, pg->total);
+            ImGui::ProgressBar(pg->total ? (float)pg->done / pg->total : 0.0f, ImVec2(-1, 0), ov);
+            ImGui::TextWrapped("%s", pg->phase);
+        }
+        for (int l = 1; l < LANG_COUNT; l++)
+            if (lang_installed(l) && lang_dir(l) && !SDL_strncmp(lang_dir(l), dir, SDL_strlen(dir)))
+                ImGui::BulletText("%s%s", lang_names[l], lang_has_subtitles(l) ? tr(" (cutscene subtitles)") : "");
+        ImGui::PopID();
+    }
+    ImGui::End();
+}
+
+static void lang_fonts(void)
+{
+    static const char* const ja[] = { "C:/Windows/Fonts/meiryo.ttc", "C:/Windows/Fonts/msgothic.ttc", "C:/Windows/Fonts/YuGothM.ttc",
+        "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc", "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc", NULL };
+    static const char* const ru[] = { "C:/Windows/Fonts/segoeui.ttf", "C:/Windows/Fonts/arial.ttf", "/usr/share/fonts/TTF/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "/usr/share/fonts/dejavu/DejaVuSans.ttf", NULL };
+    static bool done[LANG_COUNT];
+    int l = lang_installed(g_lang) ? g_lang : LANG_EN;
+    if ((l != LANG_JA && l != LANG_RU) || done[l]) return;
+    done[l] = true;
+    ImGuiIO& io = ImGui::GetIO();
+    if (io.Fonts->Fonts.empty()) io.Fonts->AddFontDefault();
+    for (const char* const* p = l == LANG_JA ? ja : ru; *p; p++) {
+        ImFontConfig c;
+        c.MergeMode = true;
+        if (SDL_GetPathInfo(*p, NULL) && io.Fonts->AddFontFromFileTTF(*p, 13.0f, &c)) { host_log("overlay: the letters of %s from %s\n", lang_codes[l], *p); return; }
+    }
+    host_log("overlay: no font of the system has the letters of %s\n", lang_codes[l]);
+}
+
 void overlay_render(void)
 {
     if (!ready) return;
     coop_status_get(&cs);
-    bool windows = visible || cheats_visible || coop_visible;
+    lang_fonts();
+    bool windows = visible || cheats_visible || coop_visible || import_visible;
     pad_set_game_input_enabled(!windows);
     tps_update_mouse_mode(win, windows);
     menu_mouse_update(win, windows);
@@ -658,7 +749,7 @@ void overlay_render(void)
     extern const char* g_vr_status;   /* gs_gl.c: why VR is on the cinema screen (NULL: stereo or no VR) */
     extern int g_vr_debug_log;        /* glue/vr_glue.c: ini vr_debug_log */
     const char* vrs = nullptr; (void)g_vr_debug_log; (void)g_vr_status;   /* vr188: the tag is no longer drawn in the picture (the reason stays in the log) */
-    if (!visible && !cheats_visible && !coop_visible && !g_config.show_fps && !ping && !crosshair && !hint && !tag && !vrs) return;
+    if (!visible && !cheats_visible && !coop_visible && !import_visible && !g_config.show_fps && !ping && !crosshair && !hint && !tag && !vrs) return;
     {   /* readable on large displays: scale text with the window height (1080p = 1x) */
         int ww, wh;
         SDL_GetWindowSizeInPixels(win, &ww, &wh);
@@ -670,6 +761,7 @@ void overlay_render(void)
     if (visible) settings_window();
     if (cheats_visible) cheat_window();
     if (coop_visible) coop_window();
+    if (import_visible) import_window();
     if (crosshair) {   /* third person: the screen centre is where the shot goes (tps_glue.c) */
         ImDrawList* dl = ImGui::GetForegroundDrawList();
         ImVec2 c(ImGui::GetIO().DisplaySize.x * 0.5f, ImGui::GetIO().DisplaySize.y * 0.5f);

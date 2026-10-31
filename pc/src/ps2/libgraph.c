@@ -2,6 +2,7 @@
  * libgraph on the host: display/draw environment setup and image transfers go
  * straight to the GS emulation.
  */
+#include "../host/lang.h"
 #include "ps2_platform.h"
 #include "../gs/gs.h"
 #include "../gs/stream.h"
@@ -87,6 +88,7 @@ int sceGsSwapDBuffDc(sceGsDBuffDc* db, int id)
     stream_disp(d->dispfb.FBP, d->dispfb.FBW, d->dispfb.PSM);
     prof_frame_end();
     cheat_frame();
+    lang_frame();
     coop_frame();
     lobby_frame();
     tps_frame();

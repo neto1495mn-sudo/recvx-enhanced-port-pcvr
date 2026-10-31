@@ -5,6 +5,7 @@
  * level 4 is ours. Values come from the shared settings table (pc/src/host/settings.c) and the
  * control bindings (pc/src/input/bindings.c), the same ones the F1 overlay edits.
  */
+#include "../src/host/lang.h"
 #include "../../decomp/include/ps2/veronica/prog/types.h"
 #include "../../decomp/include/ps2/veronica/prog/main.h"
 #include "../../decomp/include/ps2/veronica/prog/adv.h"
@@ -100,6 +101,7 @@ void pc_options_row8(int selected)
     unsigned int col = selected ? (((unsigned int)ap->FlushCount2 + 255) << 24) | 0xFFFFFF : 0x7FAFAFAF;
     float x = row8_x();
     QUAD* q = &Qtex[15];
+    int us = lang_us_plates(4);   /* (in every language: from the US plates) */
     for (int i = 0; i < ROW8_N; i++) {
         if (row8[i].u >= 0) {
             SetQuadPos(x, ROW8_Y, row8[i].dw, 32.0f, q);
@@ -108,6 +110,7 @@ void pc_options_row8(int selected)
         }
         x += row8[i].dw + 1;
     }
+    if (us) AdvEasySetTextureList(0);   /* the screen's textures again */
 }
 
 /* DisplayOptionPlateLevel0 before it reads the pad: hovering a row selects it, a click confirms

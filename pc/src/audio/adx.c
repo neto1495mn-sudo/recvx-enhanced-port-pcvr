@@ -6,6 +6,7 @@
  *       original (the game waits on ADXT_STAT_PLAYEND for voice lines), driven
  *       by the audio mixer when it plays the stream, or by wall-clock time.
  */
+#include "../host/lang.h"
 #include "../ps2_platform.h"
 #include "audio.h"
 #include <SDL3/SDL.h>
@@ -37,10 +38,23 @@ static FILE* mod_open_path(const char* name, uint32_t* size, char* path, size_t 
 {
     static const char* dir;
     FILE* f;
+    const char* ld;
+    int src = LF_MODS;
     if (!dir) dir = SDL_getenv("RECVX_MODS") ? SDL_getenv("RECVX_MODS") : "mods";
     while (*name == '\\' || *name == '/') name++;
     snprintf(path, npath, "%s/%s", dir, name);
-    if (!(f = pc_fopen(path, "rb"))) return NULL;
+    f = pc_fopen(path, "rb");
+    if (!f && (ld = pc_lang_file_dir())) {   /* the language's version of the file (lang.h; docs/LANGUAGES.md; its names upper case) */
+        char up[64];
+        int i;
+        for (i = 0; name[i] && i < 63; i++) up[i] = name[i] >= 'a' && name[i] <= 'z' ? name[i] - 32 : name[i];
+        up[i] = 0;
+        snprintf(path, npath, "%s/%s", ld, up);
+        f = pc_fopen(path, "rb");
+        src = LF_LANG;
+    }
+    pc_lang_file_opened(name, f ? src : LF_DISC);
+    if (!f) return NULL;
     fseek(f, 0, SEEK_END);
     *size = (uint32_t)ftell(f);
     host_log("mods: %s replaces the disc file (%u bytes)\n", path, *size);
