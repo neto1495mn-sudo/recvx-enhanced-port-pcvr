@@ -121,50 +121,11 @@ static GLenum (GLAPIENTRY *and_clientwait)(void*, GLbitfield, uint64_t);
 static void (GLAPIENTRY *and_deletesync)(void*);
 static unsigned and_waits; static uint64_t and_wait_ns;   /* (the ring's waits: logged when one is long) */
 static void and_persistent_init(void);
-volatile int g_and_fps_headset, g_and_fps_game;   /* render.c, once a second: images to the headset, game frames */
 int g_and_ab;   /* render.c: A/B test mode - bit 0 no window swap, bit 1 no per-eye glFlush */
 int g_vr_one_replay = 1;   /* the right eye re-issues the left eye's recorded GL calls (gl_record.c); 0: both eyes replay. (Off before: 38.7 vs 44
                               images/s while the GPU was the limit; now the CPU is - ~8 ms an image in RM_0080, most of it the second eye's
                               replay - and the grates/glass are missing with it off too. The CPU work of a replay is the same for both eyes:
                               the characters' transform chT is made once per image, the eye only in uniforms u_vr_dst/u_vr_m0..3) */
-/* Android (Quest): the frame rates in the picture (the owner follows them in the headset) - two numbers drawn with
-   scissored clears (no shader, no font): images the headset got per second, game frames per second. Green: full
-   rate, yellow: some lost, red: slow. x, y: lower left in the bound framebuffer; h: its height (the size) */
-static void and_text(int x, int y, int px, const char* str, float r, float g, float b)   /* 3x5 glyphs by scissored clears */
-{
-    static const char chars[] = "0123456789.CG%";
-    static const uint16_t font[] = { 0x7B6F, 0x2C97, 0x73E7, 0x73CF, 0x5BC9, 0x79CF, 0x79EF, 0x7249, 0x7BEF, 0x7BCF,
-                                     0x0002, 0x7927, 0x796F, 0x52A5 };
-    glClearColor(r, g, b, 1);
-    for (int cx = x; *str; str++, cx += 4 * px) {
-        const char* f = strchr(chars, *str);
-        if (!f || !*str) continue;
-        for (int rr = 0; rr < 5; rr++)
-            for (int c = 0; c < 3; c++)
-                if (font[f - chars] >> (14 - rr * 3 - c) & 1) { glScissor(cx + c * px, y + (4 - rr) * px, px, px); glClear(GL_COLOR_BUFFER_BIT); }
-    }
-}
-static void and_fps_draw(int x, int y, int h)   /* (the CPU/GPU lines were taken out again: the owner felt them cost) */
-{
-    int px = h / 170 > 2 ? h / 170 : 2;
-    char l0[16], l1[16];
-    int hv = g_and_fps_headset, gv = g_and_fps_game, n0, n1;
-    snprintf(l0, sizeof(l0), "%d", hv);
-    snprintf(l1, sizeof(l1), "%d", gv);
-    n0 = (int)strlen(l0); n1 = (int)strlen(l1);
-    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
-    glEnable(GL_SCISSOR_TEST);
-    glScissor(x - px, y - px, (n0 + 1 + n1) * 4 * px + px, 7 * px);
-    glClearColor(0, 0, 0, 1);
-    glClear(GL_COLOR_BUFFER_BIT);
-    {   /* frame rates: green full, yellow some lost, red slow */
-        int good = hv >= 65, ok = hv >= 45;
-        and_text(x, y, px, l0, good ? 0.2f : 1.0f, good || ok ? 1.0f : 0.25f, 0.2f);
-        good = gv >= 28; ok = gv >= 20;
-        and_text(x + (n0 + 1) * 4 * px, y, px, l1, good ? 0.2f : 1.0f, good || ok ? 1.0f : 0.25f, 0.2f);
-    }
-    glDisable(GL_SCISSOR_TEST);
-}
 #endif
 uint64_t gs_frame_count(void) { extern uint64_t stream_game_frames(void); return stream_game_frames(); }
 
@@ -4588,7 +4549,6 @@ static int present_vr_stereo_(const struct Frame* cur, float t)
 #ifdef __ANDROID__
             glBindFramebuffer(GL_FRAMEBUFFER, vr_fbo);
             glViewport(0, 0, w, h);
-            and_fps_draw(w * 40 / 100 + (e ? -w / 80 : w / 80), h * 30 / 100, h);   /* below the middle; per eye a little inwards (seen ~1.5 m away) */
 #endif
 #ifdef __ANDROID__
             /* Android (Quest): no mirror - the window is never swapped in VR (gs_present_vr's end), and the clear and
@@ -4890,7 +4850,6 @@ static uint64_t gs_present_vr(const struct Frame* cur, float t)
             if (vw > 0 && vh > 0) {   /* the frame rates in the game picture's top left corner (the window is the quad) */
                 glBindFramebuffer(GL_FRAMEBUFFER, 0);
                 glViewport(0, 0, ww, wh);
-                and_fps_draw(vx + vw / 30, wh - vy - vh / 10, vh);
             }
 #endif
             if (vw > 0 && vh > 0) xr_frame_end_quad_rect(vx, wh - vy - vh, vw, vh);

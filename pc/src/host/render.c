@@ -137,7 +137,6 @@ void render_loop(void)
                 int have = xr_input(&in);
                 host_log("android: last second %u presents (%u forced: next frame waiting), skipped %u partial, %u queued\n",
                          hb_presents, hb_forced, hb_skip_partial, hb_skip_queued);
-                { extern volatile int g_and_fps_headset, g_and_fps_game; g_and_fps_headset = (int)hb_presents; g_and_fps_game = (int)hb_frames; }   /* (gs_gl.c draws them) */
                 {   /* A/B test, automatic: every 20 s the next of 4 modes (window swap, per-eye flush: on or off); each mode's
                        headset images and game frames per second logged, so the faster one shows without anyone's help */
                     extern int g_and_ab;

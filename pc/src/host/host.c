@@ -90,7 +90,12 @@ float pc_overlay_x(float x)
 #else
 #define PC_DEF_CINEMA_BARS 1
 #endif
-HostConfig g_config = { .window_w = 1280, .window_h = 960, .vsync = 1, .log_level = 1, .music_volume = 100, .sfx_volume = 100, .interpolate = 1, .frame_blend = 0, .aspect = 2, .show_fps = 1, .show_ping = 1,
+#ifdef __ANDROID__
+#define SHOW_FPS_DEFAULT 0   /* the Quest build starts with the frame-rate counter off (Display / VR "Show frame rate" turn it on) */
+#else
+#define SHOW_FPS_DEFAULT 1
+#endif
+HostConfig g_config = { .window_w = 1280, .window_h = 960, .vsync = 1, .log_level = 1, .music_volume = 100, .sfx_volume = 100, .interpolate = 1, .frame_blend = 0, .aspect = 2, .show_fps = SHOW_FPS_DEFAULT, .show_ping = 1,
                        .screen_filter = 1, .cinema_bars = PC_DEF_CINEMA_BARS, .screen_effects = 1, .native_3d = 1, .model_cull = 1, .native_tex = 1, .quick_knife = 1,
                        .skip_doors = 1, .skip_intro = 1, .battle_unlocked = 1, .contrast = 100, .gamma = 10 };   /* first-start defaults; recvx.ini overrides */
 SDL_Window* g_window;

@@ -109,7 +109,16 @@ static void insert(uint64_t h, uint64_t clut, uint32_t bits, const char* path)
         }
         free(o);
     }
-    if (find(h, clut, bits)) return;   /* the first one found wins */
+    {   /* the first one found wins, except that a loose file always wins over one in a .pack (a pack path starts with 0x01) */
+        Entry* ex = find(h, clut, bits);
+        if (ex) {
+            if (ex->path[0] == '\x01' && path[0] != '\x01') {
+                char* np = strdup(path);
+                if (np) { free(ex->path); ex->path = np; }
+            }
+            return;
+        }
+    }
     {
         uint32_t j = (uint32_t)mix(h, clut, bits) & (tab_cap - 1);
         while (tab[j].path) j = (j + 1) & (tab_cap - 1);
@@ -190,22 +199,86 @@ static void read_ignore(const char* path)
 
 char g_tex_dir[1024];   /* ini tex_dir: one more folder of replacements (the launcher's "add textures") */
 
+/* a .pack (tools/make_texture_pack.py): the folder's textures in one file. An entry's path is
+   "\x01<pack>:<offset>:<length>/<name>" (read_file); the name stays after the last '/' as for a loose file. */
+#define MAX_PACKS 8
+static char pack_path[MAX_PACKS][1024];
+static int npacks;
+#ifdef _WIN32
+#define pack_seek _fseeki64
+#else
+#define pack_seek fseeko64
+#endif
+static void load_pack(const char* path)
+{
+    FILE* f;
+    uint8_t h[20], *ix = NULL;
+    uint64_t at;
+    uint32_t count, added = 0;
+    long long size;
+    if (npacks == MAX_PACKS || !(f = fopen(path, "rb"))) return;
+    if (fread(h, 1, 20, f) != 20 || memcmp(h, "RVXPACK1", 8)) goto bad;
+    count = h[8] | h[9] << 8 | h[10] << 16 | (uint32_t)h[11] << 24;
+    at = 0;
+    for (int i = 7; i >= 0; i--) at = at << 8 | h[12 + i];
+    if (pack_seek(f, 0, SEEK_END)) goto bad;
+#ifdef _WIN32
+    size = _ftelli64(f);
+#else
+    size = ftello64(f);
+#endif
+    if (size < 20 || at < 20 || at >= (uint64_t)size || (uint64_t)size - at > 64u << 20) goto bad;
+    {
+        size_t n = (size_t)((uint64_t)size - at), o = 0;
+        if (!(ix = malloc(n)) || pack_seek(f, (long long)at, SEEK_SET) || fread(ix, 1, n, f) != n) goto bad;
+        for (; added < count && o + 18 <= n; added++) {
+            uint64_t off = 0, len = 0;
+            uint32_t nl = ix[o + 16] | ix[o + 17] << 8;
+            char name[512], dir[64];
+            for (int i = 7; i >= 0; i--) { off = off << 8 | ix[o + i]; len = len << 8 | ix[o + 8 + i]; }
+            if (nl == 0 || nl >= sizeof(name) || o + 18 + nl > n || off > at || len > at - off) goto bad;
+            memcpy(name, ix + o + 18, nl);
+            name[nl] = 0;
+            snprintf(dir, sizeof(dir), "\x01%d:%llu:%llu", npacks, (unsigned long long)off, (unsigned long long)len);
+            add_file(dir, name);
+            o += 18 + nl;
+        }
+    }
+    SDL_strlcpy(pack_path[npacks++], path, sizeof(pack_path[0]));
+    host_log("tex: %s: %u textures in the pack\n", path, added);
+    free(ix);
+    fclose(f);
+    return;
+bad:
+    host_log("tex: %s is not a usable texture pack\n", path);
+    free(ix);
+    fclose(f);
+}
+
 static void scan(const char* dir, int depth)
 {
     DIR* d = opendir(dir);
     struct dirent* de;
+    char packs[MAX_PACKS][1024];
+    int np = 0;
     if (!d) return;
     while ((de = readdir(d))) {
         char p[1024];
         struct stat st;
+        size_t nl = strlen(de->d_name);
         if (de->d_name[0] == '.') continue;
         snprintf(p, sizeof(p), "%s/%s", dir, de->d_name);
+        if (nl > 5 && !SDL_strcasecmp(de->d_name + nl - 5, ".pack")) {   /* (before stat: it can be over 4 GB; after the loose files, which win) */
+            if (np < MAX_PACKS) SDL_strlcpy(packs[np++], p, sizeof(packs[0]));
+            continue;
+        }
         if (stat(p, &st) != 0) continue;
         if (S_ISDIR(st.st_mode)) { if (depth < 6) scan(p, depth + 1); }
         else if (!SDL_strcasecmp(de->d_name, "ignorar.txt") || !SDL_strcasecmp(de->d_name, "ignore.txt")) read_ignore(p);
         else add_file(dir, de->d_name);
     }
     closedir(d);
+    for (int i = 0; i < np; i++) load_pack(packs[i]);
 }
 
 static void loader_start(void);
@@ -223,6 +296,11 @@ static void init(void)
     for (int k = 0; k < nign; k++)   /* the ignore list wins over the pack */
         for (uint32_t i = 0; i < tab_cap; i++)
             if (tab[i].path && tab[i].h == ign[k].h && (ign[k].any_clut || tab[i].clut == ign[k].clut)) tab[i].failed = 2;
+    if (npacks) {   /* how many are read from a .pack (a loose file wins over a pack's, so these are the ones with no loose file) */
+        uint32_t from_pack = 0;
+        for (uint32_t i = 0; i < tab_cap; i++) if (tab[i].path && tab[i].path[0] == '\x01') from_pack++;
+        host_log("tex: %u textures come from %d .pack file(s), %u from loose files\n", from_pack, npacks, tab_n - from_pack);
+    }
     if (tab_n) loader_start();   /* vr157 */
 }
 
@@ -293,9 +371,22 @@ static void names(uint64_t tex0, uint64_t texa, uint64_t* h, uint64_t* clut, uin
 
 static uint8_t* read_file(const char* path, size_t* len)
 {
-    FILE* f = fopen(path, "rb");
+    FILE* f;
     uint8_t* d = NULL;
     long n;
+    if (path[0] == '\x01') {   /* in a .pack (load_pack) */
+        int pk = 0;
+        unsigned long long off = 0, l = 0;
+        if (sscanf(path + 1, "%d:%llu:%llu/", &pk, &off, &l) != 3 || pk < 0 || pk >= npacks || !l || l > 1u << 30) return NULL;
+        if (!(f = fopen(pack_path[pk], "rb"))) return NULL;
+        if (!pack_seek(f, (long long)off, SEEK_SET) && (d = malloc((size_t)l))) {
+            if (fread(d, 1, (size_t)l, f) != (size_t)l) { free(d); d = NULL; }
+            else *len = (size_t)l;
+        }
+        fclose(f);
+        return d;
+    }
+    f = fopen(path, "rb");
     if (!f) return NULL;
     if (fseek(f, 0, SEEK_END) == 0 && (n = ftell(f)) > 0 && fseek(f, 0, SEEK_SET) == 0 && (d = malloc((size_t)n))) {
         if (fread(d, 1, (size_t)n, f) != (size_t)n) { free(d); d = NULL; }
