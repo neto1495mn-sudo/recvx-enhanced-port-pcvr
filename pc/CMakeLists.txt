@@ -109,6 +109,7 @@ set(GAME_EXCLUDE
     ps2_MovieFunc.c      # libmpeg/IPU movie player -> pc/src/movie
     ps2_MovieWork.c
     ps2_Vu1Scissor2.c    # #included by ps2_Vu1Strip.c
+    njloop.c             # the main loop: pc/glue/njloop_glue.c (the decomp's compares a 64-bit garbage half of njUserMain's result)
 )
 foreach(x ${GAME_EXCLUDE})
     list(REMOVE_ITEM GAME_SOURCES ${PROG}/${x})
