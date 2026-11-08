@@ -26,7 +26,7 @@ decompilation by AshfordFamily. All credit for the PC port goes to them.
 
 ### How to play in VR
 
-1. Download `RE-Code-Veronica-X-PC-Port-VR-v1.4.1-windows.zip` from the [Releases](https://github.com/neto1495mn-sudo/recvx-enhanced-port-pcvr/releases)
+1. Download `RE-Code-Veronica-X-PC-Port-VR-v1.5.0-windows.zip` from the [Releases](https://github.com/neto1495mn-sudo/recvx-enhanced-port-pcvr/releases)
    page and unpack it anywhere.
 2. Start your OpenXR runtime (tested only on a Quest 2 through Virtual Desktop / VDXR).
 3. Run `recvx_vr.exe` (or `PLAY_VR.bat`). On the first start, pick your own `.iso` of the game (PS2, NTSC-U,
@@ -37,6 +37,33 @@ decompilation by AshfordFamily. All credit for the PC port goes to them.
    (see "The VR page" below).
 
 When a newer version is out, the game says so when it starts (see "Update check" below).
+
+### What's new in 1.5.0
+
+**Reloading by hand**
+- **Ammo pouch**: your ammo is now in a leather pouch at your belt (at your chest when you play seated). It opens when your left hand comes to it. Take ammo with the left grip and put it in the gun. While you hold ammo, a faint orange outline blinks on the gun where it goes (set for the shotgun, the pistol, the grenade launcher and the bow gun; a gun without one takes the ammo when your hand is near it). A small plate shows the rounds in the gun and the rounds left in the pouch, and it is always right.
+- **Pistols behave like pistols**: **B** takes the magazine out and one round stays in the chamber. A pistol that runs empty stays open at the slide; put a magazine in, then pull the slide back with your left hand (squeeze the left grip on the slide) to fire. The pouch buzzes when your grip is on the slide, and the gun tilts as the slide is pulled.
+- **Shotgun and Magnum**: rounds go in one at a time, and you see the round in your hand (the shotgun's shell, the Magnum's own round).
+- **Grenade launcher and bow gun**: **B** opens the gun and shows one pouch for each kind of ammo you carry, side by side (grey, yellow, red and green circles on top for the launcher; arrows and explosive arrows for the bow gun). Take a round and put it in. Endless ammo stays endless. Flick the controller up, push the barrel up with the left hand, or press B again to shut it.
+- **Put the pouches where you like**: VR settings, HOLSTERS: *Adjust holster* (grab it with the left grip and drag, **A** keeps it), one place for guns with one kind of ammo and one for the launcher and the bow gun, separately for *Standing* and *Seated*. *Restore holsters* puts them back.
+
+**Weapon wheel**
+- Hold the right stick click, move the right hand up, right, down or left over a weapon and let go: it is in your hand.
+
+**Picture and comfort**
+- **Anti-aliasing** and **Super Resolution** options (VR settings), a *Seated* position for playing in a chair, and a **Show frame rate** option that starts off.
+
+**Textures**
+- **Texture packs (`.pack`)**: put the pack in the textures folder; its textures are read as the game needs them and show at once, like the game's own. Loose texture files are still read in the background.
+
+**Fixes**
+- After a door or stairs you come out facing into the room, not with your back to it.
+- Endless ammo no longer runs out when you load it from the pouch.
+- The game closing by itself (at the start, or when a Battle Game ended) is fixed.
+- Quest: the app not starting on some headsets, and the inventory freezing, are fixed; the game shows the reason when it cannot load.
+
+**For testing**
+- A few options for tuning (rotate holster, ammo guide, learn recoil) stay hidden until the developer code: left grip twice, then X, Y, X. The frame-rate readouts and the VR debug log start off.
 
 ### What's new in 1.4.1
 
