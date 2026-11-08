@@ -24,7 +24,6 @@ int bhSetEffectTb(EF_WORK* efp, NJS_POINT3* off, unsigned char* lkp, int lkono);
    mn_mode0 6 reads it for the inventory). It is read here once, into a buffer of its own, with the game's file calls only while no read of the game's is going, realized (bhMlbBinRealize,
    bhSetMemPvpTexture) and kept: nothing of the game's state is touched, and it is not an object of the room. */
 int vr_held_item(void);   /* vr_glue.c: the ammo item the gun in hand takes (the first in the inventory) */
-#ifdef __ANDROID__
 int bhMlbBinRealize(void* bin_datP, ML_WORK* mlwP);
 unsigned char* bhKeepObjWork(ML_WORK* mp, unsigned char* sp);
 int bhSetMemPvpTexture(NJS_TEXLIST* tlp, unsigned char* datp, int offset);
@@ -78,12 +77,10 @@ static ItemModel* item_model(int item)
     }
     return m->state == 2 && m->mdl.objP ? m : NULL;
 }
-#endif
 static float pose[6][7];   /* (the hand poses, below) */
 /* the item's model in the left hand, as the magazine is: from the hand node, as a hand object (tag 3) */
 static void draw_item_ammo(int item)
 {
-#ifdef __ANDROID__
     ItemModel* im = item_model(item);
     NJS_CNK_OBJECT* o;
     float mtx[16], sc;
@@ -105,9 +102,6 @@ static void draw_item_ammo(int item)
     njCnkEasyDrawObject(im->mdl.objP);
     g_native_tag = 0;
     njPopMatrixEx();
-#else
-    (void)item;
-#endif
 }
 
 /* B with the shotgun: one of its shells falls from the hand, the game's casing effect (effect 0, model 1, as WpnEffTab[11][3] ejects it; the effect is a "polygon model" drawn with the texture 5). */
