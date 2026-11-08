@@ -593,7 +593,7 @@ static void read_actions(XrTime t)
     if (g_vr_stick_lock) in.rx = in.ry = 0.0f;
     in.buttons = (get_b(a_a) ? VRB_A : 0) | (get_b(a_b) ? VRB_B : 0) | (get_b(a_x) ? VRB_X : 0) | (get_b(a_y) ? VRB_Y : 0) |
                  (get_b(a_menu) ? VRB_MENU : 0) | (get_b(a_lclick) ? VRB_LSTICK : 0) | (get_b(a_rclick) ? VRB_RSTICK : 0);
-    {   /* RECVX_TEST_SAVESPOT (env.txt; a test aid, to be removed with the rest of it): hold X for 2 s to save the game here as save
+    {   /* The developer's test save (RECVX_TEST_SAVESPOT in env.txt; only after the developer code): hold X for 2 s to save the game here as save
            15 (pc_testsave_request, lobby_glue.c; the controller buzzes); the game's own X (the map, Square) only gets a quick tap, on release */
         static int down, fired, pulse;
         static uint64_t t_down;

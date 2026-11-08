@@ -647,7 +647,8 @@ static int grip_latch;   /* (defined below) */
 static int arr_adj, arr_hold, arr_a_was;
 static float arr_goff[3], arr_yawf;
 void vr_arr_adjust(void) { arr_adj = 1; arr_hold = 0; arr_a_was = 1; arr_yawf = 0.0f; }
-static int gd_item(void) { unsigned* g = gun_slot(); int it = g ? (int)((*g >> 16) & 0xFF) : 0; return it > 0 && it < 40 ? it : 0; }
+static unsigned* gun_slot_any(void);   /* (below: the gun in hand, endless ammo or not) */
+static int gd_item(void) { unsigned* g = gun_slot_any(); int it = g ? (int)((*g >> 16) & 0xFF) : 0; return it > 0 && it < 40 ? it : 0; }
 static int gd_set(int it) { return it && (g_vr_gd[it][0] || g_vr_gd[it][1] || g_vr_gd[it][2]); }
 typedef struct { int item, shape, axis; float half_len, half_w; } GdShape;
 static const GdShape gd_shapes[] = {   /* shape 0 arrow, 1 circle, 2 rectangle; axis 0 the weapon's x, 1 its y, 2 its z (the pistols' magazine: upright); half length in game units (10 a metre), half width or radius in metres */
@@ -676,7 +677,7 @@ static void guide_draw(int steady)
     int it = gd_item();
     const GdShape* sh = gd_shape(it);
     float c[3], d[3], l[3], a;
-    if (!it || !gd_set(it)) return;
+    if (!it || (!gd_set(it) && !arr_adj)) return;   /* (adjusting: shown even when nothing is set yet, at the weapon's origin) */
     for (int k = 0; k < 3; k++) c[k] = g_vr_gd[it][k] / 100.0f;
     gd_dir(it, d);
     a = steady ? 0.55f : 0.30f + 0.20f * sinf(SDL_GetTicks() * 0.0126f);   /* about two blinks a second */
@@ -713,7 +714,6 @@ static void arrow_adjust(void)
     if (!it) { arr_adj = 0; vr_log("vr: ammo guide: no gun in hand\n"); return; }
     if (!plp || !plp->mlwP || plp->mlwP->obj_num <= 13 || !xr_input(&ai) || !pc_vr_weapon_frame(m)) return;
     if (!arr_yawf && g_vr_gd[it][3]) arr_yawf = (float)g_vr_gd[it][3];
-    if (!gd_set(it)) g_vr_gd[it][0] = 1;   /* (shown even when nothing is set yet: it starts at the weapon's origin) */
     guide_draw(1);
     if ((ai.buttons & VRB_A) && !arr_a_was) { arr_adj = 0; arr_hold = 0; config_save(); vr_log("vr: ammo guide of item %d adjusted: %d %d %d mm, yaw %d\n", it, g_vr_gd[it][0], g_vr_gd[it][1], g_vr_gd[it][2], g_vr_gd[it][3]); return; }
     arr_a_was = (ai.buttons & VRB_A) != 0;
@@ -759,9 +759,9 @@ static int lau_k;   /* which of the two is in hand (set by launcher_gun) */
 #define lau_ids (lau_tab[lau_k].ids)
 #define lau_bits (lau_tab[lau_k].bits)
 #define lau_col (lau_tab[lau_k].col)
-static int launcher_gun(void)   /* the grenade launcher or the bow gun in hand (lau_k says which) */
+static int launcher_gun(void)   /* the grenade launcher or the bow gun in hand, endless ammo or not (lau_k says which) */
 {
-    unsigned* g = gun_slot();
+    unsigned* g = gun_slot_any();
     int it = g ? (int)((*g >> 16) & 0xFF) : 0;
     if (it == 6 || it == 7) { lau_k = it == 7; return 1; }
     return 0;
@@ -772,7 +772,7 @@ static int lau_slot_of(int item)
     int max = (sys->st_flg & 0x8000000) ? 10 : 8;
     if (!st->pip) return -1;
     for (int i = 0; i < max; i++)
-        if ((int)((st->pip[i + 2] >> 16) & 0xFF) == item && (st->pip[i + 2] & 0xFFFF)) return i + 2;
+        if ((int)((st->pip[i + 2] >> 16) & 0xFF) == item && ((st->pip[i + 2] & 0xFFFF) || ((st->pip[i + 2] >> 16) & 0x800))) return i + 2;   /* (an endless stack counts, whatever its number) */
     return -1;
 }
 static int lau_scan(void)
@@ -810,7 +810,7 @@ static void holster_update(const float Wg[16], const VrPose* h)
         if (n > 1) { lau_n = n; for (int i = 0; i < n; i++) lau_item[i] = lau_ids[i]; }   /* (all the launcher's places shown) */
     } else {
         if (knife_equipped()) return;
-        if (launcher_gun()) { if (!lau_open) return; n = lau_scan(); box_item = -1; }   /* the grenade launcher: the holsters, one for each kind of round, only while it is open (B / Y) */
+        if (launcher_gun()) { if (!lau_open) return; n = lau_scan(); box_item = -1; }   /* the grenade launcher: the holsters, one for each kind of round, only while it is open (B) */
         else if ((n = box_ammo()) < 0) return;
     }
     quat_to_rows(hr, h);
@@ -1021,7 +1021,7 @@ int vr_hide_shadows(void) { return vr_on() && !g_vr_shadows; }
 /* ini vr_debug_log: the enemies' diary - every change of an enemy's state, life, hittability,
    scene control and position jumps (or walks through a wall), with the time and room, so a
    misbehaving zombie can be followed in recvx.log. Only changes are written. */
-int g_vr_debug_log = 1;
+int g_vr_debug_log = 0;   /* off in released builds (the log grew past 1 MB in minutes); recvx.ini's vr_debug_log = 1 turns it on */
 static void enemy_diary(void)
 {
     static struct { int seen, m, hp, flg, type; float x, z; } last[128];
@@ -1181,6 +1181,13 @@ static unsigned* gun_slot(void)
     if (!((st->pip[*st->pip] >> 16) & 0xFF) || ((st->pip[*st->pip] >> 16) & 0x800)) return NULL;   /* none / endless ammo */
     return &st->pip[*st->pip];
 }
+static unsigned* gun_slot_any(void)   /* the gun in hand even when its ammo is endless (gun_slot gives none then): the launcher and the bow gun still reload */
+{
+    S_WORK* st = &swork;
+    if (!st->pip || !*st->pip || knife_equipped()) return NULL;
+    if (!((st->pip[*st->pip] >> 16) & 0xFF)) return NULL;
+    return &st->pip[*st->pip];
+}
 static float dist3(const float* a, const float* b) { float x = a[0] - b[0], y = a[1] - b[1], z = a[2] - b[2]; return sqrtf(x * x + y * y + z * z); }
 /* The ammo at the holster can be taken only when the player means to reload: after B (the magazine is out) or with the aim held (the right grip); otherwise the left
    hand at the belt is free for the knife and the two-handed hold. */
@@ -1201,7 +1208,7 @@ static void lau_set(int open, const char* why)
 
 static void reload_update(void)
 {
-    static int b_was, g_was, y_was;
+    static int b_was, g_was;
     VrInput in;
     unsigned* g;
     int b, gr;
@@ -1209,12 +1216,9 @@ static void reload_update(void)
     if (!g_vr_manual_reload || hol_adj || !xr_input(&in)) return;   /* (adjusting the holster: the left grip is the drag, not a reload) */
     b = (in.buttons & VRB_B) != 0; gr = in.lgrip > 0.5f;
     g = gun_slot();
+    if (!g && launcher_gun()) g = gun_slot_any();   /* (endless rounds in it: still this gun's reload) */
     if (!g || !launcher_gun()) lau_open = 0;
-    else {
-        int y = (in.buttons & VRB_Y) != 0;
-        if ((y && !y_was) || (b && !b_was)) lau_set(!lau_open, y ? "Y" : "B");   /* Y or B, aimed or not: open / shut (the game reloads the launcher by itself) */
-        y_was = y;
-    }
+    else if (b && !b_was) lau_set(!lau_open, "B");   /* B, aimed or not: the launcher / the bow gun opens or shuts (the game reloads them by itself) */
     {   /* the launcher also closes with a flick of the right hand upward (its inertia), or the left hand on the gun pushing it up (folding it shut) */
         static float py0, ly0;
         static uint64_t t0;
@@ -1280,10 +1284,19 @@ static void reload_update(void)
         mag_held = 0; lau_pick = -1;
         if (ai >= 0) {
             S_WORK* st = &swork;
-            int ot = 0, r = (int)(*g & 0xFFFF), c = (int)(st->pip[ai] & 0xFFFF);
+            int ot = 0, r = (int)(*g & 0xFFFF), c = (int)(st->pip[ai] & 0xFFFF), max = (sys->st_flg & 0x8000000) ? 10 : 8;
+            unsigned endA = (st->pip[ai] >> 16) & 0x800u, endG = (*g >> 16) & 0x800u;   /* the game's endless flag: of the stack, of the gun */
+            if (endG) r = 0;   /* an endless gun has no rounds to give back */
             for (int t = 0; t < lau_tab[lau_k].n; t++) if ((((*g >> 16) & 0x7000) == lau_bits[t])) ot = t;
-            *g = (unsigned)(((unsigned)lau_tab[lau_k].gun | lau_bits[nt]) << 16) | (unsigned)c;   /* the gun takes the whole stack, as the game's combine (sub1.c Combi_02) does */
-            if (r > 0) st->pip[ai] = ((unsigned)lau_ids[ot] << 16) | (unsigned)r;   /* its old rounds go back as a stack of their kind */
+            *g = (unsigned)((((unsigned)lau_tab[lau_k].gun | lau_bits[nt]) | endA) << 16) | (unsigned)c;   /* the gun takes the whole stack, as the game's combine (sub1.c Combi_02) does */
+            if (endA) {   /* an endless stack is not used up: it stays whole in the pouch and the gun becomes endless as it; the old rounds, if any, go back to their kind's stack or a free place */
+                if (r > 0) {
+                    int b = lau_slot_of(lau_ids[ot]);
+                    if (b >= 0) st->pip[b] += (unsigned)r;
+                    else for (int i = 0; i < max; i++) if (!st->pip[i + 2]) { st->pip[i + 2] = ((unsigned)lau_ids[ot] << 16) | (unsigned)r; break; }
+                }
+            }
+            else if (r > 0) st->pip[ai] = ((unsigned)lau_ids[ot] << 16) | (unsigned)r;   /* its old rounds go back as a stack of their kind */
             else { st->pip[ai] = 0; if (*st->pip > (unsigned)ai) (*st->pip)--; ItemSort(); }
             plp->wpnr_no = lau_tab[lau_k].wpn[nt]; sys->ply_wno[sys->ply_id] = plp->wpnr_no;
             sys->gm_flg &= ~0x40000;
@@ -1314,7 +1327,8 @@ static void reload_update(void)
                             if (wpn == combidata[it] && (combidata[it + 2] & 0xF000)) { hit = i + 2; break; }
                     }
                 }
-                if (hit >= 0 && (st->pip[hit] & 0xFFFF) > 1) { st->pip[hit] -= 1; *gg += 1; }
+                if (hit >= 0 && ((st->pip[hit] >> 16) & 0x800)) *gg += 1;   /* an endless stack: a round goes in, nothing is used up */
+                else if (hit >= 0 && (st->pip[hit] & 0xFFFF) > 1) { st->pip[hit] -= 1; *gg += 1; }
                 else if (hit >= 0) bhSearchBullet();
             }
         }
@@ -1437,12 +1451,18 @@ static void prompts_update(void)
 static void heading_update(void)
 {
     static unsigned done_gen;
+    static int room_key = -1, room_reset;
     VrInput in;
     float facing;
-    int ctl;
+    int ctl, force = 0, key;
     if (done_gen == cam_gen) return;
     done_gen = cam_gen;
     smooth_turn = 0.0f;   /* vr120 */
+    /* A room change (a door, the stairs): the game turns the character to the new room's way out, but the view's heading is kept from before - she was seen from behind, facing away from the room. When the
+       transition is over and she walks again, the view is put to her facing, as the reset at the start of the game does. */
+    key = sys->stg_no * 1000 + sys->rom_no * 10 + sys->rcase;
+    if (key != room_key) { room_key = key; room_reset = 1; }
+    if (room_reset && !vr_door_transition() && plp->mode0 == 1 && plp->mode1 == 0) { room_reset = 0; force = 1; vr_log("vr: new room %d - the view put to her facing\n", key); }
     facing = (float)(short)plp->ay * (3.14159265f / 32768.0f);
     if (g_vr_recenter_on_start && vr_active) {   /* the test save spot has just loaded (lobby_glue.c pc_quickload_take): recentre now - the headset's forward is where the head looks, the body keeps the saved facing */
         g_vr_recenter_on_start = 0;
@@ -1450,7 +1470,7 @@ static void heading_update(void)
         vr_log("vr: recentred at the start of the game; saved facing %.0f degrees\n", (double)facing * (180.0 / 3.14159265));
     }
     ctl = xr_input(&in);
-    if (!vr_active || !ctl || rec_seen != xr_recenter_gen()) {
+    if (!vr_active || !ctl || rec_seen != xr_recenter_gen() || force) {
         /* the body's facing (plp->ay) is the view's world yaw, vr_yaw PLUS the head's own turn in the recentred space (vr_camera: R = Wg * head,
            tps_vr_view -> plp->ay): resetting vr_yaw to the facing counted the head's turn twice, so a reset (back from the Start menu, a recentre,
            no controller input) with the head turned - looking at the fire, say - turned the view by that angle again (180 degrees behind him).
@@ -2393,7 +2413,7 @@ unsigned vr_tps_keys(void)
     else if (in.rgrip > 0.5f) { static uint64_t lm; uint64_t t = SDL_GetTicksNS() / 1000000; if (t > lm + 1000) { lm = t; vr_log("vr: aim held on the stairs - not passed to the game (mode %d/%d)\n", plp->mode1, plp->mode2); } }
     if (in.rtrig > 0.5f && !(vr_playing() && knife_equipped() && g_vr_slash_speed > 0)) k |= 512;   /* TPS_K_FIRE (the knife cuts by swinging) */
     vw_fire_vr = (k & 512) != 0; vw_fire_finger = in.ltrig > 0.5f || in.rtrig > 0.5f;   /* vr108 watch */
-    if ((in.buttons & VRB_B) && !(g_vr_manual_reload && vr_playing() && gun_slot())) k |= 1024;   /* TPS_K_CANCEL (with a gun in hand B drops the magazine) */
+    if ((in.buttons & VRB_B) && !(g_vr_manual_reload && vr_playing() && gun_slot_any())) k |= 1024;   /* TPS_K_CANCEL (with a gun in hand B drops the magazine) */
     {   /* the slide not pulled yet: the trigger only clicks */
         static int click_was;
         if ((need_rack || lau_open) && vr_playing() && (k & 512)) {
