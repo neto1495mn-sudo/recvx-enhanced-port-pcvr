@@ -60,7 +60,14 @@ int g_vr_roomscale = 1;      /* ini vr_roomscale: walking in the room moves Clai
 int g_vr_manual_reload = 1;  /* ini vr_manual_reload: B drops the magazine, the left hand takes one at the holster and puts it in */
 int g_vr_prompts = 1;        /* ini vr_prompts: one "A" over what the action button would use, when right in front of it */
 int g_vr_holster = 1;        /* ini vr_holster: the ammo in the boxes, shown at the belt */
-int g_vr_sight = 1;          /* ini vr_sight: a small white ring where the aimed gun's shot would hit */
+int g_vr_radial = 1;         /* ini vr_radial: hold the right stick's click for the weapon wheel (the map is on X) */
+/* ini vr_hol_*: where the ammo holster hangs (cm: under the eyes, in front of them, to the right of the heading; standing - seated has its own at the chest): the pistols, the shotgun and the rest
+   (hol), and the grenade launcher and the bow gun, which take several kinds of round (hol2) */
+static const int hol_def[2][2][4] = { { { 62, 15, 0, 0 }, { 27, 12, 0, 0 } }, { { 38, 18, -7, 9 }, { 34, 32, -11, 11 } } };   /* [standing, seated][single ammo, several kinds][down, forward, side (cm), turn (degrees)] */
+int g_vr_hol[2][2][4] = { { { 62, 15, 0, 0 }, { 27, 12, 0, 0 } }, { { 38, 18, -7, 9 }, { 34, 32, -11, 11 } } };   /* each position keeps its own */
+void vr_hol_defaults(int mode) { for (int m = 0; m < 2; m++) if (mode < 0 || mode == m) memcpy(g_vr_hol[m], hol_def[m], sizeof(g_vr_hol[m])); }   /* mode -1: both */
+int g_vr_seated = 0;         /* ini vr_seated: the ammo holster at the chest, not the belt */
+int g_vr_sight = 2;          /* ini vr_sight: 1 a small white dot where the aimed gun's shot would hit, 2 the laser (the default), 3 both */
 int g_vr_recoil = 1;         /* ini vr_recoil: the weapon kicks in the hand at each shot */
 int g_vr_haptics = 1;        /* ini vr_haptics: the controllers vibrate (shots, cuts) */
 extern const short EneDamNear[31][22];   /* weapon.c */
@@ -73,6 +80,8 @@ static int vr_frame;
 static int last_vr_frame = 1;   /* vr86: the last drawn frame was in the head (else the cinema screen) */
 static int box_mode;             /* vr87: the ammo box this frame (0 none, 1 holster, 2 left hand) and its corners (world) */
 static float box_c[8][3];
+static int box_n;                /* the grenade launcher: holsters shown, one for each ammo type in the inventory (box_dx: their shift sideways, metres) */
+static float box_dx[4], box_op[4];   /* (box_op: how far each of those pouches is open) */
 static int box_item = -1;       /* vr131: the ammo item of the gun in hand (holster_update) */
 #define BOX_W 0.09f              /* its size, metres: wide, high, deep (vr131: the handgun bullets' box as the game's, 202:120:68) */
 #define BOX_H (box_item == 12 ? 0.054f : 0.06f)
@@ -99,6 +108,7 @@ void tps_vr_view(float yaw, float pitch);   /* tps_glue.c: its camera yaw/pitch 
 #define TO_ANGLE(r) ((r) * (32768.0f / 3.14159265f))   /* radians -> game angle units (65536 = 360 deg) */
 
 int vr_hide_player(void) { return vr_frame; }
+int vr_mag_held(void);
 
 static void quat_to_rows(float m[9], const VrPose* p)
 {
@@ -549,6 +559,22 @@ static float laser_a[2][3], laser_b[2][3];   /* vr71: the body's place this fram
 /* The ammo in the boxes for the gun in hand: the inventory items the game would reload it
    from (as bhSearchBullet: ammo items whose combination list names the weapon), summed;
    -1 if no gun is equipped */
+/* a gun loaded a round at a time (the shotgun: the game plays 265, rounds loaded, flag 0x1000): B only opens the pouch (its rounds stay), and each grab from the pouch puts ONE round in */
+static int shell_gun(void)
+{
+    return plp && plp->wpnr_no >= 0 && plp->wpnr_no < 23 && (WpnTab[plp->wpnr_no].flg & 0x1000);
+}
+
+/* a pistol that ran empty is loaded with the slide forward: after the magazine goes in, the slide has to be pulled (the left hand takes the slide and pulls it back to the right hand) before the trigger works */
+static int need_rack, rack_wpn, rack_arm, rack_grip_was;
+static float rack_pull_now;   /* the slide pull, 0..1 */
+static uint64_t slide_rel_ms;   /* when the slide was let go forward */
+static float rack_d0;
+static int rack_gun(void)
+{
+    return plp && plp->wpnr_no >= 3 && plp->wpnr_no <= 5 && (WpnTab[plp->wpnr_no].flg & 0x80);
+}
+
 static int box_ammo(void)
 {
     S_WORK* st = &swork;
@@ -598,6 +624,175 @@ static int ammo_item(void)
 
 static int mag_out, mag_kept;     /* (vr132: defined below) */
 static unsigned* gun_slot(void);
+static void radial_dot(void);
+
+/* The grenade launcher (item 6) takes four kinds of round, each its own item in the inventory: 15 (the plain grenade round: the launcher with no kind bits, weapon 14), 16 (kind bits
+   0x1000, weapon 15), 17 (0x2000, weapon 16), 37 (0x4000, weapon 17) - as the game's own combine (sub1.c Combi_02) swaps them: the gun takes the whole stack, its old rounds go back to
+   the inventory as a stack of their kind. In the headset: a holster beside the belt for each kind that is in the inventory (a ball on top, its colour the kind's), the left hand takes a
+   ball from one and puts it in the gun. */
+static uint64_t lau_open_ms, lau_shut_ms;   /* when it was opened / shut (the break-open eases over 150 ms) */
+static int lau_open;   /* the launcher is open (B): the holsters can be reached, the trigger is dead */
+static int mag_held;   /* (the left hand holds ammo taken from the pouch: defined below) */
+/* The guide where the ammo is fitted: a faint orange blinking silhouette of the gun's ammo, a part of the gun, shown while the ammo is held. Each gun has its own (by the gun's item), set on the headset
+   (settings: Adjust ammo guide): g_vr_gd[item] = its middle in the weapon object's frame (mm - the weapon as the game draws it in the hand, so it follows the gun in either stance) and its turn left to
+   right (yaw, degrees). The ammo is in when its middle comes within 7 cm of the guide's. The shapes: the bow gun's arrow (an arrow), the launcher's round (a circle), the magazines and the shotgun's shell
+   (a rectangle). */
+int g_vr_gd[40][4] = {   /* by the gun's item id (up to 39): x, y, z (mm), yaw (degrees); as set on the headset: the shotgun (4), the pistol (5), the grenade launcher (6), the bow gun (7) */
+    [4] = { 219, 17, -90, 0 }, [5] = { 77, 2, 55, -42 }, [6] = { 168, 1, -257, 0 }, [7] = { 263, 1, -87, 0 } };
+static void rc_confirm(void);   /* (the recoil learning, below) */
+int pc_vr_weapon_frame(float m[16]);   /* mag_glue.c: the weapon object's matrix (the hand node, the object's own offset and turn) */
+void config_save(void);
+static float dist3(const float* a, const float* b);
+static int grip_latch;   /* (defined below) */
+static int arr_adj, arr_hold, arr_a_was;
+static float arr_goff[3], arr_yawf;
+void vr_arr_adjust(void) { arr_adj = 1; arr_hold = 0; arr_a_was = 1; arr_yawf = 0.0f; }
+static int gd_item(void) { unsigned* g = gun_slot(); int it = g ? (int)((*g >> 16) & 0xFF) : 0; return it > 0 && it < 40 ? it : 0; }
+static int gd_set(int it) { return it && (g_vr_gd[it][0] || g_vr_gd[it][1] || g_vr_gd[it][2]); }
+typedef struct { int item, shape, axis; float half_len, half_w; } GdShape;
+static const GdShape gd_shapes[] = {   /* shape 0 arrow, 1 circle, 2 rectangle; axis 0 the weapon's x, 1 its y, 2 its z (the pistols' magazine: upright); half length in game units (10 a metre), half width or radius in metres */
+    { 2, 2, 1, 0.70f, 0.015f }, { 3, 2, 1, 0.50f, 0.015f }, { 4, 2, 0, 0.35f, 0.010f }, { 5, 2, 2, 0.35f, 0.011f }, { 6, 1, 0, 0.00f, 0.020f }, { 7, 0, 0, 1.04f, 0.007f },
+    { 9, 2, 2, 0.35f, 0.011f }, { 10, 2, 2, 0.35f, 0.011f }, { 0, 2, 0, 0.35f, 0.010f } };   /* (the last: any other gun) */
+static const GdShape* gd_shape(int it) { int i = 0; while (gd_shapes[i].item && gd_shapes[i].item != it) i++; return &gd_shapes[i]; }
+static void node_pt(const float* m, const float l[3], float w[3]) { for (int k = 0; k < 3; k++) w[k] = m[k] * l[0] + m[4 + k] * l[1] + m[8 + k] * l[2] + m[12 + k]; }
+static void gd_dir(int it, float d[3])   /* the guide's axis in the weapon's frame, turned left to right by the yaw (about the up axis) */
+{
+    float y = g_vr_gd[it][3] * (3.14159265f / 180.0f);
+    if (gd_shape(it)->axis == 1) { d[0] = 0.0f; d[1] = 1.0f; d[2] = 0.0f; return; }
+    if (gd_shape(it)->axis == 2) { d[0] = 0.0f; d[1] = 0.0f; d[2] = 1.0f; return; }
+    d[0] = cosf(y); d[1] = 0.0f; d[2] = -sinf(y);
+}
+static int gd_world(const float l[3], float w[3])
+{
+    float m[16];
+    if (!pc_vr_weapon_frame(m)) return 0;
+    node_pt(m, l, w);
+    return 1;
+}
+static int ghost_on, ghost_val, ghost_shape;   /* the guide this frame (the renderer draws it): its two ends (world; one point for a circle), the colour and alpha (bits 24..), the shape, its half width */
+static float ghost_a[3], ghost_b[3], ghost_hw;
+static void guide_draw(int steady)
+{
+    int it = gd_item();
+    const GdShape* sh = gd_shape(it);
+    float c[3], d[3], l[3], a;
+    if (!it || !gd_set(it)) return;
+    for (int k = 0; k < 3; k++) c[k] = g_vr_gd[it][k] / 100.0f;
+    gd_dir(it, d);
+    a = steady ? 0.55f : 0.30f + 0.20f * sinf(SDL_GetTicks() * 0.0126f);   /* about two blinks a second */
+    ghost_val = (int)((unsigned)(a * 127.0f) << 24 | 0xFF8C1Au);
+    for (int k = 0; k < 3; k++) l[k] = c[k] - d[k] * sh->half_len;
+    if (!gd_world(l, ghost_a)) return;
+    for (int k = 0; k < 3; k++) l[k] = c[k] + d[k] * sh->half_len;
+    gd_world(l, ghost_b);
+    ghost_shape = sh->shape; ghost_hw = sh->half_w; ghost_on = 1;
+}
+/* the held ammo is at its fitting place: the guide's (its middle within 7 cm) when this gun has one, else the left hand within 20 cm of the right */
+static int ammo_in_place(void)
+{
+    int it = gd_item();
+    if (gd_set(it)) {
+        float g[3], c[3], c0[3], l[3] = { -0.85f, -0.4f, it == 7 ? -1.04f : 0.0f };   /* (the arrow lies along the model's z) */
+        for (int k = 0; k < 3; k++) c0[k] = g_vr_gd[it][k] / 100.0f;
+        if (!plp || !plp->mlwP || plp->mlwP->obj_num <= 13 || !gd_world(c0, g)) return 0;
+        node_pt(plp->mlwP->owP[13].mtx, l, c);
+        return dist3(c, g) < 0.7f * (g_vr_scale / 100.0f);
+    }
+    return hand_ok[0] && hand_ok[1] && dist3(hand_pos[0], hand_pos[1]) < 2.0f * (g_vr_scale / 100.0f);
+}
+/* adjusting the guide: it is shown steady, the left grip drags it, the right stick turns it left and right, A keeps it */
+static void arrow_adjust(void)
+{
+    VrInput ai;
+    static uint64_t rt;
+    uint64_t now = SDL_GetTicks();
+    float dt = (float)(now - rt) / 1000.0f, inv[16], m[16], c[3], c0[3];
+    int it = gd_item();
+    rt = now; if (dt > 0.1f) dt = 0.0f;
+    if (!arr_adj) return;
+    if (!it) { arr_adj = 0; vr_log("vr: ammo guide: no gun in hand\n"); return; }
+    if (!plp || !plp->mlwP || plp->mlwP->obj_num <= 13 || !xr_input(&ai) || !pc_vr_weapon_frame(m)) return;
+    if (!arr_yawf && g_vr_gd[it][3]) arr_yawf = (float)g_vr_gd[it][3];
+    if (!gd_set(it)) g_vr_gd[it][0] = 1;   /* (shown even when nothing is set yet: it starts at the weapon's origin) */
+    guide_draw(1);
+    if ((ai.buttons & VRB_A) && !arr_a_was) { arr_adj = 0; arr_hold = 0; config_save(); vr_log("vr: ammo guide of item %d adjusted: %d %d %d mm, yaw %d\n", it, g_vr_gd[it][0], g_vr_gd[it][1], g_vr_gd[it][2], g_vr_gd[it][3]); return; }
+    arr_a_was = (ai.buttons & VRB_A) != 0;
+    if (fabsf(ai.rx) > 0.15f) arr_yawf += ai.rx * 90.0f * dt;
+    if (arr_yawf < -180.0f) arr_yawf = -180.0f;
+    if (arr_yawf > 180.0f) arr_yawf = 180.0f;
+    g_vr_gd[it][3] = (int)lroundf(arr_yawf);
+    for (int k = 0; k < 3; k++) c0[k] = g_vr_gd[it][k] / 100.0f;
+    node_pt(m, c0, c);
+    if (ai.lgrip > 0.5f && hand_ok[1]) {
+        float tw[3], loc[3];
+        m[3] = m[7] = m[11] = 0.0f; m[15] = 1.0f;   /* (the matrix has no last row: it is made a proper 4x4 to invert) */
+        if (!arr_hold) { arr_hold = 1; for (int k = 0; k < 3; k++) arr_goff[k] = c[k] - hand_pos[1][k]; }
+        for (int k = 0; k < 3; k++) tw[k] = hand_pos[1][k] + arr_goff[k];
+        if (vr_mat_invert(inv, m)) {
+            for (int k = 0; k < 3; k++) loc[k] = inv[k] * tw[0] + inv[4 + k] * tw[1] + inv[8 + k] * tw[2] + inv[12 + k];
+            for (int k = 0; k < 3; k++) { int v = (int)lroundf(loc[k] * 100.0f); g_vr_gd[it][k] = v < -3000 ? -3000 : v > 3000 ? 3000 : v; }
+            grip_latch = 1;
+        }
+    } else arr_hold = 0;
+}
+static int grip_latch;   /* (defined below) */
+void config_save(void);
+/* Adjusting the holsters (settings: Adjust holster): hol_adj 1 = the single-ammo guns' holster, 2 = the launcher's and the bow gun's. The holster is shown in 3D with a red disc over it; the left grip
+   held takes it and the hand drags it (all of a gun's holsters move together); A is done and the place is kept in recvx.ini. */
+static int hol_adj, hol_hold, hol_b_was, hol_rot;   /* hol_rot: the right stick also turns the holster sideways (the developer's option) */
+static float hol_yawf;
+static void hol_done(void) { hol_adj = 0; hol_hold = 0; config_save(); vr_log("vr: holster adjusted\n"); }
+static float hol_goff[3];
+void vr_hol_adjust(int which)   /* 1, 2: drag the holster of the single-ammo / several-ammo guns; 3, 4: the same, and the right stick turns it */
+{
+    hol_rot = which > 2; hol_adj = hol_rot ? which - 2 : which; hol_hold = 0; hol_b_was = 1;
+    hol_yawf = (float)g_vr_hol[g_vr_seated ? 1 : 0][hol_adj == 2 ? 1 : 0][3];
+}
+static int lau_n, lau_item[4], lau_pick = -1;
+static float lau_w[4][3];            /* each holster's place (world) */
+/* the two guns with several kinds of ammo: the grenade launcher (item 6) and the bow gun (item 7: arrows 18, explosive arrows 36, the kind bit 0x2000) */
+static const struct { int gun, n, ids[4]; unsigned bits[4]; int wpn[4]; unsigned col[4]; } lau_tab[2] = {
+    { 6, 4, { 15, 16, 17, 37 }, { 0, 0x1000, 0x2000, 0x4000 }, { 14, 15, 16, 17 }, { 0xB4B4B4, 0xF0D020, 0xE02020, 0x30C040 } },   /* grey, yellow, red, green */
+    { 7, 2, { 18, 36, 0, 0 }, { 0, 0x2000, 0, 0 }, { 10, 19, 0, 0 }, { 0xB4B4B4, 0xE02020, 0, 0 } },   /* the arrows grey, the explosive ones red */
+};
+static int lau_k;   /* which of the two is in hand (set by launcher_gun) */
+#define lau_ids (lau_tab[lau_k].ids)
+#define lau_bits (lau_tab[lau_k].bits)
+#define lau_col (lau_tab[lau_k].col)
+static int launcher_gun(void)   /* the grenade launcher or the bow gun in hand (lau_k says which) */
+{
+    unsigned* g = gun_slot();
+    int it = g ? (int)((*g >> 16) & 0xFF) : 0;
+    if (it == 6 || it == 7) { lau_k = it == 7; return 1; }
+    return 0;
+}
+static int lau_slot_of(int item)
+{
+    S_WORK* st = &swork;
+    int max = (sys->st_flg & 0x8000000) ? 10 : 8;
+    if (!st->pip) return -1;
+    for (int i = 0; i < max; i++)
+        if ((int)((st->pip[i + 2] >> 16) & 0xFF) == item && (st->pip[i + 2] & 0xFFFF)) return i + 2;
+    return -1;
+}
+static int lau_scan(void)
+{
+    lau_n = 0;
+    for (int t = 0; t < lau_tab[lau_k].n; t++)
+        if (lau_slot_of(lau_ids[t]) >= 0) lau_item[lau_n++] = lau_ids[t];
+    return lau_n;
+}
+static int lau_type(int item) { for (int t = 0; t < lau_tab[lau_k].n; t++) if (lau_ids[t] == item) return t; return 0; }
+static float dist3(const float* a, const float* b);
+/* the holster the left hand is at (nearest, within about 12 cm), -1 none */
+static int lau_near(void)
+{
+    int best = -1;
+    float bd = 1.5f * (g_vr_scale / 100.0f);
+    if (!hand_ok[1]) return -1;
+    for (int i = 0; i < lau_n; i++) { float d = dist3(hand_pos[1], lau_w[i]); if (d < bd) { bd = d; best = i; } }
+    return best;
+}
 
 /* the holster: in front of the belly at the belt (about 62 cm below the eyes, 15 cm forward of
    them), turned with the head's heading smoothed - the box ammo of the gun in hand */
@@ -605,11 +800,19 @@ static void holster_update(const float Wg[16], const VrPose* h)
 {
     static float yaw_s;
     static int have;
-    float hr[9], fx, fz, yaw, pl[3], pw[3];
+    float hr[9], fx, fz, yaw, yh, pl[3], pw[3];   /* yh: the holster's heading (the head's, smoothed, plus its turn) */
     int n;
     holster_ok = 0;
+    lau_n = 0; box_n = 0;
     box_item = ammo_item();   /* vr131 */
-    if (knife_equipped() || (n = box_ammo()) < 0) return;
+    if (hol_adj) {   /* adjusting: the holster is shown whatever the gun (2: all three of the launcher's) */
+        n = hol_adj == 2 ? lau_tab[0].n : 1; box_item = -1; lau_k = 0;
+        if (n > 1) { lau_n = n; for (int i = 0; i < n; i++) lau_item[i] = lau_ids[i]; }   /* (all the launcher's places shown) */
+    } else {
+        if (knife_equipped()) return;
+        if (launcher_gun()) { if (!lau_open) return; n = lau_scan(); box_item = -1; }   /* the grenade launcher: the holsters, one for each kind of round, only while it is open (B / Y) */
+        else if ((n = box_ammo()) < 0) return;
+    }
     quat_to_rows(hr, h);
     fx = -hr[2]; fz = -hr[8];
     if (fx * fx + fz * fz < 1e-4f) return;
@@ -622,21 +825,67 @@ static void holster_update(const float Wg[16], const VrPose* h)
         if (fabsf(d) > 0.6f) yaw_s += d - (d > 0 ? 0.6f : -0.6f);   /* follows when the head turns far, not every glance down */
         yaw_s += d * 0.02f;
     }
-    pl[0] = h->px + sinf(yaw_s) * 0.15f; pl[1] = h->py - 0.62f; pl[2] = h->pz + cosf(yaw_s) * 0.15f;
+    {   /* seated (ini vr_seated): at the chest, 27 cm under the eyes and 12 cm out, not the belt at 62 cm - in a chair the belt is in the lap, far from the hand */
+        unsigned* eg = gun_slot();
+        int it = eg ? (int)((*eg >> 16) & 0xFF) : 0, two = hol_adj ? hol_adj == 2 : (it == 6 || it == 7);   /* the grenade launcher and the bow gun: their own place */
+        const int* hv = g_vr_hol[g_vr_seated ? 1 : 0][two ? 1 : 0];   /* the place of this position (standing / seated) and gun group */
+        float down = hv[0] / 100.0f, out = hv[1] / 100.0f, side = hv[2] / 100.0f;
+        yh = yaw_s + hv[3] * (3.14159265f / 180.0f);   /* as if fixed to the chest: it hangs where the head looks and turns with it, plus its own turn */
+        pl[0] = h->px + sinf(yaw_s) * out; pl[1] = h->py - down; pl[2] = h->pz + cosf(yaw_s) * out;
+        pl[0] += -cosf(yaw_s) * side; pl[2] += sinf(yaw_s) * side;   /* 8 cm to the player's right (the right of the heading yaw_s: (-cos, sin) - yaw is of the forward (sin, cos)) */
+    }
     pw[0] = Wg[0] * pl[0] + Wg[4] * pl[1] + Wg[8] * pl[2] + Wg[12];
     pw[1] = Wg[1] * pl[0] + Wg[5] * pl[1] + Wg[9] * pl[2] + Wg[13];
     pw[2] = Wg[2] * pl[0] + Wg[6] * pl[1] + Wg[10] * pl[2] + Wg[14];
+    if (hol_adj) {   /* the left grip takes the holster and the hand drags it: its place under the eyes, in front and to the side, kept for the gun group being adjusted */
+        VrInput ai;
+        float inv[16];
+        if (hol_adj && xr_input(&ai)) {
+            int gp = ai.lgrip > 0.5f, bb = (ai.buttons & VRB_A) != 0;
+            if (bb && !hol_b_was) hol_done();   /* A: it stays where it is */
+            hol_b_was = bb;
+            if (hol_adj && hol_rot) {   /* the right stick turns the holster about the vertical axis (90 degrees a second at full) */
+                static uint64_t rt;
+                uint64_t now = SDL_GetTicks();
+                float dt = (float)(now - rt) / 1000.0f;
+                rt = now;
+                if (dt > 0.1f) dt = 0.0f;
+                if (fabsf(ai.rx) > 0.15f) hol_yawf += ai.rx * 90.0f * dt;
+                if (hol_yawf < -180.0f) hol_yawf = -180.0f;
+                if (hol_yawf > 180.0f) hol_yawf = 180.0f;
+                g_vr_hol[g_vr_seated ? 1 : 0][hol_adj == 2 ? 1 : 0][3] = (int)lroundf(hol_yawf);
+            }
+            if (hol_adj && gp && hand_ok[1] && vr_mat_invert(inv, Wg)) {
+                float tw[3], loc[3], dx, dz;
+                int* hv = g_vr_hol[g_vr_seated ? 1 : 0][hol_adj == 2 ? 1 : 0];
+                int *pd = &hv[0], *po = &hv[1], *ps = &hv[2];
+                if (!hol_hold) { hol_hold = 1; for (int k = 0; k < 3; k++) hol_goff[k] = pw[k] - hand_pos[1][k]; }
+                for (int k = 0; k < 3; k++) tw[k] = hand_pos[1][k] + hol_goff[k];
+                for (int k = 0; k < 3; k++) loc[k] = inv[k] * tw[0] + inv[4 + k] * tw[1] + inv[8 + k] * tw[2] + inv[12 + k];
+                dx = loc[0] - h->px; dz = loc[2] - h->pz;
+                *po = (int)lroundf((dx * sinf(yaw_s) + dz * cosf(yaw_s)) * 100.0f);
+                *ps = (int)lroundf((-dx * cosf(yaw_s) + dz * sinf(yaw_s)) * 100.0f);
+                *pd = (int)lroundf((h->py - loc[1]) * 100.0f);
+                if (*po < -20) *po = -20; if (*po > 60) *po = 60;
+                if (*ps < -50) *ps = -50; if (*ps > 50) *ps = 50;
+                if (*pd < 0) *pd = 0; if (*pd > 120) *pd = 120;
+                grip_latch = 1;   /* (no knife with this grip) */
+            } else hol_hold = 0;
+        }
+    }
     memcpy(holster_w, pw, sizeof(pw)); holster_ok = 1;
-    if (g_vr_holster) {   /* vr132: "in the magazine / in the boxes" (the magazine out: 0 / its rounds with the boxes'), in front of the box, towards her */
+    if (g_vr_holster && !hol_adj) {   /* vr132: "in the magazine / in the boxes" (the magazine out: 0 / its rounds with the boxes'), in front of the box, towards her */
         unsigned* g = gun_slot();
-        int mag = mag_out >= 0 ? 0 : g ? (int)(*g & 0xFFFF) : 0, box = n + (mag_out >= 0 ? mag_kept : 0);
-        float fw[3] = { sinf(yaw_s), 0.0f, cosf(yaw_s) }, q[3], nw[3];
+        int mag = g ? (int)(*g & 0xFFFF) : 0, box = n + (mag_out >= 0 ? mag_kept : 0);
+        if (lau_n) { box = 0; for (int i = 0; i < lau_n; i++) { int sl = lau_slot_of(lau_item[i]); if (sl >= 0) box += (int)(swork.pip[sl] & 0xFFFF); } }   /* the launcher: the rounds of every kind in the holsters */
+        /* the counter is the gun's rounds as they are (the chambered one included) / the boxes plus the magazine taken out */
+        float fw[3] = { sinf(yh), 0.0f, cosf(yh) }, q[3], nw[3];
         for (int k = 0; k < 3; k++) q[k] = pl[k] - fw[k] * (0.5f * BOX_D + 0.012f) + (k == 1 ? -0.06f : 0.0f);
         for (int k = 0; k < 3; k++) nw[k] = Wg[k] * q[0] + Wg[4 + k] * q[1] + Wg[8 + k] * q[2] + Wg[12 + k];
         mk_add(VRMK_NUMBER, nw, 1000000 + (mag > 999 ? 999 : mag) * 1000 + (box > 999 ? 999 : box));
     }
     if (n > 0 && box_mode == 0) {   /* vr87: the ammo box at the holster (none left: none shown) */
-        float ax[3] = { cosf(yaw_s), 0.0f, -sinf(yaw_s) }, fw[3] = { sinf(yaw_s), 0.0f, cosf(yaw_s) };
+        float ax[3] = { cosf(yh), 0.0f, -sinf(yh) }, fw[3] = { sinf(yh), 0.0f, cosf(yh) };
         for (int c = 0; c < 8; c++) {
             float q[3];
             for (int k = 0; k < 3; k++)
@@ -644,6 +893,34 @@ static void holster_update(const float Wg[16], const VrPose* h)
             for (int k = 0; k < 3; k++) box_c[c][k] = Wg[k] * q[0] + Wg[4 + k] * q[1] + Wg[8 + k] * q[2] + Wg[12 + k];
         }
         box_mode = 1;
+        if (lau_n) {   /* the grenade launcher: one holster for each kind of round, side by side (10 cm apart), a ball on top in the kind's colour */
+            box_n = lau_n;
+            for (int i = 0; i < lau_n; i++) {
+                float off = ((float)i - 0.5f * (float)(lau_n - 1)) * 0.10f, q[3], bw[3];   /* side by side with no gap, always in the kinds' order (1, 2, 3, 4): the ones that are missing are just left out */
+                box_dx[i] = off;
+                for (int k = 0; k < 3; k++) q[k] = pl[k] + ax[k] * off + (k == 1 ? 0.04f : 0.0f);   /* (the reach point 10 cm above the pouch's centre: the hand touching its top, not only the middle, opens it) */
+                for (int k = 0; k < 3; k++) lau_w[i][k] = Wg[k] * q[0] + Wg[4 + k] * q[1] + Wg[8 + k] * q[2] + Wg[12 + k];
+                q[1] = pl[1] + 0.03f;
+                for (int k = 0; k < 3; k++) bw[k] = Wg[k] * q[0] + Wg[4 + k] * q[1] + Wg[8 + k] * q[2] + Wg[12 + k];
+                mk_add(VRMK_BALL, bw, (int)lau_col[lau_type(lau_item[i])]);
+            }
+            {   /* only the pouch the hand is most at opens (the nearest, within reach), one at a time */
+                int nr = (lau_open || hol_adj) ? lau_near() : -1;
+                for (int i = 0; i < lau_n; i++) box_op[i] += ((i == nr ? 1.0f : 0.0f) - box_op[i]) * 0.35f;
+            }
+        }
+        if (hol_adj) {   /* the red disc over the holster: it is what is being adjusted */
+            float q[3] = { pl[0], pl[1] + 0.08f, pl[2] }, rw[3];
+            for (int k = 0; k < 3; k++) rw[k] = Wg[k] * q[0] + Wg[4 + k] * q[1] + Wg[8 + k] * q[2] + Wg[12 + k];
+            mk_add(VRMK_BALL, rw, 0xFF2020);
+        }
+    }
+    if (mag_held) guide_draw(0);   /* the guide: where the ammo in the hand goes (this gun's own) */
+    if (lau_n && lau_k == 0 && mag_held && lau_pick >= 0 && lau_pick < lau_n && hand_ok[1] && plp && plp->mlwP && plp->mlwP->obj_num > 13) {   /* the ball in the left hand: where the pistol's magazine sits in it (mag_glue.c's place on the hand node) */
+        const float* m = plp->mlwP->owP[13].mtx;
+        float hb[3];
+        for (int k = 0; k < 3; k++) hb[k] = m[k] * -0.85f + m[4 + k] * -0.4f + m[12 + k];
+        mk_add(VRMK_BALLW, hb, (int)lau_col[lau_type(lau_item[lau_pick])]);
     }
 }
 
@@ -892,7 +1169,7 @@ static void mag_return(const char* why)
         if (mag_out > 0 && ITEM_OF(p[mag_out]) == mag_item) slot = mag_out;
         else for (int i = 2; i < max + 2 && slot < 0; i++) if (ITEM_OF(p[i]) == mag_item) slot = i;
     }
-    if (slot >= 0) { p[slot] = (p[slot] & 0xFFFF0000u) | (unsigned)mag_kept; inv_who = "VR: magazine rounds back"; }
+    if (slot >= 0) { p[slot] = (p[slot] & 0xFFFF0000u) | (unsigned)((p[slot] & 0xFFFF) + mag_kept > 0xFFFF ? 0xFFFF : (p[slot] & 0xFFFF) + mag_kept);   /* (+ the round left in the chamber) */ inv_who = "VR: magazine rounds back"; }
     vr_log("vr: magazine back (%s): %d rounds of item %u %s slot %d (taken from slot %d%s)\n", why, mag_kept, mag_item,
            slot >= 0 ? "to" : "dropped - not found, was", slot >= 0 ? slot : mag_out, mag_out, p == mag_inv ? "" : ", another character's inventory");
     mag_out = -1; mag_kept = 0;
@@ -905,22 +1182,58 @@ static unsigned* gun_slot(void)
     return &st->pip[*st->pip];
 }
 static float dist3(const float* a, const float* b) { float x = a[0] - b[0], y = a[1] - b[1], z = a[2] - b[2]; return sqrtf(x * x + y * y + z * z); }
-static int near_holster(void) { return holster_ok && hand_ok[1] && dist3(hand_pos[1], holster_w) < 2.5f * (g_vr_scale / 100.0f); }
+/* The ammo at the holster can be taken only when the player means to reload: after B (the magazine is out) or with the aim held (the right grip); otherwise the left
+   hand at the belt is free for the knife and the two-handed hold. */
+static float holster_open;   /* 0 closed .. 1 open: the pouch at the holster (gs_gl.c draw_pouch) */
+static int ammo_ready(float rgrip) { if (launcher_gun()) return lau_open; return mag_out >= 0 || (rgrip > 0.5f && !rack_gun()); }   /* (a pistol: only after B, the magazine out - no reload with the aim held) */
+static int near_holster(void) { return holster_ok && hand_ok[1] && dist3(hand_pos[1], holster_w) < (g_vr_seated ? 1.6f : 2.5f) * (g_vr_scale / 100.0f); }   /* seated: the hand has to be at the box (16 cm from its centre: the box is 9 cm wide and the hand point is the palm, behind the fingers), not reach for it from afar (25 cm) */
+
+/* the launcher opens / shuts: its own animation (the weapon object, as the game's reload plays it), the sound, and the pouch with it */
+static void lau_set(int open, const char* why)
+{
+    if (open == lau_open) return;
+    lau_open = open;
+    if (open) lau_open_ms = SDL_GetTicks(); else { lau_shut_ms = SDL_GetTicks(); mag_held = 0; lau_pick = -1; }
+    CallPlayerWeaponSeEx((NJS_POINT3*)&plp->mlwP->owP[9].mtx[12], open ? 263 : 264, 0);
+    if (g_vr_haptics) xr_haptic(0, 0.4f, 40);
+    vr_log("vr: launcher %s (%s)\n", open ? "open" : "closed", why);
+}
 
 static void reload_update(void)
 {
-    static int b_was, g_was;
+    static int b_was, g_was, y_was;
     VrInput in;
     unsigned* g;
     int b, gr;
     if (tec_ms && SDL_GetTicks() >= tec_ms) { tec_ms = 0; if (g_vr_haptics) xr_haptic(0, 0.35f, 30); }   /* vr130: "tec-tec" */
-    if (!g_vr_manual_reload || !xr_input(&in)) return;
+    if (!g_vr_manual_reload || hol_adj || !xr_input(&in)) return;   /* (adjusting the holster: the left grip is the drag, not a reload) */
     b = (in.buttons & VRB_B) != 0; gr = in.lgrip > 0.5f;
     g = gun_slot();
+    if (!g || !launcher_gun()) lau_open = 0;
+    else {
+        int y = (in.buttons & VRB_Y) != 0;
+        if ((y && !y_was) || (b && !b_was)) lau_set(!lau_open, y ? "Y" : "B");   /* Y or B, aimed or not: open / shut (the game reloads the launcher by itself) */
+        y_was = y;
+    }
+    {   /* the launcher also closes with a flick of the right hand upward (its inertia), or the left hand on the gun pushing it up (folding it shut) */
+        static float py0, ly0;
+        static uint64_t t0;
+        static int have;
+        uint64_t now = SDL_GetTicks();
+        if (lau_open && g && launcher_gun() && hand_ok[0] && hand_ok[1]) {
+            float dt = (float)(now - t0) / 1000.0f, s = g_vr_scale / 100.0f;
+            if (have && dt > 0.001f && dt < 0.2f && now - lau_open_ms > 400) {
+                float vr = (hand_pos[0][1] - py0) / dt / s, vl = (hand_pos[1][1] - ly0) / dt / s;   /* units a second (10 a metre) */
+                int flick = vr > 5.0f, fold = !mag_held && gr && dist3(hand_pos[0], hand_pos[1]) < 2.0f * s && vl > 4.0f;
+                if (flick || fold) lau_set(0, flick ? "flicked up" : "folded with the left hand");
+            }
+            py0 = hand_pos[0][1]; ly0 = hand_pos[1][1]; t0 = now; have = 1;
+        } else have = 0;
+    }
     if (mag_out >= 0 && (!g || (int)(g - swork.pip) != mag_out || swork.pip != mag_inv || ITEM_OF(*g) != mag_item))   /* the gun changed: its rounds go back */
         mag_return("the gun in hand changed");
     if (g && b && !b_was && mag_out >= 0 && box_ammo() <= 0) {   /* vr111: B again with no ammo to reload: the magazine back in */
-        *g = (*g & 0xFFFF0000u) | (unsigned)mag_kept;
+        *g = (*g & 0xFFFF0000u) | (unsigned)((*g & 0xFFFF) + mag_kept);
         vr_log("vr: magazine back in with B (%d rounds - no ammo to reload with)\n", mag_kept);
         mag_out = -1; mag_kept = 0; inv_who = "VR: B again, magazine back in";
         b_was = b; g_was = gr;
@@ -928,36 +1241,84 @@ static void reload_update(void)
     }
     if (g && b && !b_was && mag_out < 0 && box_ammo() <= 0 && g_vr_debug_log)
         vr_log("vr: B - magazine kept in: no ammo in the inventory for this gun (e.g. Steve's Lugers)\n");
-    if (g && b && !b_was && mag_out < 0 && box_ammo() > 0) {   /* B: the magazine out (vr111: only when it can be reloaded - the game's ammo list) */
+    if (g && b && !b_was && mag_out < 0 && !launcher_gun() && box_ammo() > 0) {   /* B: the magazine out (vr111: only when it can be reloaded - the game's ammo list) */
         mag_out = (int)(g - swork.pip);
-        mag_kept = (int)(*g & 0xFFFF);
+        mag_kept = shell_gun() ? 0 : (int)(*g & 0xFFFF);
+        if (rack_gun() && mag_kept > 0) mag_kept--;   /* a pistol keeps one round in the chamber when the magazine goes out (fire it and the slide locks open) */
         mag_inv = swork.pip; mag_item = ITEM_OF(*g);
-        *g &= 0xFFFF0000u;
+        if (!shell_gun()) { unsigned ch = (rack_gun() && (*g & 0xFFFF) > 0) ? 1u : 0u; *g = (*g & 0xFFFF0000u) | ch; }   /* (a shell gun keeps its rounds: they go in one by one; a pistol its chambered one) */
         inv_who = "VR: B, magazine out";
         CallPlayerWeaponSeEx((NJS_POINT3*)&plp->mlwP->owP[9].mtx[12], 263, 0);
         if (g_vr_haptics) xr_haptic(0, 0.4f, 40);
         vr_log("vr: magazine out (%d rounds kept)\n", mag_kept);
-        if (plp->wpnr_no >= 0 && plp->wpnr_no < 23 && (WpnTab[plp->wpnr_no].flg & 0x80)) {   /* vr129: the game's own falling magazine, as its
+        if (plp->wpnr_no >= 0 && plp->wpnr_no < 23 && ((WpnTab[plp->wpnr_no].flg & 0x80) || shell_gun())) {   /* vr129: the game's own falling magazine, as its
                                                                                               reload drops it (player.c bhCPM2_act_rld): from the right hand */
-            bhSetMagazine(plp, plp->wpnr_no, 9, 0, plp->ay);
+            if (shell_gun()) { extern void pc_vr_drop_shell(void); pc_vr_drop_shell(); }   /* the shotgun: its own shell falls (mag_glue.c) */
+            else bhSetMagazine(plp, plp->wpnr_no, 9, 0, plp->ay);
             CallPlayerWeaponSeEx((NJS_POINT3*)&plp->mlwP->owP[9].mtx[12], 257, 0);
         }
     }
     if (gr && !g_was && g_vr_debug_log)   /* VR diagnosis: each left grip with a gun in hand */
-        vr_log("vr-diag: left grip: near holster %d (holster shown %d) box ammo %d rounds %d mag_out %d\n", near_holster(), holster_ok, box_ammo(), g ? (int)(*g & 0xFFFF) : -1, mag_out);
-    if (gr && !g_was && near_holster() && g && box_ammo() > 0) {   /* a magazine from the holster */
+        vr_log("vr-diag: left grip: near holster %d (holster shown %d) box ammo %d rounds %d mag_out %d; launcher %d holsters %d near %d open %d ready %d\n", near_holster(), holster_ok, box_ammo(), g ? (int)(*g & 0xFFFF) : -1, mag_out, launcher_gun(), lau_n, lau_near(), lau_open, ammo_ready(in.rgrip));
+    if (gr && !g_was && g && launcher_gun() && lau_n > 0 && ammo_ready(in.rgrip)) {   /* the grenade launcher: a ball from the holster the hand is at */
+        int k = lau_near();
+        if (k >= 0) {
+            lau_pick = k; mag_held = 1; grip_latch = 1;
+            if (g_vr_haptics) xr_haptic(1, 0.5f, 40);
+            CallPlayerWeaponSeEx((NJS_POINT3*)&plp->mlwP->owP[9].mtx[12], 263, 0);
+            vr_log("vr: launcher: round of item %d taken from its holster\n", lau_item[k]);
+        }
+    }
+    else if (gr && !g_was && near_holster() && ammo_ready(in.rgrip) && g && box_ammo() > 0) {   /* a magazine from the holster (after B, or with the aim held) */
         mag_held = 1;
         grip_latch = 1;
         if (g_vr_haptics) xr_haptic(1, 0.5f, 40);
     }
-    if (!gr) mag_held = grip_latch = 0;
-    if (mag_held && g && hand_ok[0] && hand_ok[1] && dist3(hand_pos[0], hand_pos[1]) < 2.0f * (g_vr_scale / 100.0f)) {   /* the left hand at the gun: in
+    if (!gr) { mag_held = grip_latch = 0; lau_pick = -1; }
+    if (mag_held && g && launcher_gun() && lau_pick >= 0 && lau_pick < lau_n && ammo_in_place()) {   /* the ball at the gun: in */
+        int item = lau_item[lau_pick], ai = lau_slot_of(item), nt = lau_type(item);
+        mag_held = 0; lau_pick = -1;
+        if (ai >= 0) {
+            S_WORK* st = &swork;
+            int ot = 0, r = (int)(*g & 0xFFFF), c = (int)(st->pip[ai] & 0xFFFF);
+            for (int t = 0; t < lau_tab[lau_k].n; t++) if ((((*g >> 16) & 0x7000) == lau_bits[t])) ot = t;
+            *g = (unsigned)(((unsigned)lau_tab[lau_k].gun | lau_bits[nt]) << 16) | (unsigned)c;   /* the gun takes the whole stack, as the game's combine (sub1.c Combi_02) does */
+            if (r > 0) st->pip[ai] = ((unsigned)lau_ids[ot] << 16) | (unsigned)r;   /* its old rounds go back as a stack of their kind */
+            else { st->pip[ai] = 0; if (*st->pip > (unsigned)ai) (*st->pip)--; ItemSort(); }
+            plp->wpnr_no = lau_tab[lau_k].wpn[nt]; sys->ply_wno[sys->ply_id] = plp->wpnr_no;
+            sys->gm_flg &= ~0x40000;
+            inv_who = "VR: launcher round in";
+            lau_set(0, "loaded");   /* the gun closes */
+            if (g_vr_haptics) { xr_haptic(1, 0.4f, 30); xr_haptic(0, 0.35f, 30); tec_ms = SDL_GetTicks() + 100; }
+            vr_log("vr: launcher loaded: item %d, %d rounds (old %d rounds of item %d went back), weapon %d\n", item, c, r, lau_ids[ot], plp->wpnr_no);
+            g = gun_slot();
+        }
+    }
+    if (mag_held && g && !launcher_gun() && ammo_in_place()) {   /* the ammo at its place in the gun: in
                                                                     (vr130: also with the magazine in - topped up, as the game's reload; full: the box just put away) */
-        int was_out = mag_out >= 0, before;
-        if (mag_out >= 0) { *g = (*g & 0xFFFF0000u) | (unsigned)mag_kept; mag_out = -1; mag_kept = 0; }
+        int was_out = mag_out >= 0, before, chamber0 = (int)(*g & 0xFFFF);   /* chamber0: the rounds in the gun before the magazine goes in (the chambered one) */
+        if (mag_out >= 0) { if (!shell_gun()) { *g = (*g & 0xFFFF0000u) | (unsigned)((*g & 0xFFFF) + mag_kept); mag_out = -1; mag_kept = 0; } }   /* (a shell gun stays open for the next round until it is full) */
         before = (int)(*g & 0xFFFF);
         reloading = 1;
-        for (int pass = 0; pass < 8; pass++) {   /* the game's reload takes ONE stack of ammo a call: a small first stack (what an earlier
+        if (shell_gun()) {   /* ONE round from the first matching stack of the pouch: a stack of several is counted down here, the last one goes through the game's own reload (it removes the empty stack) */
+            unsigned* gg = gun_slot();
+            if (gg && (int)(*gg & 0xFFFF) < (int)getbulletmax[ITEM_OF(*gg)][sys->gm_mode]) {
+                S_WORK* st = &swork;
+                int wpn = (st->pip[*st->pip] >> 16) & 0xFF, max = (sys->st_flg & 0x8000000) ? 10 : 8, hit = -1;
+                for (int i = 0; i < max && hit < 0; i++) {
+                    unsigned int y = (st->pip[i + 2] >> 16) & 0xFF;
+                    if (y >= 156 || !(itemdata[y].type & 0x2)) continue;
+                    {
+                        int z = combidata[itemdata[y].cmb], it = itemdata[y].cmb + 1;
+                        for (; z > 0; z--, it += 3)
+                            if (wpn == combidata[it] && (combidata[it + 2] & 0xF000)) { hit = i + 2; break; }
+                    }
+                }
+                if (hit >= 0 && (st->pip[hit] & 0xFFFF) > 1) { st->pip[hit] -= 1; *gg += 1; }
+                else if (hit >= 0) bhSearchBullet();
+            }
+        }
+        else for (int pass = 0; pass < 8; pass++) {   /* the game's reload takes ONE stack of ammo a call: a small first stack (what an earlier
                                                     reload left) filled the gun by a round or two and a second reload was needed */
             unsigned* gg = gun_slot();
             int r0 = gg ? (int)(*gg & 0xFFFF) : 0, r1;
@@ -968,15 +1329,36 @@ static void reload_update(void)
             if (!did || r1 <= r0) break;
         }
         reloading = 0;
-        inv_who = "VR: hand reload (the game's reload from the boxes)";
+        inv_who = "VR: hand reload (the game's reload from the boxes)"; { unsigned* sg = gun_slot(); if (shell_gun() && (!sg || (int)(*sg & 0xFFFF) >= (int)getbulletmax[ITEM_OF(*sg)][sys->gm_mode] || box_ammo() <= 0)) { mag_out = -1; mag_kept = 0; } }
         g = gun_slot();   /* (the game sorts the inventory after a reload) */
         if (g && (*g & 0xFFFF)) sys->gm_flg &= ~0x40000;
         mag_held = 0;
         if (was_out || (g && (int)(*g & 0xFFFF) > before)) {
-            CallPlayerWeaponSeEx((NJS_POINT3*)&plp->mlwP->owP[9].mtx[12], 264, 0);
+            {   /* the sound the game's own reload makes when the magazine / the rounds go in (player.c bhCPM2_act_rld), by the weapon's kind: 258 magazine in
+                   (flag 0x80), 265 rounds loaded (0x1000: the shotgun, the bow gun), 285 (0x10), 272 (0x2000); 264 (the aimed reload's click) for the rest */
+                const NJS_POINT3* at = (const NJS_POINT3*)&plp->mlwP->owP[9].mtx[12];
+                unsigned wf = (plp->wpnr_no >= 0 && plp->wpnr_no < 23) ? (unsigned)WpnTab[plp->wpnr_no].flg : 0;
+                int played = 0;
+                if (wf & 0x80) { CallPlayerWeaponSeEx((NJS_POINT3*)at, 258, 0); played = 258; }
+                if (wf & 0x1000) { CallPlayerWeaponSeEx((NJS_POINT3*)at, 265, 0); played = 265; }
+                if (wf & 0x10) { CallPlayerWeaponSeEx((NJS_POINT3*)at, 285, 0); played = 285; }
+                if (wf & 0x2000) { CallPlayerWeaponSeEx((NJS_POINT3*)at, 272, 0); played = 272; }
+                if (!played) { CallPlayerWeaponSeEx((NJS_POINT3*)at, 264, 0); played = 264; }
+                vr_log("vr: reload sound %d (weapon %d, flags %x)\n", played, plp->wpnr_no, wf);
+            }
             if (g_vr_haptics) { xr_haptic(1, 0.4f, 30); xr_haptic(0, 0.35f, 30); tec_ms = SDL_GetTicks() + 100; }   /* vr130: the box's hand a touch, the gun's "tec-tec" */
             vr_log("vr: reloaded (%d rounds)\n", g ? (int)(*g & 0xFFFF) : 0);
+            if (chamber0 == 0 && g && (*g & 0xFFFF) > 0 && rack_gun()) { need_rack = 1; rack_wpn = plp->wpnr_no; rack_arm = 0; vr_log("vr: slide: the gun was empty - pull the slide to fire\n"); }
         } else vr_log("vr: the box at a full gun: put away\n");
+    }
+    if (need_rack && (!plp || plp->wpnr_no != rack_wpn || !g || (*g & 0xFFFF) == 0)) need_rack = rack_arm = 0;
+    {   /* the pouch opens while the ammo can be taken (after B, or the aim held), closes after; the left controller gives a little buzz when the hand comes to it */
+        static int was_near;
+        int lau = g && launcher_gun();
+        int can = g && (lau ? lau_n > 0 : box_ammo() > 0) && ammo_ready(in.rgrip), nh = can && (lau ? lau_near() >= 0 : near_holster());
+        holster_open += ((can ? 1.0f : 0.0f) - holster_open) * 0.35f;
+        if (nh && !was_near && g_vr_haptics) xr_haptic(1, 0.3f, 30);
+        was_near = nh;
     }
     b_was = b; g_was = gr;
 }
@@ -1088,6 +1470,7 @@ static void heading_update(void)
         if (fabsf(in.rx) > 0.7f) snap_held = 1;   /* (no turn when she steps off with the stick still out) */
         ctl = 0;
     }
+    if (ctl && (hol_adj || arr_adj)) { if (fabsf(in.rx) > 0.7f) snap_held = 1; ctl = 0; }   /* adjusting a holster: the view stays where it is (the right stick turns the holster) until A */
     if (ctl) {
         if (g_vr_turn > 0) {
             if (fabsf(in.rx) > 0.7f && !snap_held) {
@@ -1251,6 +1634,7 @@ void vr_camera(void)
     }
     last_px = plp->px; last_pz = plp->pz; last_ok = 1;
     make_Wg(Wg);
+    { extern float rw_Wg_copy[16]; memcpy(rw_Wg_copy, Wg, sizeof(rw_Wg_copy)); }   /* the weapon wheel's pointer (rw_point) */
     xr_recenter_matrix(rec);
     vr_mat_mul(frame_W, Wg, rec);   /* local -> world */
     memcpy(frame_Wg, Wg, sizeof(Wg));
@@ -1290,6 +1674,9 @@ void vr_camera(void)
     cam.pers = (int)(g_vr_fov * (65536.0f / 360.0f));
     tps_vr_view(TO_ANGLE(ax[0]), TO_ANGLE(ax[1]));   /* walking and head aim relative to where the head looks */
     holster_update(Wg, &h);
+    arrow_adjust();
+    rc_confirm();
+    radial_dot();
     reload_update();
     prompts_update();
     vr_frame = 1;
@@ -1353,7 +1740,19 @@ static void sprint_update(void)
     }
     was = click;
 }
-void vr_pad_frame(void) { sprint_update(); if (plp && vr_active) heading_update(); }
+/* The magazine dropped with B keeps its rounds in mag_kept, not in the inventory: the gun shows 0 until the hand reload or a change of gun puts them back. If the game goes
+   out of play meanwhile - the item box, the status screen, a typewriter save (the gun saved with 0 rounds), a door, a cut-scene, the game over - nothing gave them back
+   and they were lost (players: 'the ammo disappears'). Out of play for 400 ms (not a hitch): the rounds go back into the gun, as for a change of gun. */
+static void mag_watch(void)
+{
+    static uint64_t off0;
+    uint64_t now;
+    if (mag_out < 0 || vr_playing()) { off0 = 0; return; }
+    now = SDL_GetTicks();
+    if (!off0) off0 = now;
+    else if (now - off0 >= 400) { mag_return("not in play for 400 ms (item box, status, save, door, scene, game over)"); off0 = 0; }
+}
+void vr_pad_frame(void) { sprint_update(); mag_watch(); if (plp && vr_active) heading_update(); }
 int vr_playing(void) { return vr_on() && SDL_GetTicks() - cam_ms < 100 && !(sys && (sys->st_flg & 0x200)); }   /* (a message or a question on screen: its own controls) */
 
 static int knife_equipped(void)
@@ -1437,12 +1836,123 @@ static int handgun_equipped(void)
     for (; z > 0; z--, it += 3) if (wpn == combidata[it] && (combidata[it + 2] & 0xF000)) return 1;
     return 0;
 }
+/* Learning a gun's recoil (settings: Learn recoil): the owner fires a few times and kicks the controller as the gun would. After each shot the right controller's raw pose is followed for half a second:
+   how it turned (about its own x, y and z) and how far it moved (right, up, back, in its own frame at the shot) from where it was at the shot. A shot is resampled to RC_N points 40 ms apart, A keeps
+   the average of the shots for the gun in hand (g_vr_rcc, saved in recvx.ini), and at each shot of that gun the same motion is played on the hand (hand placement, below): the gun kicks as the owner
+   showed it. While learning there is no artificial kick, so the owner's own motion is what is measured. */
+#define RC_N 12
+#define RC_DT 0.04f
+int g_vr_rcc[40][RC_N][6];   /* by the gun's item: at 40, 80 ... ms after the shot, the turn about x, y, z (tenths of a degree), then right, up, back (mm) */
+int g_vr_rcn[40];            /* 1: that gun has a learned curve */
+void config_save(void);
+static int rc_on, rc_active, rc_cnt, rc_n;
+static uint64_t rc_seen, rc_t0, rcp_ms;   /* rcp_ms: when the learned kick being played began */
+static int rcp_item;
+static float rc_R0[9], rc_pos0[3], rc_s[64][7], rc_acc[RC_N][6];   /* a shot's samples: the time, then the six channels (degrees, metres) */
+void vr_recoil_learn(void) { rc_on = 1; rc_active = 0; rc_n = 0; memset(rc_acc, 0, sizeof rc_acc); rc_seen = recoil_ms[0]; }
+static void rc_finish(void)
+{
+    float row[RC_N][6], peak = 0.0f;
+    rc_active = 0;
+    if (rc_cnt < 3) return;
+    for (int i = 0; i < rc_cnt; i++) {
+        float mv = sqrtf(rc_s[i][4] * rc_s[i][4] + rc_s[i][5] * rc_s[i][5] + rc_s[i][6] * rc_s[i][6]) * 100.0f;   /* cm */
+        float rt = fmaxf(fabsf(rc_s[i][1]), fmaxf(fabsf(rc_s[i][2]), fabsf(rc_s[i][3])));   /* degrees */
+        if (mv > peak) peak = mv;
+        if (rt > peak) peak = rt;
+    }
+    if (peak < 1.0f) { vr_log("recoil-learn: that shot barely moved the controller - not counted\n"); return; }
+    for (int k = 0; k < RC_N; k++) {
+        float t = (k + 1) * RC_DT;
+        int i = 0;
+        while (i + 1 < rc_cnt && rc_s[i + 1][0] <= t) i++;
+        for (int c = 0; c < 6; c++) {
+            if (i + 1 >= rc_cnt || rc_s[i + 1][0] <= rc_s[i][0]) row[k][c] = rc_s[i][1 + c];
+            else { float f = (t - rc_s[i][0]) / (rc_s[i + 1][0] - rc_s[i][0]); f = f < 0.0f ? 0.0f : f > 1.0f ? 1.0f : f; row[k][c] = rc_s[i][1 + c] + (rc_s[i + 1][1 + c] - rc_s[i][1 + c]) * f; }
+            rc_acc[k][c] += row[k][c];
+        }
+    }
+    rc_n++;
+    if (g_vr_haptics) xr_haptic(0, 0.3f, 30);
+    vr_log("recoil-learn: shot %d: the controller moved %.1f cm / turned %.1f degrees at most\n", rc_n, peak, peak);
+}
+static void rc_sample(const VrPose* hp)   /* the right controller, every frame while learning */
+{
+    float r[9], dp[3];
+    uint64_t now = SDL_GetTicks();
+    if (!rc_on) return;
+    quat_to_rows(r, hp);
+    if (recoil_ms[0] && recoil_ms[0] != rc_seen) {   /* a shot: the pose now is the one the kick is measured from */
+        if (rc_active) rc_finish();
+        rc_seen = recoil_ms[0]; rc_t0 = now; rc_cnt = 0; rc_active = 1;
+        memcpy(rc_R0, r, sizeof r); rc_pos0[0] = hp->px; rc_pos0[1] = hp->py; rc_pos0[2] = hp->pz;
+    }
+    if (rc_active) {
+        float t = (float)(now - rc_t0) / 1000.0f;
+        if (t > RC_N * RC_DT + 0.02f || rc_cnt >= 64) rc_finish();
+        else {
+            float Rd[9], a, b, c;
+            for (int i = 0; i < 3; i++)
+                for (int j = 0; j < 3; j++) Rd[i * 3 + j] = rc_R0[0 * 3 + i] * r[0 * 3 + j] + rc_R0[1 * 3 + i] * r[1 * 3 + j] + rc_R0[2 * 3 + i] * r[2 * 3 + j];   /* R0 transposed times R: the turn in the shot's frame */
+            b = asinf(Rd[2] > 1.0f ? 1.0f : Rd[2] < -1.0f ? -1.0f : Rd[2]);   /* Rd = Rx(a) Ry(b) Rz(c) */
+            a = atan2f(-Rd[5], Rd[8]); c = atan2f(-Rd[1], Rd[0]);
+            dp[0] = hp->px - rc_pos0[0]; dp[1] = hp->py - rc_pos0[1]; dp[2] = hp->pz - rc_pos0[2];
+            rc_s[rc_cnt][0] = t;
+            rc_s[rc_cnt][1] = a * (180.0f / 3.14159265f); rc_s[rc_cnt][2] = b * (180.0f / 3.14159265f); rc_s[rc_cnt][3] = c * (180.0f / 3.14159265f);
+            for (int i = 0; i < 3; i++) rc_s[rc_cnt][4 + i] = rc_R0[0 * 3 + i] * dp[0] + rc_R0[1 * 3 + i] * dp[1] + rc_R0[2 * 3 + i] * dp[2];   /* right, up, back in the shot's frame */
+            rc_cnt++;
+        }
+    }
+}
+static void rc_confirm(void)   /* A: the average of the shots is kept for the gun in hand */
+{
+    VrInput in;
+    static int a_was = 1;
+    int it = gd_item(), a;
+    if (!rc_on || !xr_input(&in)) return;
+    a = (in.buttons & VRB_A) != 0;
+    if (a && !a_was) {
+        if (rc_active) rc_finish();
+        if (it && rc_n > 0) {
+            for (int k = 0; k < RC_N; k++)
+                for (int c = 0; c < 6; c++) g_vr_rcc[it][k][c] = (int)lroundf(rc_acc[k][c] / rc_n * (c < 3 ? 10.0f : 1000.0f));
+            g_vr_rcn[it] = 1;
+            config_save();
+            vr_log("recoil-learn: gun item %d kept from %d shots\n", it, rc_n);
+        } else vr_log("recoil-learn: left without a shot to keep (item %d, %d shots)\n", it, rc_n);
+        rc_on = 0;
+    }
+    a_was = a;
+}
+/* the learned curve of a gun at t seconds after the shot: v = turn x, y, z (degrees), right, up, back (metres) */
+static void rc_play(int item, float t, float v[6])
+{
+    const int (*cv)[6] = g_vr_rcc[item];
+    float f = t / RC_DT - 1.0f, fade = 1.0f;
+    int k;
+    for (int c = 0; c < 6; c++) v[c] = 0.0f;
+    if (t <= 0.0f) return;
+    if (f < 0.0f) { for (int c = 0; c < 6; c++) v[c] = (cv[0][c] / (c < 3 ? 10.0f : 1000.0f)) * (t / RC_DT); return; }   /* the first 40 ms: from rest to the first point */
+    k = (int)f;
+    if (k >= RC_N - 1) { k = RC_N - 1; f = (float)k; fade = 1.0f - (t - RC_N * RC_DT) / 0.12f; fade = fade < 0.0f ? 0.0f : fade > 1.0f ? 1.0f : fade; }   /* past the end: it eases back to rest */
+    for (int c = 0; c < 6; c++) {
+        float a = cv[k][c], b = k + 1 < RC_N ? cv[k + 1][c] : a, fr = f - (float)k;
+        v[c] = ((a + (b - a) * fr) / (c < 3 ? 10.0f : 1000.0f)) * fade;
+    }
+}
 static void shot_kick(int side, int wno)
 {
     float k = (wno >= 0 && wno < 22) ? EneDamNear[1][wno] / 60.0f : 0.5f;   /* by the weapon's power (zombie damage) */
     int pistol = handgun_equipped();
     k = k < 0.35f ? 0.35f : k > 1.5f ? 1.5f : k;
     recoil_ms[side] = SDL_GetTicks() | 1;
+    if (side == 0 && rc_on) { recoil_deg[side] = 0; recoil_back[side] = 0; recoil_tau[side] = 0.07f; shake_ms = 0; return; }   /* learning: no artificial kick, the owner's own is measured */
+    if (side == 0 && gd_item() && g_vr_rcn[gd_item()]) {   /* a learned gun: the owner's own kick is played on the hand (hand placement) */
+        rcp_item = gd_item(); rcp_ms = SDL_GetTicks() | 1;
+        recoil_deg[side] = 0; recoil_back[side] = 0; recoil_tau[side] = 0.07f; shake_ms = 0;
+        if (g_vr_haptics) xr_haptic(side, 0.8f, 35);
+        return;
+    }
     {   /* vr132 preventive log: the first shot of each weapon - which kick it got */
         static unsigned char seen[32];
         if (wno >= 0 && wno < 32 && !seen[wno]) {
@@ -1608,6 +2118,238 @@ int vr_hand_ray(NJS_POINT3* o, NJS_POINT3* d)
     return 1;
 }
 
+/* Weapon wheel (ini vr_radial), after Half-Life: Alyx. Hold the right stick's click in play (the map is on X only): four
+   plates float in front of you, up / right / down / left; push the right stick that way (turn and scope zoom are
+   held off meanwhile) and let go of Y - the weapon there is in your hand (knife_glue.c does the equip, as the
+   inventory would). The plates show the rounds in each weapon, the one pushed to is gold.
+   Where a weapon sits is kept per character (muscle memory): it stays while it is carried, its place is freed when
+   it goes (the item box) and it is offered back when it returns; a new weapon takes a free place by kind -
+   lighter up, handguns right, two-slot guns down, the rest left - else any free one. The places are worked out
+   only when the wheel opens, not every frame. */
+extern volatile int g_vr_stick_lock;
+int radial_item_weapon(unsigned int itemid);
+int radial_can_equip(void);
+int radial_hold_aim(void);
+void radial_request(int slot);                  /* knife_glue.c */
+enum { RW_UP, RW_RIGHT, RW_DOWN, RW_LEFT };
+static unsigned char rw_item[4][4];             /* [character][place]: the weapon item there, 0 free */
+static unsigned char rw_home[4][256];           /* [character][item]: its last place + 1, 0 none (kept while it is in the box) */
+static int rw_state, rw_dir = -1;               /* 0 idle, 1 Y down (tap or hold?), 2 open, 3 Y goes to the game as before */
+static uint64_t rw_t0, rw_tap_until, rw_lock_until, rw_seen_ms;   /* rw_seen_ms: when rw_y last ran */
+#define RW_TIP 0.20f     /* m: the pointer sits at the tip of an invisible gun in the hand - this far along where the controller points - so turning the hand moves it a little, as a sight does */
+static int rw_sight_point(float p[3]);   /* (below, with sight_add) */
+float rw_Wg_copy[16];
+#define rw_Wg rw_Wg_copy
+/* rw_Wg: the play space in the world at the last camera frame (make_Wg's, copied there) */
+static int m4_inv(float* o, const float* m);
+/* the right hand's pointer point in the tracking space: the hand and RW_TIP along its aim (the hand alone if its aim is not tracked) */
+static void rw_tip(const VrInput* in, float t[3])
+{
+    float a[9];
+    t[0] = in->grip.px; t[1] = in->grip.py; t[2] = in->grip.pz;
+    if (!in->aim_valid) return;
+    quat_to_rows(a, &in->aim);
+    t[0] += -a[2] * RW_TIP; t[1] += -a[5] * RW_TIP; t[2] += -a[8] * RW_TIP;
+}
+/* The pointer's point, from the head (rel, tracking space): where the right gun's sight is - the point the shot would hit along its barrel, as
+   sight_add puts the dot - so the pointer and the sight are one; if the gun's barrel is not known (no weapon placed), the tip of an invisible gun. */
+static void rw_point(const VrInput* in, const VrPose* h, float rel[3])
+{
+    float p[3], W[16], Wi[16];
+    if (rw_sight_point(p)) {
+        memcpy(W, rw_Wg, sizeof(W));
+        if (m4_inv(Wi, W)) {   /* world -> the tracking space */
+            for (int k = 0; k < 3; k++) rel[k] = Wi[k] * p[0] + Wi[4 + k] * p[1] + Wi[8 + k] * p[2] + Wi[12 + k];
+            rel[0] -= h->px; rel[1] -= h->py; rel[2] -= h->pz;
+            return;
+        }
+    }
+    rw_tip(in, rel); rel[0] -= h->px; rel[1] -= h->py; rel[2] -= h->pz;
+}
+#define RW_NEAR 14.0f    /* px: the hand counts as on an icon this far beyond its edge */
+#define RW_STICK 40.0f   /* px: ... and keeps the icon it is on this far beyond */
+static float rw_ptr[2];  /* the hand on the panel (640x480) */
+/* where the icons lie around the panel point of the hand at the click (trade_glue.c wheel_draw too) */
+const float vr_wheel_dx[4] = { 0.0f, 120.0f, 0.0f, -120.0f }, vr_wheel_dy[4] = { -85.0f, 0.0f, 85.0f, 0.0f };
+static VrPose rw_hp;   /* the head as it was at the click: the pointer is measured from this, never from the live head - the head's move must not move it */
+static float rw_hr[9];
+static float rw_c[3], rw_o[3], rw_yaw, rw_scr[2] = { 390.0f, 275.0f };   /* rw_scr: where her hand is on the game's 2D panel (640x480) */                   /* the wheel's centre (tracking space) and the heading it opened at */
+
+static int rw_pref(int id)
+{
+    if (id == 55) return RW_UP;                                   /* the lighter */
+    if (id == 5 || id == 131) return RW_RIGHT;                    /* the handgun, the enhanced handgun */
+    if ((itemdata[id].type & 0x100) || id == 1 || id == 2 || id == 3 || id == 4 || id == 6 || id == 11) return RW_DOWN;   /* the long guns (the shotgun, item 4, is not a two-slot item) */
+    return RW_LEFT;
+}
+static int rw_slot_of(const unsigned* iv, int id)
+{
+    int n = (sys->gm_flg & 0x8000000) ? 11 : 9;
+    for (int s = 1; s <= n; s++) if ((int)((iv[s] >> 16) & 0xFF) == id) return s;
+    return 0;
+}
+/* the places for the weapons carried now; returns how many are on the wheel */
+static int rw_sync(void)
+{
+    const unsigned* iv = &sys->itm[sys->ply_id * 16];
+    int c = sys->ply_id & 3, n = (sys->gm_flg & 0x8000000) ? 11 : 9, count = 0;
+    unsigned char present[256], placed[256];
+    memset(present, 0, sizeof(present)); memset(placed, 0, sizeof(placed));
+    for (int s = 1; s <= n; s++) { int id = (int)((iv[s] >> 16) & 0xFF); int w = id ? radial_item_weapon((unsigned)id) : 0; if (w > 0 && w < 23 && !(WpnTab[w].flg & 0x40000000)) present[id] = 1; }   /* (the knife - WpnTab flag 0x40000000 - is not on the wheel: it has its own button) */
+    for (int p = 0; p < 4; p++) {
+        if (rw_item[c][p] && !present[rw_item[c][p]]) rw_item[c][p] = 0;       /* gone (the box): only its place is freed */
+        else if (rw_item[c][p]) placed[rw_item[c][p]] = 1;
+    }
+    for (int pass = 0; pass < 2; pass++)
+        for (int s = 1; s <= n; s++) {
+            int id = (int)((iv[s] >> 16) & 0xFF), p = -1;
+            if (!id || !present[id] || placed[id]) continue;
+            if (pass == 0) { int h = rw_home[c][id] - 1; if (h >= 0 && !rw_item[c][h]) p = h; }
+            else {
+                static const signed char order[4][4] = { { RW_UP, RW_LEFT, RW_RIGHT, RW_DOWN }, { RW_RIGHT, RW_LEFT, RW_DOWN, RW_UP },
+                                                         { RW_DOWN, RW_LEFT, RW_RIGHT, RW_UP }, { RW_LEFT, RW_RIGHT, RW_DOWN, RW_UP } };
+                const signed char* o = order[rw_pref(id)];
+                for (int k = 0; k < 4 && p < 0; k++) if (!rw_item[c][o[k]]) p = o[k];
+            }
+            if (p >= 0) { rw_item[c][p] = (unsigned char)id; rw_home[c][id] = (unsigned char)(p + 1); placed[id] = 1; }
+        }
+    for (int p = 0; p < 4; p++) count += rw_item[c][p] != 0;
+    return count;
+}
+static int rw_open(const VrInput* in)
+{
+    VrPose h;
+    float hr[9], fx, fz, l;
+    if (!in->grip_valid || !xr_head_pose(&h) || !rw_sync()) return 0;
+    quat_to_rows(hr, &h);
+    fx = -hr[2]; fz = -hr[8]; l = sqrtf(fx * fx + fz * fz);
+    if (l < 1e-2f) { fx = 0.0f; fz = 1.0f; } else { fx /= l; fz /= l; }
+    rw_yaw = atan2f(fx, fz);
+    rw_o[0] = in->grip.px; rw_o[1] = in->grip.py; rw_o[2] = in->grip.pz;
+    rw_c[0] = rw_o[0] + fx * 0.12f; rw_c[1] = rw_o[1]; rw_c[2] = rw_o[2] + fz * 0.12f;   /* the plates around the hand, a little ahead of it */
+    {   /* the right hand on the 2D panel (head-locked, gs_gl.c: g_vr_hud_dist cm ahead, g_vr_hud_angle wide): the icons open around it */
+        extern int g_vr_hud_dist, g_vr_hud_angle, g_vr_hud_y;
+        float rel[3];
+        rw_hp = h; memcpy(rw_hr, hr, sizeof(rw_hr));
+        rw_point(in, &h, rel);
+        float xh = hr[0] * rel[0] + hr[3] * rel[1] + hr[6] * rel[2], yh = hr[1] * rel[0] + hr[4] * rel[1] + hr[7] * rel[2] , zh = -(hr[2] * rel[0] + hr[5] * rel[1] + hr[8] * rel[2]);
+        if (g_vr_hud_angle > 0 && zh > 0.12f) {
+            float k = 320.0f / tanf(g_vr_hud_angle * (3.14159265f / 360.0f));   /* pixels per unit of tangent */
+            rw_scr[0] = 320.0f + k * xh / zh;
+            rw_scr[1] = 240.0f - k * yh / zh + (float)g_vr_hud_y / (float)g_vr_hud_dist * k;
+        } else { rw_scr[0] = 390.0f; rw_scr[1] = 275.0f; }
+        rw_scr[0] = fminf(fmaxf(rw_scr[0], 150.0f), 490.0f); rw_scr[1] = fminf(fmaxf(rw_scr[1], 110.0f), 350.0f);
+    }
+    rw_dir = -1;
+    g_vr_stick_lock = 1;
+    if (g_vr_haptics) xr_haptic(0, 0.3f, 25);
+    vr_log("vr: weapon wheel open: up %d right %d down %d left %d\n", rw_item[sys->ply_id & 3][0], rw_item[sys->ply_id & 3][1], rw_item[sys->ply_id & 3][2], rw_item[sys->ply_id & 3][3]);
+    return 1;
+}
+/* the wheel is open and the game is still asking for the keys (rw_y runs each game frame with the input on); if it has not for 400 ms (a pause, the input
+   off) the wheel closes by itself - the picture, the stick's lock and the shot's block must not stay */
+static int rw_alive(void)
+{
+    if (rw_state != 2) return 0;
+    if (SDL_GetTicks() - rw_seen_ms > 400) {
+        rw_state = 0; rw_dir = -1; g_vr_stick_lock = 0;
+        vr_log("vr: weapon wheel closed: the keys were not read for 400 ms\n");
+        return 0;
+    }
+    return 1;
+}
+/* the right stick's click this frame: whether the game gets it (the map) */
+static int rw_y(const VrInput* in)
+{
+    uint64_t now = SDL_GetTicks();
+    int y = (in->buttons & VRB_RSTICK) != 0;
+    rw_seen_ms = now;
+    if (!g_vr_radial || !vr_playing()) {
+        rw_state = 0; rw_dir = -1; g_vr_stick_lock = 0;
+        return 0;
+    }
+    if (rw_state != 2 && g_vr_stick_lock && now >= rw_lock_until) g_vr_stick_lock = 0;
+    switch (rw_state) {
+    case 0:
+        if (y) rw_state = (!mag_held && radial_can_equip() && rw_open(in)) ? 2 : 3;   /* the click opens the wheel at once; X is the map now */
+        break;
+    case 2: {
+        static uint64_t up0;   /* the Touch click drops out for ~100 ms when the thumb moves: let go counts after 150 ms */
+        int d = rw_dir;
+        VrPose hp;
+        if (in->grip_valid && xr_head_pose(&hp)) {
+            /* The pointer is the gun's sight, as if the wheel were the gun's aim: a point of the world held by the hand (rw_point), drawn as the
+               sight's dot (radial_dot), seen from the live head - it follows the hand and stays on it, and if the head turns it is the view that
+               turns under it. The choice is the icon (head-locked on the panel) that the dot is seen over, where the line from the head through
+               the dot crosses the panel (the projection rw_open uses for the icons' start). The icon under it keeps it a little beyond its
+               edge (RW_STICK px), so the hand does not flicker on a border. */
+            extern int g_vr_hud_dist, g_vr_hud_angle, g_vr_hud_y;
+            float hr2[9], rel[3], best_d = 1e9f;
+            int best = -1;
+            quat_to_rows(hr2, &hp);
+            rw_point(in, &hp, rel);
+            {
+                float xh = hr2[0] * rel[0] + hr2[3] * rel[1] + hr2[6] * rel[2], yh = hr2[1] * rel[0] + hr2[4] * rel[1] + hr2[7] * rel[2] , zh = -(hr2[2] * rel[0] + hr2[5] * rel[1] + hr2[8] * rel[2]);
+                float k = g_vr_hud_angle > 0 ? 320.0f / tanf(g_vr_hud_angle * (3.14159265f / 360.0f)) : 833.0f;
+                if (zh < 0.12f) zh = 0.12f;   /* (the hand at the face: as far as the panel's edge) */
+                rw_ptr[0] = 320.0f + k * xh / zh;
+                rw_ptr[1] = 240.0f - k * yh / zh + (g_vr_hud_angle > 0 && g_vr_hud_dist > 0 ? (float)g_vr_hud_y / (float)g_vr_hud_dist * k : 0.0f);
+            }
+            for (int p = 0; p < 4; p++) {
+                int id = rw_item[sys->ply_id & 3][p];
+                float cx = rw_scr[0] + vr_wheel_dx[p], cy = rw_scr[1] + vr_wheel_dy[p], hw = ((itemdata[id].type & 0x100) ? 68.0f : 34.0f) + 6.0f;
+                float m = p == rw_dir ? RW_STICK : RW_NEAR, ex = fabsf(rw_ptr[0] - cx) - hw, ey = fabsf(rw_ptr[1] - (cy + 12.0f)) - 42.0f, dd;
+                if (!id) continue;
+                dd = (rw_ptr[0] - cx) * (rw_ptr[0] - cx) + (rw_ptr[1] - cy) * (rw_ptr[1] - cy);
+                if (ex <= m && ey <= m && dd < best_d) { best_d = dd; best = p; }
+            }
+            d = best;
+        }
+        if (d != rw_dir) { rw_dir = d; if (d >= 0 && g_vr_haptics) xr_haptic(0, 0.25f, 15); }
+        if (y) up0 = 0; else if (!up0) up0 = now;
+        if (!y && now - up0 >= 150) {
+            int c = sys->ply_id & 3, id = rw_dir >= 0 ? rw_item[c][rw_dir] : 0;
+            if (id) {
+                int s = rw_slot_of(&sys->itm[sys->ply_id * 16], id);
+                if (s) { radial_request(s); if (g_vr_haptics) xr_haptic(0, 0.6f, 40); }
+                vr_log("vr: weapon wheel: %s item %d (slot %d)\n", s ? "chose" : "gone:", id, s);
+            } else vr_log("vr: weapon wheel closed, nothing chosen\n");
+            rw_state = 0; rw_dir = -1; rw_lock_until = now + 300;       /* (the stick is let go before the turn sees it again) */
+        }
+        break;
+    }
+    default:
+        if (!y) rw_state = 0;
+        break;
+    }
+    return 0;   /* the right stick's click is never the map (X is) */
+}
+/* the wheel for trade_glue.c wheel_draw (the game's 2D, with the inventory's own icons): when open, the inventory word of the weapon at
+   each place (0 none), the ammo in the boxes for it, and the place the hand is over (-1 none) */
+int vr_wheel_view(unsigned word[4], int box[4], int* sel, float scr[2], float ptr[2])
+{
+    const unsigned* iv = &sys->itm[sys->ply_id * 16];
+    int c = sys->ply_id & 3, max = (sys->st_flg & 0x8000000) ? 10 : 8;
+    if (!rw_alive()) return 0;
+    for (int p = 0; p < 4; p++) {
+        int id = rw_item[c][p], s = id ? rw_slot_of(iv, id) : 0, n = 0;
+        word[p] = s ? iv[s] : 0; box[p] = 0;
+        if (!s) continue;
+        for (int i = 0; i < max; i++) {   /* as box_ammo, for this weapon */
+            unsigned y = (iv[i + 2] >> 16) & 0xFF;
+            if (y >= 156 || !(itemdata[y].type & 0x2)) continue;
+            {
+                int z = combidata[itemdata[y].cmb], it = itemdata[y].cmb + 1;
+                for (; z > 0; z--, it += 3)
+                    if (id == combidata[it] && (combidata[it + 2] & 0xF000)) { n += iv[i + 2] & 0xFFFF; break; }
+            }
+        }
+        box[p] = n;
+    }
+    *sel = rw_dir; scr[0] = rw_scr[0]; scr[1] = rw_scr[1]; ptr[0] = rw_ptr[0]; ptr[1] = rw_ptr[1];
+    return 1;
+}
+
 /* Touch controllers as the third-person keys (tps_input.c; key-type independent):
    left stick walk (relative to the head in play, the d-pad in menus), left trigger run,
    A action/confirm, B cancel, X map, Y inventory, right grip ready weapon, right trigger fire */
@@ -1645,12 +2387,22 @@ unsigned vr_tps_keys(void)
     }
     if (in.buttons & VRB_A) k |= 32;     /* TPS_K_ACTION */
     if (in.buttons & VRB_Y) k |= 64;   /* TPS_K_STATUS (vr155: LT + Y is no longer Start) */
-    if ((in.buttons & VRB_RSTICK) || (in.buttons & VRB_X)) k |= 128;   /* TPS_K_MAP: the right stick's click (vr197), and X again (vr228: the knife is back on the left grip) */
+    rw_y(&in);   /* (the weapon wheel: the right stick's click) */
+    if (in.buttons & VRB_X) k |= 128;   /* TPS_K_MAP: the right stick's click (vr197), and X again (vr228: the knife is back on the left grip) */
     if (in.rgrip > 0.5f && !vr_on_stairs()) k |= 256;       /* TPS_K_AIM (vr186: not on stairs - raising a weapon there takes her out of the stair walk, off its path, through the wall) */
     else if (in.rgrip > 0.5f) { static uint64_t lm; uint64_t t = SDL_GetTicksNS() / 1000000; if (t > lm + 1000) { lm = t; vr_log("vr: aim held on the stairs - not passed to the game (mode %d/%d)\n", plp->mode1, plp->mode2); } }
     if (in.rtrig > 0.5f && !(vr_playing() && knife_equipped() && g_vr_slash_speed > 0)) k |= 512;   /* TPS_K_FIRE (the knife cuts by swinging) */
     vw_fire_vr = (k & 512) != 0; vw_fire_finger = in.ltrig > 0.5f || in.rtrig > 0.5f;   /* vr108 watch */
     if ((in.buttons & VRB_B) && !(g_vr_manual_reload && vr_playing() && gun_slot())) k |= 1024;   /* TPS_K_CANCEL (with a gun in hand B drops the magazine) */
+    {   /* the slide not pulled yet: the trigger only clicks */
+        static int click_was;
+        if ((need_rack || lau_open) && vr_playing() && (k & 512)) {
+            if (!click_was) CallPlayerWeaponSeEx((NJS_POINT3*)&plp->mlwP->owP[9].mtx[12], 264, 0);
+            click_was = 1; k &= ~512u;
+        } else if (!(in.rtrig > 0.5f)) click_was = 0;
+    }
+    if (rw_state == 2) k &= ~512u;   /* the weapon wheel is open: no shot while choosing */
+    if (radial_hold_aim()) k &= ~(256u | 512u);   /* weapon just changed in the aim stance: let the game leave it (knife_glue.c radial_apply) */
     return k;
 }
 
@@ -2035,7 +2787,7 @@ static void two_hand_update(const VrInput* in, float ra[9], const float* R)
 {
     float t[3], b[3], v[3], k[3], d, c, sg, q[9], m[9];
     int want = in->lgrip > 0.5f && in->grip_valid && in->gripl_valid && !knife_equipped() && !dual_equipped() && plp && plp->wpnr_no != 1 && plp->wpnr_no != 10 && plp->wpnr_no != 19 &&   /* vr199: not the lighter (weapon 1); vr200: nor the bow gun (weapons 10, 19) */
-               !mag_held && !grip_latch && !(g_vr_manual_reload && near_holster());
+               !mag_held && !grip_latch && !(g_vr_manual_reload && near_holster() && ammo_ready(in->rgrip));
     t[0] = in->gripl.px - in->grip.px; t[1] = in->gripl.py - in->grip.py; t[2] = in->gripl.pz - in->grip.pz;
     d = sqrtf(t[0] * t[0] + t[1] * t[1] + t[2] * t[2]);
     {   /* vr198: the left grip held near the gun for 300 ms first */
@@ -2120,6 +2872,48 @@ static float ray_capsule(const float o[3], const float d[3], const NJS_CAPSULE* 
     return best;
 }
 
+/* the point the right gun's sight shows (world): the first wall or enemy along its barrel, as sight_add - for the weapon wheel's pointer */
+static int rw_sight_point(float p[3])
+{
+    float d[3], o[3], dist = 1000.0f, len;
+    NJS_LINE line;
+    NJS_POINT3 apos;
+    ATR_WORK* ahtp;
+    if (!barrel_dir(0, d)) return 0;
+    o[0] = muzzle_w[0][0]; o[1] = muzzle_w[0][1]; o[2] = muzzle_w[0][2];
+    line.px = o[0]; line.py = o[1]; line.pz = o[2];
+    line.vx = d[0] * dist; line.vy = d[1] * dist; line.vz = d[2] * dist;
+    apos = sys->apos; ahtp = sys->ahtp;
+    if (bhCheckL2Wall(&line, 0x400, &len)) dist = len;
+    sys->apos = apos; sys->ahtp = ahtp;
+    for (int i = 0; i < sys->ewk_n; i++) {
+        BH_PWORK* e = &ene[i];
+        float t;
+        if (!(e->flg & 0x1) || !(e->flg & 0x20) || (e->flg & 0x2) || (e->stflg & 0x1000000)) continue;
+        t = ray_capsule(o, d, &e->watr);
+        if (t > 0 && t < dist) dist = t;
+    }
+    for (int k = 0; k < 3; k++) p[k] = o[k] + d[k] * dist;
+    return 1;
+}
+
+/* the weapon wheel's pointer drawn as the gun's own sight dot at that point (the wheel open: it stands in for the sight - as its own gold crosshair ring, not the sight's dot) */
+extern volatile int g_vr_panel_live;   /* gs_gl.c */
+static void radial_dot(void)
+{
+    float p[3];
+    VrInput in;
+    g_vr_panel_live = rw_alive();   /* the wheel's panel follows the head of each image (gs_gl.c), the cursor the body (marker kind 4) */
+    if (!g_vr_panel_live) return;
+    if (rw_sight_point(p)) mk_add(VRMK_CURSOR, p, 0);
+    else if (xr_input(&in) && in.grip_valid) {   /* no barrel to take the sight from: the tip of an invisible gun, as rw_point */
+        float t[3];
+        rw_tip(&in, t);
+        for (int k = 0; k < 3; k++) p[k] = rw_Wg[k] * t[0] + rw_Wg[4 + k] * t[1] + rw_Wg[8 + k] * t[2] + rw_Wg[12 + k];
+        mk_add(VRMK_CURSOR, p, 0);
+    }
+}
+
 /* the aiming dot: where the gun in a hand would hit - the first wall or enemy along its
    barrel from its muzzle (as the shot goes, vr_gun_ray) */
 static void sight_add(const float* H, int side, int wno)
@@ -2202,6 +2996,7 @@ void vr_hand(BH_PWORK* p)
     hand_ok[0] = hand_ok[1] = 0;
     laser_ok[0] = laser_ok[1] = 0;
     box_mode = 0;
+    ghost_on = 0;
     barrel_ok[0] = barrel_ok[1] = 0;
     if (!vr_on() || !p || !p->mlwP) return;
     {   /* vr86: the last frame was not in the head (the cinema screen: a cut, a door): the hands stay hers, as the game poses them */
@@ -2227,7 +3022,7 @@ void vr_hand(BH_PWORK* p)
         const float* R;
         float ra[9], C[9], P[3];
         const VrPose* hp;
-        float kick = 0;
+        float kick = 0, cvoff[3] = { 0, 0, 0 };   /* cvoff: a learned kick's move of the hand (metres, headset space) */
         if (p->mlwP->obj_num <= node) { hand_log(side, 2, wn); continue; }
         H = p->mlwP->owP[node].mtx;
         /* the grip is learned once per weapon, when the pose has held still for a few frames
@@ -2271,6 +3066,7 @@ void vr_hand(BH_PWORK* p)
         if (side == 0) { memcpy(Rright, R, sizeof(Rright)); right_ok = 1; }
         quat_to_rows(ra, hp);
         if (side == 0) two_hand_update(&in, ra, R);   /* vr196 */
+        if (side == 0) rc_sample(hp);   /* (learning a gun's recoil: the controller as it is, before any kick) */
         if (side == 0 && g_vr_recoil && shake_ms) {   /* vr205: the rifle's climb and sway, one-handed */
             float e = shake_decay(), a, b, ca, sa, cb, sb, tmp[9];
             if (e < 0.01f || (two_on && two_steer) || p->wpnr_no != RIFLE_WPN) { shake_ms = 0; shake_p = shake_y = 0; }
@@ -2287,6 +3083,27 @@ void vr_hand(BH_PWORK* p)
                     ra[i * 3 + 1] = tmp[i * 3 + 1];
                     ra[i * 3 + 2] = tmp[i * 3 + 0] * sb + tmp[i * 3 + 2] * cb;
                 }
+            }
+        }
+        if (g_vr_recoil && side == 0 && rcp_ms) {   /* a learned gun's kick: the motion the owner showed, from the controller as it is now */
+            static uint64_t seen, prev;
+            static float kt;
+            uint64_t now = SDL_GetTicks();
+            if (seen != rcp_ms) { seen = rcp_ms; kt = 0; prev = now; }
+            else { float dt = (now - prev) / 1000.0f; kt += dt > 1.0f / 30.0f ? 1.0f / 30.0f : dt; prev = now; }
+            if (kt > RC_N * RC_DT + 0.12f) rcp_ms = 0;
+            else {
+                float v[6], ra0[9], Rd[9], d2r = 3.14159265f / 180.0f;
+                float ca, sa, cb, sb, cc, sc;
+                memcpy(ra0, ra, sizeof ra0);
+                rc_play(rcp_item, kt, v);
+                ca = cosf(v[0] * d2r); sa = sinf(v[0] * d2r); cb = cosf(v[1] * d2r); sb = sinf(v[1] * d2r); cc = cosf(v[2] * d2r); sc = sinf(v[2] * d2r);
+                Rd[0] = cb * cc;                Rd[1] = -cb * sc;               Rd[2] = sb;
+                Rd[3] = ca * sc + sa * sb * cc; Rd[4] = ca * cc - sa * sb * sc; Rd[5] = -sa * cb;
+                Rd[6] = sa * sc - ca * sb * cc; Rd[7] = sa * cc + ca * sb * sc; Rd[8] = ca * cb;   /* Rx(a) Ry(b) Rz(c) */
+                for (int i = 0; i < 3; i++)
+                    for (int j = 0; j < 3; j++) ra[i * 3 + j] = ra0[i * 3 + 0] * Rd[0 * 3 + j] + ra0[i * 3 + 1] * Rd[1 * 3 + j] + ra0[i * 3 + 2] * Rd[2 * 3 + j];   /* the controller turned as it did */
+                for (int i = 0; i < 3; i++) cvoff[i] = ra0[i * 3 + 0] * v[3] + ra0[i * 3 + 1] * v[4] + ra0[i * 3 + 2] * v[5];   /* and moved as it did (in its own frame) */
             }
         }
         if (g_vr_recoil && recoil_ms[side]) {   /* the kick of a shot: up about the controller's x axis, back along it */
@@ -2336,7 +3153,7 @@ void vr_hand(BH_PWORK* p)
             int gv = side ? in.gripl_valid : in.grip_valid;
             float o = g_vr_hand_offset / 100.0f - kick;
             float bx = gv ? gp->px : hp->px, by = gv ? gp->py : hp->py, bz = gv ? gp->pz : hp->pz;
-            xform(Wg, bx - ra[2] * o, by - ra[5] * o, bz - ra[8] * o, P);
+            xform(Wg, bx + cvoff[0] - ra[2] * o, by + cvoff[1] - ra[5] * o, bz + cvoff[2] - ra[8] * o, P);
         }
         {   /* not into the face */
             float d[3] = { P[0] - E[0], P[1] - E[1], P[2] - E[2] }, l = sqrtf(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
@@ -2439,17 +3256,78 @@ void vr_hand(BH_PWORK* p)
             }
             if (!two_on) two_left_logged = 0;
         }
-        memcpy(hand_pos[side], P, sizeof(P));
-        if (side == 1 && mag_held) {   /* vr87: the ammo box in the left hand, from the holster to the gun */
-            /* vr90: in the palm - along the controller (C: its axes in the world), 6 cm ahead of the hand point */
-            float s = g_vr_scale / 10.0f, ctr[3];
-            for (int k = 0; k < 3; k++) ctr[k] = P[k] - C[k * 3 + 2] * 0.06f * s;
-            for (int c = 0; c < 8; c++) {
-                float o[3] = { ((c & 1) ? 0.5f : -0.5f) * BOX_W * s, ((c & 2) ? 0.5f : -0.5f) * BOX_H * s, ((c & 4) ? 0.5f : -0.5f) * BOX_D * s };
-                for (int k = 0; k < 3; k++) box_c[c][k] = C[k * 3 + 0] * o[0] + C[k * 3 + 1] * o[1] + C[k * 3 + 2] * o[2] + ctr[k];
+        {   /* LEARN (env.txt RECVX_SLIDE_LEARN=1, a test aid): the owner puts the left hand on the pistol's slide, grips and pulls it back - where the hand was (ahead of the right hand, up, to the gun's left, in cm) at the grip and at the let go, and how far it was pulled, in the log */
+            static int learn = -1, lheld;
+            static float s0[3], mn, lastp[3];
+            if (learn < 0) learn = getenv("RECVX_SLIDE_LEARN") != NULL;
+            if (learn && side == 1 && barrel_ok[0] && rack_gun()) {
+                const float* h9r = p->mlwP->owP[9].mtx;
+                float f[3], len, lf[3], ll, sc2 = g_vr_scale / 10.0f, c[3];
+                VrInput ri;
+                int grip = xr_input(&ri) && ri.lgrip > 0.5f;
+                for (int k = 0; k < 3; k++) f[k] = muzzle_w[0][k] - h9r[12 + k];
+                len = sqrtf(f[0] * f[0] + f[1] * f[1] + f[2] * f[2]);
+                if (len > 1e-6f) {
+                    float d[3] = { P[0] - h9r[12], P[1] - h9r[13], P[2] - h9r[14] };
+                    for (int k = 0; k < 3; k++) f[k] /= len;
+                    lf[0] = f[2]; lf[1] = 0.0f; lf[2] = -f[0]; ll = sqrtf(lf[0] * lf[0] + lf[2] * lf[2]);
+                    if (ll > 1e-6f) { lf[0] /= ll; lf[2] /= ll; }
+                    c[0] = (d[0] * f[0] + d[1] * f[1] + d[2] * f[2]) / sc2 * 100.0f;     /* ahead */
+                    c[1] = d[1] / sc2 * 100.0f;                                           /* up (the game's y) */
+                    c[2] = (d[0] * lf[0] + d[2] * lf[2]) / sc2 * 100.0f;                  /* to the gun's left (a guess) */
+                    if (grip && !lheld) { lheld = 1; memcpy(s0, c, sizeof c); mn = c[0]; vr_log("slide-learn: GRIP at ahead %.1f up %.1f left %.1f cm (barrel %.2f %.2f %.2f)\n", c[0], c[1], c[2], f[0], f[1], f[2]); }
+                    if (grip) { if (c[0] < mn) mn = c[0]; memcpy(lastp, c, sizeof c); }
+                    if (!grip && lheld) { lheld = 0; vr_log("slide-learn: LET GO at ahead %.1f up %.1f left %.1f cm; pulled back %.1f cm (the lowest ahead %.1f)\n", lastp[0], lastp[1], lastp[2], s0[0] - mn, mn); }
+                }
             }
-            box_mode = 2;
+            if (learn) goto skip_snap;
         }
+        if (side == 1 && rack_gun() && !mag_held && barrel_ok[0] && (need_rack || (gun_slot() && (*gun_slot() & 0xFFFF) > 0))) {   /* the slide, as the owner pulled it (the learn log): the left grip taken near 13 cm ahead of the hand node, 6.5 up, 13.5 to the left, then pulled back; the hand stays free, a buzz says the grip is on the slide */
+            const float* h9r = p->mlwP->owP[9].mtx;
+            float f[3], len, lf[3], ll, sc2 = g_vr_scale / 10.0f;
+            VrInput ri;
+            for (int k = 0; k < 3; k++) f[k] = muzzle_w[0][k] - h9r[12 + k];
+            len = sqrtf(f[0] * f[0] + f[1] * f[1] + f[2] * f[2]);
+            if (len > 1e-6f) {
+                float d[3] = { P[0] - h9r[12], P[1] - h9r[13], P[2] - h9r[14] }, c[3], dd, pull;
+                int grip = xr_input(&ri) && ri.lgrip > 0.5f;
+                for (int k = 0; k < 3; k++) f[k] /= len;
+                lf[0] = f[2]; lf[1] = 0.0f; lf[2] = -f[0]; ll = sqrtf(lf[0] * lf[0] + lf[2] * lf[2]);
+                if (ll > 1e-6f) { lf[0] /= ll; lf[2] /= ll; }
+                c[0] = (d[0] * f[0] + d[1] * f[1] + d[2] * f[2]) / sc2 * 100.0f;
+                c[1] = d[1] / sc2 * 100.0f;
+                c[2] = (d[0] * lf[0] + d[2] * lf[2]) / sc2 * 100.0f;
+                dd = sqrtf((c[0] - 13.0f) * (c[0] - 13.0f) + (c[1] - 6.5f) * (c[1] - 6.5f) + (c[2] - 13.5f) * (c[2] - 13.5f));
+                if (grip && !rack_arm && !rack_grip_was && dd < 7.0f) {   /* taken on the slide: a buzz */
+                    rack_arm = 1; rack_d0 = c[0];
+                    CallPlayerWeaponSeEx((NJS_POINT3*)&h9r[12], 264, 0);
+                    if (g_vr_haptics) xr_haptic(1, 0.6f, 70);
+                }
+                rack_grip_was = grip;
+                if (!grip) rack_arm = 0;
+                if (!rack_arm) rack_pull_now = 0;
+                if (rack_arm) {
+                    pull = (rack_d0 - c[0]) / 10.0f;   /* 10 cm back (the owner pulled 9..18) */
+                    pull = pull < 0 ? 0 : pull > 1 ? 1 : pull;
+                    rack_pull_now = pull;
+                    if (pull > 0 && g_vr_haptics) xr_haptic(1, 0.2f + 0.7f * pull, 40);   /* the drag: stronger the further it goes */
+                    if (pull >= 1.0f) {
+                        if (!need_rack) {   /* racked with a round chambered: it is thrown out, as a shot's casing, no shot - one round less */
+                            unsigned* gs = gun_slot();
+                            if (gs && (*gs & 0xFFFF) > 0) { *gs = (*gs & 0xFFFF0000u) | ((*gs & 0xFFFF) - 1); bhSetYakkyou(plp, plp->wpnr_no, 9, 0, plp->ay); vr_log("vr: slide pulled - a round ejected\n"); }
+                        }
+                        need_rack = rack_arm = 0; slide_rel_ms = SDL_GetTicks();
+                        CallPlayerWeaponSeEx((NJS_POINT3*)&h9r[12], 258, 0);
+                        CallPlayerWeaponSeEx((NJS_POINT3*)&h9r[12], 264, 0);
+                        if (g_vr_haptics) { xr_haptic(1, 1.0f, 120); xr_haptic(0, 0.7f, 80); }
+                        vr_log("vr: slide pulled - the gun can fire\n");
+                    }
+                }
+            }
+        }
+        skip_snap:;
+        memcpy(hand_pos[side], P, sizeof(P));
+        /* (the ammo is taken from the pouch at the holster, which stays where it is: nothing is drawn in the hand for now - the ammo's own model comes later) */
         hand_ok[side] = 1;
         hand_log(side, 0, wn);
         if (side == 0) vr_slash(p, hp, H);
@@ -2590,7 +3468,7 @@ int vr_quick_knife(void)
 {
     VrInput in;
     if (!xr_input(&in) || in.lgrip <= 0.5f || mag_held || grip_latch || two_on) return 0;
-    if (g_vr_manual_reload && near_holster() && box_ammo() > 0) return 0;
+    if (g_vr_manual_reload && near_holster() && ammo_ready(in.rgrip) && box_ammo() > 0) return 0;
     if (!knife_equipped() && left_near_gun) return 0;   /* (once the knife is out it stays while the grip is held) */
     if (!knife_equipped() && in.rgrip > 0.5f) return 0;   /* (vr228: not while aiming the gun - the right grip held) */
     return 1;
@@ -2616,7 +3494,9 @@ void vr_after_draw(void)
     memcpy(v.mk, mk_pt, sizeof(v.mk)); memcpy(v.mk_kind, mk_kind, sizeof(v.mk_kind)); memcpy(v.mk_val, mk_val, sizeof(v.mk_val));
     for (int s = 0; s < 2; s++) { v.hand_ok[s] = hand_ok[s]; v.hand[s] = hand_aim[s]; }
     for (int s = 0; s < 2; s++) { v.laser_ok[s] = laser_ok[s]; memcpy(v.laser_a[s], laser_a[s], sizeof(v.laser_a[s])); memcpy(v.laser_b[s], laser_b[s], sizeof(v.laser_b[s])); }
-    v.box_mode = box_mode; memcpy(v.box_c, box_c, sizeof(v.box_c));
+    v.box_mode = box_mode; memcpy(v.box_c, box_c, sizeof(v.box_c)); v.box_open = holster_open;
+    v.ghost_on = ghost_on; v.ghost_val = ghost_val; v.ghost_shape = ghost_shape; v.ghost_hw = ghost_hw; memcpy(v.ghost_a, ghost_a, sizeof ghost_a); memcpy(v.ghost_b, ghost_b, sizeof ghost_b);   /* the bow gun's arrow guide */
+    v.box_n = box_n; memcpy(v.box_dx, box_dx, sizeof(v.box_dx)); memcpy(v.box_op, box_op, sizeof(v.box_op));   /* the guns with several kinds of ammo: a pouch for each */
     v.box_item = box_item;   /* vr131 */
     v.turn = smooth_turn;   /* vr120 */
     v.turn_at = turn_taken;   /* vr141 */
@@ -2825,4 +3705,54 @@ int vr_scope_zoom(void)
     if (in.ry > 0.7f && !zoomed) { zoomed = 1; vr_log("vr: scope zoom in\n"); }
     else if (in.ry < -0.7f && zoomed) { zoomed = 0; vr_log("vr: scope zoom out\n"); }
     return zoomed;
+}
+
+/* mag_glue.c: the ammo is in the left hand (taken from the pouch) */
+int vr_held_arrow(void) { return mag_held && launcher_gun() && lau_k == 1 && lau_pick >= 0 && lau_pick < lau_n ? (lau_item[lau_pick] == 36) : -1; }   /* the bow gun's arrow in the hand: its own model (mag_glue.c) */
+int vr_held_item(void) { return ammo_item(); }   /* the ammo item the gun in hand takes (the Magnum's round model, mag_glue.c) */
+int vr_mag_held(void) { return mag_held && !launcher_gun(); }   /* (the magazine model is the pistols': not for the launcher or the bow gun) */
+void vr_log_str(const char* s) { vr_log("%s", s); }
+
+/* The pistol's slide (the weapon object's node 2, its x runs 0 .. -0.5 in a shot): held open at the back when the gun is empty (nothing in the magazine, none chambered) and until it is pulled, then it
+   snaps forward in 120 ms. objitm.c bhDrawObject, before the weapon is put. Returns 1 and the x to put, 0 for the game's own. */
+int vr_slide_pos(float* x)
+{
+    unsigned* g;
+    uint64_t now;
+    if (!vr_on() || !rack_gun()) return 0;
+    now = SDL_GetTicks();
+    if (slide_rel_ms && now - slide_rel_ms < 120) { *x = -0.5f * (1.0f - (float)(now - slide_rel_ms) / 120.0f); return 1; }
+    g = gun_slot();
+    if (need_rack || (g && (*g & 0xFFFF) == 0)) { *x = -0.5f; return 1; }
+    if (rack_arm && rack_pull_now > 0) { *x = -0.5f * rack_pull_now; return 1; }   /* the slide follows the hand */
+    return 0;
+}
+
+/* The pistol tilts back a little as the slide is pulled and rocks forward as it is let go (the weapon object's node 1: ang y = the muzzle up, pos x along the barrel; very subtle: 3 degrees, 1.2 cm). objitm.c. */
+/* The launcher open (its barrel broken up, as the game's own reload does it: the weapon object's node 2, ang y up to 18204): held at the draw like the pistol's slide, whatever the aim - the
+   game closes it itself when the aim is let go. Eased over 150 ms. objitm.c. */
+int vr_launcher_open(int* ang)
+{
+    uint64_t now = SDL_GetTicks();
+    float t, rr = sys->ply_id ? 21845.0f : 18204.0f;
+    if (!vr_on() || !launcher_gun() || lau_k != 0) return 0;   /* (only the launcher breaks open) */
+    if (lau_open) { t = (float)(now - lau_open_ms) / 150.0f; *ang = (int)(rr * (t > 1.0f ? 1.0f : t)); return 1; }
+    if (lau_shut_ms && now - lau_shut_ms < 200) { t = (float)(now - lau_shut_ms) / 150.0f; *ang = (int)(rr * (t > 1.0f ? 0.0f : 1.0f - t)); return 1; }
+    return 0;
+}
+
+int vr_slide_fx(float* pitch, float* dx)
+{
+    uint64_t now;
+    float t;
+    if (!vr_on() || !rack_gun()) return 0;
+    now = SDL_GetTicks();
+    if (rack_arm && rack_pull_now > 0) { *pitch = 550.0f * rack_pull_now; *dx = -0.12f * rack_pull_now; return 1; }
+    if (slide_rel_ms && now - slide_rel_ms < 220) {
+        t = (float)(now - slide_rel_ms) / 220.0f;
+        *pitch = 550.0f * (1.0f - t) - 300.0f * sinf(3.14159265f * t);
+        *dx = -0.12f * (1.0f - t) + 0.10f * sinf(3.14159265f * t);
+        return 1;
+    }
+    return 0;
 }

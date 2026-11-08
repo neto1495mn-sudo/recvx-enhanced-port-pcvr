@@ -1,6 +1,12 @@
 /* User settings: <save_dir>/recvx.ini, "key = value" lines. */
+#include <stdlib.h>
 #include "xr.h"
 extern int g_vr_fps;   /* xr.c */
+extern int g_vr_rcc[40][12][6], g_vr_rcn[40];   /* glue/vr_glue.c: each gun's learned recoil curve (by the gun's item): 12 points of turn x, y, z (tenths of a degree), right, up, back (mm) */
+extern int g_vr_gd[40][4];   /* glue/vr_glue.c: each gun's ammo guide (by the gun's item): x, y, z (mm), yaw (degrees) */
+extern int g_vr_hol[2][2][4];   /* glue/vr_glue.c: [standing, seated][single ammo, several kinds][down, forward, side (cm), turn (degrees)] */
+extern void vr_hol_defaults(int mode);
+extern int g_vr_radial, g_vr_seated, g_vr_sr, g_vr_aa, g_vr_pouch;   /* glue/vr_glue.c */
 extern int g_adv_settings;   /* glue/options_glue.c */
 extern int g_vr_scale, g_vr_eye_height, g_vr_fov, g_vr_turn, g_vr_hand_aim, g_vr_fx_fix, g_vr_gun_min, g_vr_hand_offset, g_vr_slash_speed, g_vr_hit_tilt, g_vr_danger_fx, g_vr_eye_shape, g_vr_screen_angle, g_vr_left_mirror, g_vr_dmg_head, g_vr_dmg_body, g_vr_dmg_arm, g_vr_dmg_leg, g_vr_recoil, g_vr_haptics, g_vr_hud_dist, g_vr_hud_angle, g_vr_sight, g_vr_sight_size, g_vr_holster, g_vr_hud_y, g_vr_roomscale, g_vr_manual_reload, g_vr_prompts, g_vr_dmg_body_max, g_vr_wake_shots, g_vr_precise_hits, g_vr_barrel_pitch, g_vr_hud_dist, g_vr_hud_angle, g_vr_aim_walk, g_vr_cam_steady, g_vr_move_direct, g_vr_heart_sound, g_vr_close_push, g_vr_bite_push, g_vr_comfort, g_update_check, g_tex_hd_per_frame, g_tex_loaders, g_tex_upload, g_vr_dyn_res, g_launcher, g_launcher_lang;
 extern char g_tex_dir[1024];   /* gs/texreplace.c: a folder of replacement textures chosen in the launcher */
@@ -126,6 +132,31 @@ static const struct { const char* key; int* val; int lo, hi; } keys[] = {
     { "vr_sight", &g_vr_sight, 0, 3 },   /* 1 ring, 2 laser, 3 both (vr77) */
     { "vr_sight_size", &g_vr_sight_size, 5, 400 },
     { "vr_holster", &g_vr_holster, 0, 1 },
+    { "vr_pouch", &g_vr_pouch, 0, 1 },   /* the ammo box as a leather pouch model (gs_gl.c draw_pouch) */
+    { "vr_aa", &g_vr_aa, 0, 1 },   /* anti-aliasing (gs_gl.c present_fs) */
+    { "vr_sr", &g_vr_sr, 0, 1 },   /* Meta Quest Super Resolution (xr.c) */
+    { "vr_radial", &g_vr_radial, 0, 1 },   /* hold Y: the weapon wheel */
+    { "vr_hol_down", &g_vr_hol[0][0][0], 0, 120 }, { "vr_hol_out", &g_vr_hol[0][0][1], -20, 60 }, { "vr_hol_side", &g_vr_hol[0][0][2], -50, 50 },   /* the ammo holster, standing: the guns with one kind of ammo (cm) */
+    { "vr_hol2_down", &g_vr_hol[0][1][0], 0, 120 }, { "vr_hol2_out", &g_vr_hol[0][1][1], -20, 60 }, { "vr_hol2_side", &g_vr_hol[0][1][2], -50, 50 },   /* ... the grenade launcher and the bow gun */
+    { "vr_hol_s_down", &g_vr_hol[1][0][0], 0, 120 }, { "vr_hol_s_out", &g_vr_hol[1][0][1], -20, 60 }, { "vr_hol_s_side", &g_vr_hol[1][0][2], -50, 50 },   /* seated */
+    { "vr_hol2_s_down", &g_vr_hol[1][1][0], 0, 120 }, { "vr_hol2_s_out", &g_vr_hol[1][1][1], -20, 60 }, { "vr_hol2_s_side", &g_vr_hol[1][1][2], -50, 50 },
+    { "vr_gd1_x", &g_vr_gd[1][0], -3000, 3000 }, { "vr_gd1_y", &g_vr_gd[1][1], -3000, 3000 }, { "vr_gd1_z", &g_vr_gd[1][2], -3000, 3000 }, { "vr_gd1_yaw", &g_vr_gd[1][3], -180, 180 },
+    { "vr_gd2_x", &g_vr_gd[2][0], -3000, 3000 }, { "vr_gd2_y", &g_vr_gd[2][1], -3000, 3000 }, { "vr_gd2_z", &g_vr_gd[2][2], -3000, 3000 }, { "vr_gd2_yaw", &g_vr_gd[2][3], -180, 180 },
+    { "vr_gd3_x", &g_vr_gd[3][0], -3000, 3000 }, { "vr_gd3_y", &g_vr_gd[3][1], -3000, 3000 }, { "vr_gd3_z", &g_vr_gd[3][2], -3000, 3000 }, { "vr_gd3_yaw", &g_vr_gd[3][3], -180, 180 },
+    { "vr_gd4_x", &g_vr_gd[4][0], -3000, 3000 }, { "vr_gd4_y", &g_vr_gd[4][1], -3000, 3000 }, { "vr_gd4_z", &g_vr_gd[4][2], -3000, 3000 }, { "vr_gd4_yaw", &g_vr_gd[4][3], -180, 180 },
+    { "vr_gd5_x", &g_vr_gd[5][0], -3000, 3000 }, { "vr_gd5_y", &g_vr_gd[5][1], -3000, 3000 }, { "vr_gd5_z", &g_vr_gd[5][2], -3000, 3000 }, { "vr_gd5_yaw", &g_vr_gd[5][3], -180, 180 },
+    { "vr_gd6_x", &g_vr_gd[6][0], -3000, 3000 }, { "vr_gd6_y", &g_vr_gd[6][1], -3000, 3000 }, { "vr_gd6_z", &g_vr_gd[6][2], -3000, 3000 }, { "vr_gd6_yaw", &g_vr_gd[6][3], -180, 180 },
+    { "vr_gd7_x", &g_vr_gd[7][0], -3000, 3000 }, { "vr_gd7_y", &g_vr_gd[7][1], -3000, 3000 }, { "vr_gd7_z", &g_vr_gd[7][2], -3000, 3000 }, { "vr_gd7_yaw", &g_vr_gd[7][3], -180, 180 },
+    { "vr_gd8_x", &g_vr_gd[8][0], -3000, 3000 }, { "vr_gd8_y", &g_vr_gd[8][1], -3000, 3000 }, { "vr_gd8_z", &g_vr_gd[8][2], -3000, 3000 }, { "vr_gd8_yaw", &g_vr_gd[8][3], -180, 180 },
+    { "vr_gd9_x", &g_vr_gd[9][0], -3000, 3000 }, { "vr_gd9_y", &g_vr_gd[9][1], -3000, 3000 }, { "vr_gd9_z", &g_vr_gd[9][2], -3000, 3000 }, { "vr_gd9_yaw", &g_vr_gd[9][3], -180, 180 },
+    { "vr_gd10_x", &g_vr_gd[10][0], -3000, 3000 }, { "vr_gd10_y", &g_vr_gd[10][1], -3000, 3000 }, { "vr_gd10_z", &g_vr_gd[10][2], -3000, 3000 }, { "vr_gd10_yaw", &g_vr_gd[10][3], -180, 180 },
+    { "vr_gd11_x", &g_vr_gd[11][0], -3000, 3000 }, { "vr_gd11_y", &g_vr_gd[11][1], -3000, 3000 }, { "vr_gd11_z", &g_vr_gd[11][2], -3000, 3000 }, { "vr_gd11_yaw", &g_vr_gd[11][3], -180, 180 },
+    { "vr_gd12_x", &g_vr_gd[12][0], -3000, 3000 }, { "vr_gd12_y", &g_vr_gd[12][1], -3000, 3000 }, { "vr_gd12_z", &g_vr_gd[12][2], -3000, 3000 }, { "vr_gd12_yaw", &g_vr_gd[12][3], -180, 180 },
+    { "vr_gd32_x", &g_vr_gd[32][0], -3000, 3000 }, { "vr_gd32_y", &g_vr_gd[32][1], -3000, 3000 }, { "vr_gd32_z", &g_vr_gd[32][2], -3000, 3000 }, { "vr_gd32_yaw", &g_vr_gd[32][3], -180, 180 },
+    { "vr_gd33_x", &g_vr_gd[33][0], -3000, 3000 }, { "vr_gd33_y", &g_vr_gd[33][1], -3000, 3000 }, { "vr_gd33_z", &g_vr_gd[33][2], -3000, 3000 }, { "vr_gd33_yaw", &g_vr_gd[33][3], -180, 180 },
+    { "vr_gd34_x", &g_vr_gd[34][0], -3000, 3000 }, { "vr_gd34_y", &g_vr_gd[34][1], -3000, 3000 }, { "vr_gd34_z", &g_vr_gd[34][2], -3000, 3000 }, { "vr_gd34_yaw", &g_vr_gd[34][3], -180, 180 },
+    { "vr_hol_rot", &g_vr_hol[0][0][3], -180, 180 }, { "vr_hol2_rot", &g_vr_hol[0][1][3], -180, 180 }, { "vr_hol_s_rot", &g_vr_hol[1][0][3], -180, 180 }, { "vr_hol2_s_rot", &g_vr_hol[1][1][3], -180, 180 },   /* the holster's sideways turn */
+    { "vr_seated", &g_vr_seated, 0, 1 },   /* the ammo holster at the chest */
     { "vr_roomscale", &g_vr_roomscale, 0, 1 },
     { "vr_aim_walk", &g_vr_aim_walk, 0, 1 },
     { "vr_cam_steady", &g_vr_cam_steady, 0, 1 },
@@ -196,6 +227,16 @@ void config_load(void)
         if (sscanf(line, " coop_join = %127s", g_coop.join) == 1) continue;
         else if (sscanf(line, " coop_player_id = %127s", val) == 1) { if (!unhex(val, g_coop.pid, 16)) memset(g_coop.pid, 0, 16); continue; }
         else if (sscanf(line, " coop_player_key = %127s", val) == 1) { if (!unhex(val, g_coop.pkey, 32)) memset(g_coop.pkey, 0, 32); continue; }
+        else if (!strncmp(line, "vr_rcc", 6)) {   /* a learned recoil: vr_rcc<item> = 72 numbers */
+            char* e;
+            int it = (int)strtol(line + 6, &e, 10);
+            if (it > 0 && it < 40 && *e == ' ' && (e = strchr(e, '=')) != NULL) {
+                int n = 0, vals[72];
+                for (e++; n < 72; n++) { char* q; vals[n] = (int)strtol(e, &q, 10); if (q == e) break; e = q; }
+                if (n == 72) { memcpy(g_vr_rcc[it], vals, sizeof vals); g_vr_rcn[it] = 1; }
+            }
+            continue;
+        }
         else if (!strncmp(line, "coop_server =", 13)) { if (sscanf(line + 13, " %127s", g_coop.server) != 1) g_coop.server[0] = 0; continue; }   /* empty: no server */
         else if (sscanf(line, " coop_name = %15[^\r\n]", g_coop.name) == 1) continue;
         else if (sscanf(line, " iso = %1023[^\r\n]", g_config.iso_path) == 1) continue;
@@ -228,7 +269,8 @@ void config_load(void)
 #ifdef __ANDROID__
     if (g_vr_cfg_ver < 27) { g_config.cinema_bars = 2; g_config.frame_blend = 0; }   /* the headset: no cutscene bars, no frame-blend trail (their settings are hidden; the code shows them) */
 #endif
-    g_vr_cfg_ver = 27;
+    if (g_vr_cfg_ver < 28) vr_hol_defaults(-1);   /* the holster places are per position now: the first ones saved were of one place only */
+    g_vr_cfg_ver = 28;
     g_coop.chr = appear_canon(g_coop.chr);   /* an event double no longer listed: its listed twin (actors.c) */
     default_name();
     player_id();
@@ -260,6 +302,12 @@ static int write_ini(FILE* f, void* ud)
 {
     (void)ud;
     for (size_t i = 0; i < SDL_arraysize(keys); i++) fprintf(f, "%s = %d\n", keys[i].key, *keys[i].val);
+    for (int it = 1; it < 40; it++) {   /* the learned recoils: one line a gun */
+        if (!g_vr_rcn[it]) continue;
+        fprintf(f, "vr_rcc%d =", it);
+        for (int k = 0; k < 12; k++) for (int c = 0; c < 6; c++) fprintf(f, " %d", g_vr_rcc[it][k][c]);
+        fprintf(f, "\n");
+    }
     fprintf(f, "coop_join = %s\n", g_coop.join);
     fprintf(f, "coop_server = %s\n", g_coop.server);
     if (g_coop.name[0]) fprintf(f, "coop_name = %s\n", g_coop.name);

@@ -691,6 +691,9 @@ void bhDrawObject(O_WRK* op)
             extern int g_native_tag; extern int vr_hide_player(void);
             int keep = g_native_tag;
             if (op->lkwkp == (unsigned char*)plp && vr_hide_player()) g_native_tag = op->lkono == 13 ? 3 : 2;
+            if (op->lkwkp == (unsigned char*)plp && op->lkono == 9 && op->mlwP && op->mlwP->obj_num > 2) { extern int vr_slide_pos(float* x); float sx; if (vr_slide_pos(&sx)) op->mlwP->objP[2].pos[0] = sx; }   /* the pistol's slide held back when it is empty (vr_glue.c) */
+            if (op->lkwkp == (unsigned char*)plp && op->lkono == 9 && op->mlwP && op->mlwP->obj_num > 1) { extern int vr_slide_fx(float* pitch, float* dx); static int fx_on; float ps, dx; if (vr_slide_fx(&ps, &dx)) { op->mlwP->objP[1].ang[1] = (Angle)ps; op->mlwP->objP[1].pos[0] = 1.41f + dx; fx_on = 1; } else if (fx_on) { op->mlwP->objP[1].ang[1] = 0; op->mlwP->objP[1].pos[0] = 1.41f; fx_on = 0; } }   /* the pistol tilts back with the slide pull, rocks forward at the let go (vr_glue.c) */
+            if (op->lkwkp == (unsigned char*)plp && op->lkono == 9 && op->mlwP && op->mlwP->obj_num > 2) { extern int vr_launcher_open(int* ang); int la; if (vr_launcher_open(&la)) op->mlwP->objP[2].ang[1] = la; }   /* the grenade launcher held open by hand (vr_glue.c) */
             bhPutModel((BH_PWORK*)op);
             g_native_tag = keep;
         }

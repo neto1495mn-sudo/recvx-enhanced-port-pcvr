@@ -182,7 +182,9 @@ static int eyes_valid;
 static XrPosef screen_pose;     /* the cinema quad's pose in LOCAL space */
 static char headset_name[64];
 int g_vr_fps;   /* ini vr_fps: the frame-rate readout in the headset */
+int g_vr_sr;    /* ini vr_sr: Meta Quest Super Resolution (Qualcomm's Snapdragon Game Super Resolution, in the compositor) on the eye layers; the launcher's option */
 float g_vr_rx_raw;   /* the right stick's x as the controller sent it, before the dropout hold (diagnosis, gs_gl.c) */
+volatile int g_vr_stick_lock;   /* weapon wheel (vr_glue.c): the right stick is for choosing, not turning - turn and scope zoom see it centred */
 static Chain fps_chain;
 static unsigned quad_src_fbo;   /* 0: the window's back buffer is what the cinema screen shows */
 static int screen_lock, screen_placed, screen_lock_angle;   /* the launcher: the screen stays where it appeared, a little wider */
@@ -588,6 +590,7 @@ static void read_actions(XrTime t)
         { float zero = 0.0f; axis_hold(&ht, "left trigger", &in.ltrig, &zero, now, STICK_HOLD_MS); }
     }
 #endif
+    if (g_vr_stick_lock) in.rx = in.ry = 0.0f;
     in.buttons = (get_b(a_a) ? VRB_A : 0) | (get_b(a_b) ? VRB_B : 0) | (get_b(a_x) ? VRB_X : 0) | (get_b(a_y) ? VRB_Y : 0) |
                  (get_b(a_menu) ? VRB_MENU : 0) | (get_b(a_lclick) ? VRB_LSTICK : 0) | (get_b(a_rclick) ? VRB_RSTICK : 0);
     {   /* RECVX_TEST_SAVESPOT (env.txt; a test aid, to be removed with the rest of it): hold X for 2 s to save the game here as save
@@ -649,6 +652,7 @@ static void read_actions(XrTime t)
 /* Android (Quest): the CPU and GPU clock levels (XR_EXT_performance_settings) and the threads' roles for the
    scheduler (XR_KHR_android_thread_settings) - without them the runtime keeps the app on its default levels. The
    log showed the render thread at ~50% of one core and the GPU ~15% busy, yet the frames slow (25-30 ms). */
+static int have_cls;   /* XR_FB_composition_layer_settings: the layer's filter (Meta Quest Super Resolution) */
 static int have_perf, have_threads, have_refresh, have_csb;   /* have_csb: XR_KHR_composition_layer_color_scale_bias (the brightness of the headset's layers) */
 #ifdef __ANDROID__
 static float color_scale = 1.0f;   /* the compositor's linear colour scale (a plain brightness: it blows the highlights): off; the headset's picture grade is a gamma in the present pass (gs_gl.c vr_grade_ig). RECVX_COLOR_SCALE (env.txt) for tests */
@@ -772,9 +776,10 @@ int xr_init(void)
                 if (!strcmp(ep[i].extensionName, XR_EXT_PERFORMANCE_SETTINGS_EXTENSION_NAME)) { exts_all[k++] = XR_EXT_PERFORMANCE_SETTINGS_EXTENSION_NAME; have_perf = 1; }
                 else if (!strcmp(ep[i].extensionName, XR_FB_DISPLAY_REFRESH_RATE_EXTENSION_NAME)) { exts_all[k++] = XR_FB_DISPLAY_REFRESH_RATE_EXTENSION_NAME; have_refresh = 1; }
                 else if (!strcmp(ep[i].extensionName, XR_KHR_ANDROID_THREAD_SETTINGS_EXTENSION_NAME)) { exts_all[k++] = XR_KHR_ANDROID_THREAD_SETTINGS_EXTENSION_NAME; have_threads = 1; }
+                else if (!strcmp(ep[i].extensionName, XR_FB_COMPOSITION_LAYER_SETTINGS_EXTENSION_NAME)) { exts_all[k++] = XR_FB_COMPOSITION_LAYER_SETTINGS_EXTENSION_NAME; have_cls = 1; }
                 else if (!strcmp(ep[i].extensionName, XR_KHR_COMPOSITION_LAYER_COLOR_SCALE_BIAS_EXTENSION_NAME)) { exts_all[k++] = XR_KHR_COMPOSITION_LAYER_COLOR_SCALE_BIAS_EXTENSION_NAME; have_csb = 1; }
             }
-        host_log("vr: optional extensions: performance settings %s, thread settings %s, colour scale %s\n", have_perf ? "yes" : "no", have_threads ? "yes" : "no", have_csb ? "yes" : "no");
+        host_log("vr: optional extensions: performance settings %s, thread settings %s, colour scale %s, layer settings (super resolution) %s\n", have_perf ? "yes" : "no", have_threads ? "yes" : "no", have_csb ? "yes" : "no", have_cls ? "yes" : "no");
         if (getenv("RECVX_COLOR_SCALE")) { color_scale = (float)atof(getenv("RECVX_COLOR_SCALE")); host_log("vr: colour scale %.2f (RECVX_COLOR_SCALE)\n", (double)color_scale); }
         ici.enabledExtensionCount = k;
         ici.enabledExtensionNames = exts_all;
@@ -1232,6 +1237,20 @@ static void end_frame(const XrCompositionLayerBaseHeader* const* layers_in, uint
             csb.colorBias.r = csb.colorBias.g = csb.colorBias.b = csb.colorBias.a = 0.0f;
             for (uint32_t j = 0; j < n; j++)
                 if (layers[j] != (const XrCompositionLayerBaseHeader*)&fpsq) ((XrCompositionLayerBaseHeader*)layers[j])->next = &csb;
+        }
+    }
+    {   /* Meta Quest Super Resolution (ini vr_sr, the launcher's option): the compositor upscales and sharpens the eye layers with Qualcomm's Snapdragon Game
+           Super Resolution - the layer's QUALITY_SHARPENING flag of XR_FB_composition_layer_settings. A hint the runtime may ignore; only the stereo (projection) layers,
+           not the cinema screen's quad. The layers are built anew each frame, so it follows the option at once. */
+        static XrCompositionLayerSettingsFB sr;
+        static int logged = -1;
+        int want = have_cls && g_vr_sr;
+        if (logged != want) { logged = want; host_log("vr: super resolution %s%s\n", want ? "on" : "off", g_vr_sr && !have_cls ? " (the runtime has no layer settings)" : ""); }
+        if (want) {
+            sr.type = XR_TYPE_COMPOSITION_LAYER_SETTINGS_FB;
+            sr.layerFlags = XR_COMPOSITION_LAYER_SETTINGS_QUALITY_SHARPENING_BIT_FB | XR_COMPOSITION_LAYER_SETTINGS_QUALITY_SUPER_SAMPLING_BIT_FB;   /* sharpening (the upscale) and the better filter when the layer is larger than the panel (resolution above 100%) */
+            for (uint32_t j = 0; j < n; j++)
+                if (layers[j]->type == XR_TYPE_COMPOSITION_LAYER_PROJECTION) { sr.next = layers[j]->next; ((XrCompositionLayerBaseHeader*)layers[j])->next = &sr; }
         }
     }
     ei.displayTime = fs.predictedDisplayTime;

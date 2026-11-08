@@ -168,6 +168,7 @@ static bool settings_imgui(int page, bool all = true)
     for (int i = 0; i < g_settings_n; i++) {
         const Setting* s = &g_settings[i];
         if (s->page != page || !(all || (s->flags & SET_F1))) continue;
+        if ((s->flags & SET_DEV) && !g_extras_unlocked) continue;   /* the developer rows: only with the code */
         if (s->group && all) ImGui::SeparatorText(s->group);
         changed |= setting_widget(i);
     }
@@ -825,6 +826,7 @@ void overlay_render(void)
    the mod), else a dark panel. One PLAY button: the game is played in VR. The options on their own page, in
    Portuguese. Main thread, before xr_init; the game's window itself, small and centred, given back its own size /
    full screen on PLAY. ini launcher = 1 (--no-launcher skips it). Returns 0 to quit, 1 to play. */
+extern "C" int g_vr_sr, g_vr_aa, g_vr_seated;   /* xr.c, gs_gl.c, vr_glue.c */
 extern "C" int g_vr_request, g_launcher, g_tex_hd, g_tex_hd_per_frame, g_tex_loaders, g_tex_upload, g_vr_turn, g_vr_comfort, g_vr_sight, g_vr_res;
 extern "C" char g_update_tag[64];
 extern "C" int g_update_newer;
@@ -1201,6 +1203,17 @@ extern "C" int overlay_launcher(void)
                 if (opt_combo(L(L_SIGHT), sights, 3, &i)) { g_vr_sight = sight_v[i]; settings_save_later(); }
                 opt_label(L(L_VRRES));
                 if (ImGui::SliderInt("##res", &g_vr_res, 50, 200, "%d%%")) { g_vr_res = (g_vr_res + 5) / 10 * 10; settings_save_later(); }
+                {   /* Meta Quest Super Resolution: Qualcomm's Snapdragon Game Super Resolution, run by the headset's compositor (xr.c vr_sr) */
+                    static const char* const sr_label[3] = { "Super Resolution", "Super Resolution", "Super Resolution" };
+                    static const char* const sr_help[3] = { "Sharpens the picture in the headset: an edge-aware sharpening upscale, in the idea of Qualcomm's Snapdragon Game Super Resolution, and the headset's own Meta Quest Super Resolution is asked too. Costs a little GPU.",
+                                                            "Deixa a imagem mais n\xC3\xADtida no headset: uma amplia\xC3\xA7\xC3\xA3o com nitidez que respeita as bordas, na ideia do Snapdragon Game Super Resolution da Qualcomm, e pede tamb\xC3\xA9m o Meta Quest Super Resolution do headset. Gasta um pouco de GPU.",
+                                                            "Da m\xC3\xA1s nitidez a la imagen del visor: una ampliaci\xC3\xB3n con nitidez que respeta los bordes, en la idea del Snapdragon Game Super Resolution de Qualcomm, y pide tambi\xC3\xA9n el Meta Quest Super Resolution del visor. Gasta algo de GPU." };
+                    int lg = g_launcher_lang >= 0 && g_launcher_lang < 3 ? g_launcher_lang : 0;
+                    bool sr = g_vr_sr != 0;
+                    opt_label(sr_label[lg]);
+                    if (ImGui::Checkbox("##sr", &sr)) { g_vr_sr = sr; settings_save_later(); }
+                    ImGui::TextDisabled("%s", sr_help[lg]);
+                }
             } else if (tab == 1) {
                 opt_setting(L(L_FULLSCREEN), "Fullscreen");
                 opt_setting(L(L_WINSIZE), "Window size");
@@ -1234,7 +1247,7 @@ extern "C" int overlay_launcher(void)
             float dw;
             ImGui::PushFont(lf_bold, 20.0f); dw = ImGui::CalcTextSize(L(L_DEFAULT)).x + 44.0f; ImGui::PopFont();
             if (l_button(L(L_DEFAULT), ImVec2(x + 194, ds.y - 80), ImVec2(dw > 160.0f ? dw : 160.0f, 46), false, 20.0f)) {   /* as the release has them */
-                g_vr_turn = 45; g_vr_comfort = 0; g_vr_sight = 2; g_vr_res = 100; g_tex_hd = 1; g_tex_hd_per_frame = 2; g_tex_loaders = 4; g_tex_upload = 0;
+                g_vr_turn = 45; g_vr_comfort = 0; g_vr_sight = 2; g_vr_res = 100; g_vr_sr = 0; g_tex_hd = 1; g_tex_hd_per_frame = 2; g_tex_loaders = 4; g_tex_upload = 0;
                 settings_save_later();
             }
         }
@@ -1410,7 +1423,7 @@ unsigned char* stbi_load_from_memory(const unsigned char* buffer, int len, int* 
 }
 enum { Q_PLAY, Q_TAB_PLAY, Q_TAB_SET, Q_READY, Q_CHANGE_DISC, Q_CHOOSE_DISC, Q_DISC_TITLE, Q_DISC_TEXT, Q_DISC_BAD, Q_RES, Q_REC, Q_TURN, Q_COMFORT, Q_SIGHT, Q_HDTEX,
        Q_SMOOTH, Q_OFF, Q_MEDIUM, Q_STRONG, Q_LASER, Q_DOT, Q_NOSIGHT, Q_ON, Q_APPLIED, Q_EXIT, Q_ADD_TEX, Q_TEX_OK, Q_PERM_TITLE, Q_PERM_TEXT, Q_PERM_BTN, Q_BACK, Q_UP,
-       Q_USE_FOLDER, Q_EMPTY, Q_UPD_NEW, Q_UPD_GET, Q_UPD_PERM, Q_UPD_DOWN, Q_UPD_INSTALL, Q_UPD_FAIL, Q_UPD_RETRY, Q_PICK_ISO, Q_PICK_DIR, Q_STORAGE, Q_DOCUMENTS, Q_CANCEL, Q_NO_ISO, Q_HINT_ISO, Q_HINT_DIR, Q_HINT_PICK, Q_TAB_DISC, Q_TAB_TEX, Q_HINT_POINT, Q_DISC_PAGE, Q_DISC_OK, Q_TEX_PAGE, Q_F_DEVICE, Q_OKSHORT, Q_N };
+       Q_USE_FOLDER, Q_EMPTY, Q_UPD_NEW, Q_UPD_GET, Q_UPD_PERM, Q_UPD_DOWN, Q_UPD_INSTALL, Q_UPD_FAIL, Q_UPD_RETRY, Q_PICK_ISO, Q_PICK_DIR, Q_STORAGE, Q_DOCUMENTS, Q_CANCEL, Q_NO_ISO, Q_HINT_ISO, Q_HINT_DIR, Q_HINT_PICK, Q_TAB_DISC, Q_TAB_TEX, Q_HINT_POINT, Q_DISC_PAGE, Q_DISC_OK, Q_TEX_PAGE, Q_F_DEVICE, Q_OKSHORT, Q_SR, Q_AA, Q_SEAT, Q_N };
 static const char* const q_text[3][Q_N] = {
     { "PLAY", "Play", "Settings", "Ready to play", "Change disc", "Choose disc", "Choose the game disc", "Select the .iso of your Resident Evil Code: Veronica X (SLUS-20184). You only do this once.",
       "That file could not be opened. Choose another one.", "Resolution", "recommended", "Turning", "Comfort", "Aim", "HD textures",
@@ -1418,21 +1431,21 @@ static const char* const q_text[3][Q_N] = {
       "Allow access to files", "The launcher needs permission to see your files, so you can choose the disc and the textures. On the next screen, turn the option on for this app, then come back.",
       "Allow", "Back", "Up", "Use this folder", "Nothing here", "New version %s available", "Download and install",
       "To install it, allow this app to install updates. Turn the option on, then come back.", "Downloading...", "Confirm the installation in the system window", "The update failed", "Try again",
-      "Choose the disc (.iso)", "Choose the textures folder", "Storage", "Documents", "Cancel", "No disc images here", "Open the folders until you find your .iso file.", "This folder is empty. Open another folder, or use this one.", "Tap a .iso file to choose it", "Disc", "Textures", "Point with the right controller and pull the trigger to interact.", "Choose another disc image, for example one in another language.", "Disc ready", "Optional. Add a folder with replacement textures.", "Device", "Ready" },
+      "Choose the disc (.iso)", "Choose the textures folder", "Storage", "Documents", "Cancel", "No disc images here", "Open the folders until you find your .iso file.", "This folder is empty. Open another folder, or use this one.", "Tap a .iso file to choose it", "Disc", "Textures", "Point with the right controller and pull the trigger to interact.", "Choose another disc image, for example one in another language.", "Disc ready", "Optional. Add a folder with replacement textures.", "Device", "Ready", "Super Resolution", "Anti-aliasing", "Position" },
     { "JOGAR", "Jogar", "Configurações", "Pronto para jogar", "Trocar disco", "Escolher disco", "Escolha o disco do jogo", "Selecione o .iso do seu Resident Evil Code: Veronica X (SLUS-20184). Você só faz isso uma vez.",
       "Esse arquivo não pôde ser aberto. Escolha outro.", "Resolução", "recomendado", "Giro", "Conforto", "Mira", "Texturas HD",
       "Suave", "Desligado", "Médio", "Forte", "Laser", "Ponto", "Sem mira", "Ligado", "configuração recomendada aplicada", "Sair", "Adicionar texturas", "Pasta de texturas adicionada",
       "Permitir acesso aos arquivos", "O launcher precisa de permissão para ver seus arquivos, para você escolher o disco e as texturas. Na próxima tela, ative a opção deste app e volte aqui.",
       "Permitir", "Voltar", "Subir", "Usar esta pasta", "Nada aqui", "Nova versão %s disponível", "Baixar e instalar",
       "Para instalar, permita que este app instale atualizações. Ative a opção e volte aqui.", "Baixando...", "Confirme a instalação na janela do sistema", "A atualização falhou", "Tentar de novo",
-      "Escolha o disco (.iso)", "Escolha a pasta de texturas", "Armazenamento", "Documentos", "Cancelar", "Nenhum disco (.iso) aqui", "Abra as pastas até achar o seu arquivo .iso.", "Esta pasta está vazia. Abra outra pasta, ou use esta.", "Toque em um arquivo .iso para escolher", "Disco", "Texturas", "Apontar com o controle direito e puxar o gatilho para interagir.", "Escolha outra imagem de disco, por exemplo de outro idioma.", "Disco pronto", "Opcional. Adicione uma pasta com texturas de substituição.", "Aparelho", "Pronto" },
+      "Escolha o disco (.iso)", "Escolha a pasta de texturas", "Armazenamento", "Documentos", "Cancelar", "Nenhum disco (.iso) aqui", "Abra as pastas até achar o seu arquivo .iso.", "Esta pasta está vazia. Abra outra pasta, ou use esta.", "Toque em um arquivo .iso para escolher", "Disco", "Texturas", "Apontar com o controle direito e puxar o gatilho para interagir.", "Escolha outra imagem de disco, por exemplo de outro idioma.", "Disco pronto", "Opcional. Adicione uma pasta com texturas de substituição.", "Aparelho", "Pronto", "Super Resolution", "Suaviza\xC3\xA7\xC3\xA3o de bordas", "Posi\xC3\xA7\xC3\xA3o" },
     { "JUGAR", "Jugar", "Configuración", "Listo para jugar", "Cambiar disco", "Elegir disco", "Elige el disco del juego", "Selecciona el .iso de tu Resident Evil Code: Veronica X (SLUS-20184). Solo lo haces una vez.",
       "No se pudo abrir ese archivo. Elige otro.", "Resolución", "recomendado", "Giro", "Comodidad", "Mira", "Texturas HD",
       "Suave", "Apagado", "Medio", "Fuerte", "Láser", "Punto", "Sin mira", "Activado", "configuración recomendada aplicada", "Salir", "Agregar texturas", "Carpeta de texturas agregada",
       "Permitir acceso a los archivos", "El launcher necesita permiso para ver tus archivos y así elegir el disco y las texturas. En la siguiente pantalla, activa la opción de esta app y vuelve aquí.",
       "Permitir", "Volver", "Subir", "Usar esta carpeta", "Nada aquí", "Nueva versión %s disponible", "Descargar e instalar",
       "Para instalar, permite que esta app instale actualizaciones. Activa la opción y vuelve aquí.", "Descargando...", "Confirma la instalación en la ventana del sistema", "La actualización falló", "Reintentar",
-      "Elige el disco (.iso)", "Elige la carpeta de texturas", "Almacenamiento", "Documentos", "Cancelar", "No hay discos (.iso) aquí", "Abre las carpetas hasta encontrar tu archivo .iso.", "Esta carpeta está vacía. Abre otra carpeta, o usa esta.", "Toca un archivo .iso para elegirlo", "Disco", "Texturas", "Apunta con el control derecho y tira del gatillo para interactuar.", "Elige otra imagen de disco, por ejemplo en otro idioma.", "Disco listo", "Opcional. Agrega una carpeta con texturas de reemplazo.", "Dispositivo", "Listo" },
+      "Elige el disco (.iso)", "Elige la carpeta de texturas", "Almacenamiento", "Documentos", "Cancelar", "No hay discos (.iso) aquí", "Abre las carpetas hasta encontrar tu archivo .iso.", "Esta carpeta está vacía. Abre otra carpeta, o usa esta.", "Toca un archivo .iso para elegirlo", "Disco", "Texturas", "Apunta con el control derecho y tira del gatillo para interactuar.", "Elige otra imagen de disco, por ejemplo en otro idioma.", "Disco listo", "Opcional. Agrega una carpeta con texturas de reemplazo.", "Dispositivo", "Listo", "Super Resolution", "Suavizado de bordes", "Posici\xC3\xB3n" },
 };
 
 /* the launcher's file browser: folders first, then the .iso files (disc) - or only folders (textures) */
@@ -1604,7 +1617,7 @@ extern "C" int overlay_launcher_xr(void)
         auto button = [&](const char* id, const char* label, float x, float y, float w, float h, float fs, ImU32 bg, ImU32 line, float lw, float rad) -> bool {
             ImGui::SetCursorPos(ImVec2(x, y));
             ImGui::InvisibleButton(id, ImVec2(w, h));
-            bool hov = ImGui::IsItemHovered(), clicked = ImGui::IsItemDeactivated() && hov;
+            bool hov = ImGui::IsItemHovered(), clicked = ImGui::IsItemActivated();   /* at the press, as a click that is not lost when the controller moves while the trigger is pulled */
             dl->AddRectFilled(ImVec2(x, y), ImVec2(x + w, y + h), bg, rad);
             if (hov) dl->AddRectFilled(ImVec2(x, y), ImVec2(x + w, y + h), IM_COL32(255, 80, 80, 40), rad);
             dl->AddRect(ImVec2(x, y), ImVec2(x + w, y + h), hov ? IM_COL32(255, 96, 104, 255) : line, rad, 0, lw);
@@ -1752,7 +1765,7 @@ extern "C" int overlay_launcher_xr(void)
                 SDL_snprintf(id, sizeof id, "##e%d", i);
                 ImGui::SetCursorPos(ImVec2(listX, y));
                 ImGui::InvisibleButton(id, ImVec2(listW, rowH));
-                bool hov = ImGui::IsItemHovered(), clicked = ImGui::IsItemDeactivated() && hov;
+                bool hov = ImGui::IsItemHovered(), clicked = ImGui::IsItemActivated();   /* at the press, as a click that is not lost when the controller moves while the trigger is pulled */
                 if (hov) dl->AddRectFilled(ImVec2(listX + 4.0f, y + 2.0f), ImVec2(listX + listW - 4.0f, y + rowH - 2.0f), IM_COL32(58, 26, 24, 255), 8.0f);
                 else if ((scroll + i) & 1) dl->AddRectFilled(ImVec2(listX + 4.0f, y + 2.0f), ImVec2(listX + listW - 4.0f, y + rowH - 2.0f), IM_COL32(20, 18, 18, 255), 8.0f);
                 float iy = y + rowH * 0.5f;
@@ -1905,7 +1918,7 @@ extern "C" int overlay_launcher_xr(void)
                 if (button("##addtex", T[Q_ADD_TEX], cx, by + 210.0f, 330.0f, 72.0f, 26.0f, cPlay, cRed, 2.0f, 12.0f)) browse_start(2);
             } else {   /* settings */
                 float y = by;
-                const float rowH = 76.0f;   /* five rows = the emblem's height (380) */
+                const float rowH = 47.0f;   /* eight rows = the emblem's height (380) */
                 char id[32];
                 auto row = [&](const char* label) {
                     text(cx, y + (rowH - 21.0f) * 0.5f - 1.0f, 21.0f, cWhite, label);
@@ -1976,6 +1989,46 @@ extern "C" int overlay_launcher_xr(void)
                         x -= w;
                         SDL_snprintf(id, sizeof id, "##hd%d", v);
                         if (seg(id, lb[v], x, w, (g_tex_hd != 0) == (v != 0), false)) { g_tex_hd = v; config_save(); }
+                        x -= 8.0f;
+                    }
+                    y += rowH;
+                }
+                {   /* Meta Quest Super Resolution (xr.c, ini vr_sr): off / on */
+                    const char* lb[2] = { T[Q_OFF], T[Q_ON] };
+                    row(T[Q_SR]);
+                    float x = right;
+                    for (int v = 1; v >= 0; v--) {
+                        float w = tw(19.0f, lb[v]) + 32.0f;
+                        x -= w;
+                        SDL_snprintf(id, sizeof id, "##sr%d", v);
+                        if (seg(id, lb[v], x, w, (g_vr_sr != 0) == (v != 0), false)) { g_vr_sr = v; config_save(); }
+                        x -= 8.0f;
+                    }
+                    y += rowH;
+                }
+                {   /* anti-aliasing (gs_gl.c, ini vr_aa): off / on */
+                    const char* lb[2] = { T[Q_OFF], T[Q_ON] };
+                    row(T[Q_AA]);
+                    float x = right;
+                    for (int v = 1; v >= 0; v--) {
+                        float w = tw(19.0f, lb[v]) + 32.0f;
+                        x -= w;
+                        SDL_snprintf(id, sizeof id, "##aa%d", v);
+                        if (seg(id, lb[v], x, w, (g_vr_aa != 0) == (v != 0), false)) { g_vr_aa = v; config_save(); }
+                        x -= 8.0f;
+                    }
+                    y += rowH;
+                }
+                {   /* position (vr_glue.c, ini vr_seated): standing (the ammo box at the belt) / seated (at the chest) */
+                    static const char* const pos_lb[3][2] = { { "Standing", "Seated" }, { "Em p\xC3\xA9", "Sentado" }, { "De pie", "Sentado" } };
+                    const char* const* lb = pos_lb[lang >= 0 && lang < 3 ? lang : 0];
+                    row(T[Q_SEAT]);
+                    float x = right;
+                    for (int v = 1; v >= 0; v--) {
+                        float w = tw(19.0f, lb[v]) + 32.0f;
+                        x -= w;
+                        SDL_snprintf(id, sizeof id, "##seat%d", v);
+                        if (seg(id, lb[v], x, w, (g_vr_seated != 0) == (v != 0), false)) { g_vr_seated = v; config_save(); }
                         x -= 8.0f;
                     }
                 }

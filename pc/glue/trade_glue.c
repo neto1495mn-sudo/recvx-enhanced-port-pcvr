@@ -287,10 +287,50 @@ static void draw_hint(void)
     text_c(320, 24, s, 0.6f, g_trade.phase == TRADE_ASKED || s == coop_skip_hint ? pulse(0xFFE060) | 0xC0000000 : 0xFFFFFFFF);
 }
 
+/* The weapon wheel (vr_glue.c, ini vr_radial): the weapon at up / right / down / left with its inventory icon and "rounds in the gun / ammo in
+   the boxes" under it; the one the hand is over has a gold frame. The icons are loaded when it opens and let go when it closes, as the trade
+   screen's. Returns 1 while the wheel is open (it drew). */
+int vr_wheel_view(unsigned word[4], int box[4], int* sel, float scr[2], float ptr[2]);
+extern const float vr_wheel_dx[4], vr_wheel_dy[4];
+static unsigned wheel_idle;   /* trade_draw calls since the wheel was last open: the icons are kept loaded 60 s (loading them is a read of 1 MB and a texture sweep) */
+static int wheel_draw(void)
+{
+    const float *dx = vr_wheel_dx, *dy = vr_wheel_dy;   /* around her hand */
+    float cx[4], cy[4], scr[2], ptr[2];
+    unsigned word[4];
+    int box[4], sel, p;
+    if (!vr_wheel_view(word, box, &sel, scr, ptr)) return 0;
+    for (p = 0; p < 4; p++) { cx[p] = scr[0] + dx[p]; cy[p] = scr[1] + dy[p]; }
+    wheel_idle = 0;
+    { static int n; if (n++ < 3) host_log("wheel: wheel_draw open\n"); }
+    if (!icon_state) {
+        icon_state = icon_load() ? 1 : -1;
+        host_log("wheel: icons %s\n", icon_state > 0 ? "loaded" : "not loaded (names only)");
+    }
+    for (p = 0; p < 4; p++) {
+        int id = (word[p] >> 16) & 0xFF;
+        float w = (itemdata[id].type & 0x100) ? 136.0f : 68.0f, x = cx[p] - w / 2, y = cy[p] - 24.0f;
+        char b[24];
+        if (!id) continue;
+        pc_ui_rect(x - 6, y - 6, x + w + 6, y + 48 + 24, 0xB0000000, Z_UI - 0.02f);
+        if (p == sel) frame(x - 6, y - 6, x + w + 6, y + 48 + 24, 3.0f, 0xFFFFD040);
+        if (icon_state == 1) icon(word[p], x, y);
+        else { snprintf(b, sizeof(b), "%.12s", coop_item_name(word[p])); text_c(cx[p], y + 16, b, 0.4f, 0xFFE0E0E0); }
+        if (itemdata[id].type & 0x3800) {
+            if (word[p] & 0x8000000) snprintf(b, sizeof(b), "INF/%d", box[p]); else snprintf(b, sizeof(b), "%u/%d", word[p] & 0xFFFF, box[p]);
+            text_c(cx[p], y + 52, b, 0.5f, p == sel ? 0xFFFFE070 : 0xFFE0FFD0);
+        }
+    }
+    (void)ptr;   /* the pointer is the gun's sight dot, in 3D (vr_glue.c radial_dot) */
+    return 1;
+}
+
 void trade_draw(void)
 {
+    { static int n; if (n < 3) { n++; host_log("wheel: trade_draw called (%d)\n", n); } }
+    if (wheel_draw()) return;
     if (!coop_on || g_trade.phase != TRADE_OPEN) {
-        if (icon_state) icon_unload();
+        if (icon_state && ++wheel_idle > 1800) icon_unload();   /* (1800 game frames: 60 s) */
         if (coop_on) draw_hint();
         return;
     }

@@ -114,7 +114,8 @@ static const char* const sources[] = { "Auto", "Keyboard/mouse only", "Gamepad o
 static const char* const extras[] = { "Off", "Up to 1 per room", "Up to 2 per room", "Up to 3 per room" };
 
 /* vr116: the VR comfort page - the few VR options to set before playing (the rest stay in recvx.ini) */
-extern int g_vr_turn, g_vr_sight, g_vr_comfort, g_vr_res, g_vr_dyn_res, g_vr_fps;
+extern int g_vr_seated;
+extern int g_vr_turn, g_vr_sight, g_vr_comfort, g_vr_res, g_vr_dyn_res, g_vr_fps, g_vr_radial, g_vr_seated, g_vr_sr, g_vr_aa, g_vr_pouch;
 static const int vr_turns[] = { 0, 15, 30, 45, 60, 90 };
 static int vr_turn_get(void) { int b = 0; for (int i = 0; i < (int)SDL_arraysize(vr_turns); i++) if (abs(vr_turns[i] - g_vr_turn) < abs(vr_turns[b] - g_vr_turn)) b = i; return b; }
 static void vr_turn_set(int v) { if (v >= 0 && v < (int)SDL_arraysize(vr_turns)) g_vr_turn = vr_turns[v]; }
@@ -126,6 +127,19 @@ static const char* const vr_sights[] = { "Laser", "Dot", "Off" };
 static const char* const vr_comforts[] = { "Off", "Medium", "Strong" };
 static int vr_sight_get(void) { return g_vr_sight >= 2 ? 0 : g_vr_sight == 1 ? 1 : 2; }
 static void vr_sight_set(int v) { if (v >= 0 && v < 3) g_vr_sight = vr_sight_v[v]; }
+extern void vr_hol_adjust(int which), vr_hol_defaults(int mode);   /* glue/vr_glue.c */
+static void hol_restore(void) { vr_hol_defaults(g_vr_seated ? 1 : 0); }
+static void hol_adj1(void) { vr_hol_adjust(1); }
+static void hol_adj2(void) { vr_hol_adjust(2); }
+static void hol_rot1(void) { vr_hol_adjust(3); }
+static void hol_rot2(void) { vr_hol_adjust(4); }
+extern void vr_arr_adjust(void);
+static void arr_adj(void) { vr_arr_adjust(); }
+extern void vr_recoil_learn(void);
+static void rc_learn(void) { vr_recoil_learn(); }
+static const char* const vr_positions[] = { "Standing", "Seated" };
+static int vr_pos_get(void) { return g_vr_seated ? 1 : 0; }
+static void vr_pos_set(int v) { g_vr_seated = v ? 1 : 0; }
 static int vr_comfort_get(void) { return g_vr_comfort <= 0 ? 0 : g_vr_comfort <= 2 ? 1 : 2; }
 static void vr_comfort_set(int v) { if (v >= 0 && v < 3) g_vr_comfort = vr_comfort_v[v]; }
 
@@ -149,14 +163,38 @@ static void subs_set(int v) { g_subtitles = subs_at(v) < 0 ? 0 : 2 + subs_at(v);
 static const char* subs_name(int v, char* b, int n) { snprintf(b, n, "%s", subs_at(v) < 0 ? tr("Off") : lang_names[subs_at(v)]); return b; }
 static const char* subs_locked(void) { return subs_n() < 2 ? "No language with subtitles is installed." : NULL; }
 const Setting g_settings[] = {
+    { SP_VR, "Position", NULL, 0, 1, 1, vr_positions, .get = vr_pos_get, .set = vr_pos_set, .group = "POSITION",
+      .help = "Standing: the ammo box at your belt. Seated: the ammo box up at your chest, close and easy to reach in a chair." },
+    { SP_VR, "Adjust holster: single ammo", NULL, .flags = SET_ACTION, .apply = hol_adj1, .group = "HOLSTERS",
+      .help = "Where the ammo holster of the guns with one kind of ammo hangs (the pistols, the shotgun...). Leave the menu, hold the left grip on the holster (a red disc is over it) and drag it where you want it; A is done." },
+    { SP_VR, "Adjust holster: launcher, bow gun", NULL, .flags = SET_ACTION, .apply = hol_adj2,
+      .help = "The same for the guns with several kinds of ammo (the grenade launcher, the bow gun): all their holsters move together. Leave the menu, hold the left grip on the holsters and drag; A is done." },
+    { SP_VR, "Restore holsters", NULL, .flags = SET_ACTION | SET_NOW, .apply = hol_restore,
+      .help = "Puts both holsters of the position you are in (Standing or Seated) back to their default places." },
+    { SP_VR, "Rotate holster (developer): single ammo", NULL, .flags = SET_ACTION | SET_DEV, .apply = hol_rot1,
+      .help = "As the adjust, and the right stick also turns the holster sideways. The view is held still until A." },
+    { SP_VR, "Rotate holster (developer): launcher, bow gun", NULL, .flags = SET_ACTION | SET_DEV, .apply = hol_rot2,
+      .help = "As the adjust, and the right stick also turns the holsters sideways. The view is held still until A." },
+    { SP_VR, "Adjust ammo guide (developer)", NULL, .flags = SET_ACTION | SET_DEV, .apply = arr_adj,
+      .help = "A guide, a faint orange silhouette of the ammo, where the ammo is fitted in the gun in hand (each gun has its own). Leave the menu with the gun in hand: the guide is shown on the gun; hold the left grip and drag it, the right stick turns it left and right; A keeps it."},
+    { SP_VR, "Learn recoil (developer)", NULL, .flags = SET_ACTION | SET_DEV, .apply = rc_learn,
+      .help = "Leave the menu with a gun in hand, fire a few times and kick the controller the way the gun would; press A to keep the average of the shots as that gun's recoil: the same motion is played at every shot. Each gun keeps its own."},
     { SP_VR, "Snap turn", NULL, 0, 5, 1, .get = vr_turn_get, .set = vr_turn_set, .name = vr_turn_name, .group = "COMFORT",
       .help = "Right stick: turn in steps of this many degrees, or Smooth for a continuous turn." },
     { SP_VR, "Comfort vignette", NULL, 0, 2, 1, vr_comforts, .get = vr_comfort_get, .set = vr_comfort_set,
       .help = "Darkens the edges of the view only while you walk with the stick or turn; walking in your room does not." },
     { SP_VR, "Sight", NULL, 0, 2, 1, vr_sights, .get = vr_sight_get, .set = vr_sight_set, .group = "WEAPONS",
       .help = "Laser: a faint red beam from the gun to where the shot hits. Dot: a small ring there. Off: no sight." },
+    { SP_VR, "Weapon wheel", V(g_vr_radial), 0, 1, 1,
+      .help = "Hold the right stick click in play, move the right hand up, right, down or left over a weapon, let go: it is in your hand. The map is on X." },
     { SP_VR, "Resolution", V(g_vr_res), 50, 200, 10, .fmt = "%d%%", .group = "PICTURE",
       .help = "Each eye's resolution, in percent of what the headset recommends. Higher is sharper and heavier for the GPU." },
+    { SP_VR, "Ammo pouch model", V(g_vr_pouch), 0, 1, 1,
+      .help = "The ammo box at your holster is drawn as a leather pouch (a 3D model). Off: the plain box." },
+    { SP_VR, "Anti-aliasing", V(g_vr_aa), 0, 1, 1,
+      .help = "Smooths the jagged edges of the picture in the headset (FXAA). A little GPU; it also softens the picture slightly." },
+    { SP_VR, "Super Resolution", V(g_vr_sr), 0, 1, 1,
+      .help = "Sharpens the picture in the headset (an edge-aware sharpening upscale, in the idea of Qualcomm's Snapdragon Game Super Resolution; the headset's Meta Quest Super Resolution is asked too). Costs a little GPU." },
     { SP_VR, "Dynamic resolution", V(g_vr_dyn_res), 0, 1, 1,   /* vr177 */
       .help = "Lowers the resolution by itself in heavy places and raises it back after. Off: the resolution stays fixed." },
     { SP_VR, "Show frame rate", V(g_vr_fps), 0, 1, 1, .group = "INFO",

@@ -885,6 +885,9 @@ void bhDrawEffect()
     {
         bhDrawPolEffect((unsigned int*)sys->ef_pol, sys->ef_poln);
     }
+#ifdef TARGET_PC
+    { extern void pc_vr_held_magazine(void); pc_vr_held_magazine(); }   /* VR: the magazine in the left hand, drawn with the effect models (pc/glue/mag_glue.c) */
+#endif
     
     njControl3D(0x2400);
     
