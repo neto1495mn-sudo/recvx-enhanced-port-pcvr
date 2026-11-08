@@ -26,6 +26,7 @@ static int knife_slot, prev_slot, prev_id;
 static int since_release;               /* game frames since the key was released (state 2) */
 
 static unsigned int* inv(void) { return &sys->itm[sys->ply_id * 16]; }
+static void radial_apply(void);
 
 /* normal play: our player in control; no event, door, menu, first person or weapon load running */
 static int in_play(void)
@@ -171,7 +172,56 @@ unsigned int knife_pad(unsigned int pad)
         if (since_release == 1 || since_release % 60 == 0) host_log("knife: waiting for the wall bounce to end before giving the weapon back (%d frames)\n", since_release);
     } else
     if (state == 2 && (at_rest() || (vr_on() && in_play() && since_release >= 1))) give_back();
+    radial_apply();   /* the weapon wheel's choice (below) */
     if (!state && vr_on()) vr_sync_slot();
     if (state == 1 && in_play() && !(vr_on() && vr_on_stairs())) pad |= 0x10;   /* readied: fire slashes (vr186: not on stairs) */
     return pad;
+}
+
+/* Weapon wheel (vr_glue.c): the wheel asks for a slot, the equip is done here in the pad hook, with the
+   knife's own checks (normal play, no knife draw running, not on the stairs) and the inventory's
+   WeaponSet. A slot already in hand is left alone (WeaponSet would put it away). */
+static int radial_req;
+static int radial_wait;    /* game frames a request may wait for the player to be at rest or aiming (a shot, a reload, the knife's wall bounce are not: the old weapon's motions) */
+static int radial_unaim;   /* game frames left to hold the aim key off after a wheel equip made in the aim stance */
+
+int radial_item_weapon(unsigned int itemid) { return item_weapon(itemid); }
+int radial_can_equip(void) { return state == 0 && in_play() && !vr_on_stairs(); }
+void radial_request(int slot) { radial_req = slot; radial_wait = 45; }
+/* vr_glue.c vr_tps_keys: 1 while the aim and fire keys must stay off (a wheel equip made in the aim stance: until the game has left it) */
+int radial_hold_aim(void)
+{
+    if (!radial_unaim) return 0;
+    if (!plp || plp->mode1 != 1 || --radial_unaim == 0) { radial_unaim = 0; return 0; }
+    return 1;
+}
+static void radial_apply(void)
+{
+    unsigned int* iv = inv();
+    int s = radial_req;
+    if (!s) return;
+    if (s < 1 || s > ((sys->gm_flg & 0x8000000) ? 11 : 9)) { radial_req = 0; return; }
+    /* Only at rest (walking, standing, turning) or in the aim stance's ready states (mode2 64..67): in the shot (69), the reload (70) or the knife's wall bounce (72)
+       the old weapon's motions run, and the new weapon has none of them (vr187: the game fell in its motion code). The request waits for it, up to 45 frames. */
+    if (state || !in_play() || vr_on_stairs() || !((plp->mode1 == 0 && plp->mode2 <= 11) || (plp->mode1 == 1 && plp->mode2 >= 64 && plp->mode2 <= 67))) {
+        if (--radial_wait <= 0) radial_req = 0;
+        return;
+    }
+    radial_req = 0;
+    if (iv[0] == (unsigned int)s || item_weapon(iv[s] >> 16) <= 0) return;
+    host_log("wheel: slot %d (item %u) in hand, before: slot %u (mode %d/%d)\n", s, ID(iv[s]), iv[0], plp->mode1, plp->mode2);
+    equip(s);
+    /* The inventory can only be opened outside the aim stance, so the game never changes weapon inside it: the weapon number changed here
+       under a raised aim kept the old weapon's aim state (its sight, its fire state: the lighter's flame left in the air at each
+       trigger). Let go of the aim as the inventory's open does: the game's own aim end (mode2 68) runs with the new weapon, and the aim
+       starts again by itself when the key is back (radial_hold_aim, held off until the stance is left). */
+    if (plp->mode1 == 1) radial_unaim = 90;
+    /* ... and the game's own aim end now (player.c bhCPM2_act_wpn, the aim key let go: mode2 68, mode3 0, at_flg 0). Waiting for the key to
+       do it took half a second, and a trigger pulled meanwhile found the old aim state (at_flg 0x10 set, mode2 65): the shot state 69 with
+       the lighter - the flame spawned by the gun's fire path. at_flg 0 takes the fire away at once. */
+    if (plp->mode1 == 1 && plp->mode2 >= 64 && plp->mode2 <= 67) { plp->mode2 = 68; plp->mode3 = 0; plp->at_flg = 0; }
+    /* "can raise aim" (plp->flg 0x20000, the game's aim entry needs it) is set by bhSetPlayer for a weapon above the lighter (number > 1) and
+       is not touched by WeaponSet: left from the gun, the lighter was raised and fired as a gun (mode 1/1/69 in the log: the flame spawned
+       by the gun's fire path, left in the air). As bhSetPlayer would have it for this weapon: */
+    if (plp->wpnr_no > 1) plp->flg |= 0x20000; else plp->flg &= ~0x20000;
 }

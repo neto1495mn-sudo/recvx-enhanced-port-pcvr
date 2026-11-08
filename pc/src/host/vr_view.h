@@ -43,6 +43,15 @@ typedef struct {
     int   box_mode;             /* vr87: the ammo box drawn: 0 none, 1 at the holster, 2 in the left hand */
     float box_c[8][3];          /* ... its corners (world; bit 0 x+, bit 1 y+, bit 2 z+) */
     float box_amb[3];           /* ... the room's item light */
+    float box_open;             /* ... how far the ammo pouch is open, 0..1 (the magazine is out, or the aim held: the ammo can be taken) */
+    int   box_n;                /* the grenade launcher: how many holsters (1 per ammo type in the inventory; 0 = the one box); each beside the first by box_dx (metres, along the box's x axis) */
+    float box_dx[4];
+    int   ghost_on;             /* the bow gun's arrow guide: shown, its tail and tip (world), the colour (0xRRGGBB) and alpha (0..127, bits 24..) */
+    float ghost_a[3], ghost_b[3];
+    int   ghost_shape;          /* 0 an arrow, 1 a circle, 2 a rectangle */
+    float ghost_hw;             /* its half width (the circle's radius), metres */
+    int   ghost_val;
+    float box_op[4];            /* ... and how far each of those pouches is open (0..1: the hand is at it) */
     int   box_item;             /* vr131: ... the ammo item it is (the gun in hand's; -1 none): its own picture when known */
     int   laser_ok[2];          /* vr77: the laser sight of each hand's gun (world): muzzle -> hit */
     float laser_a[2][3], laser_b[2][3];
@@ -50,7 +59,7 @@ typedef struct {
     int   turn_at;              /* vr141: g_vr_turn_total as this frame took it (the renderer shows the rest) */
     float turn;                 /* vr120: the view's smooth turn this frame (radians, the change of vr_yaw; 0 for a snap turn) */
 } VrView;
-enum { VRMK_DOT = 0, VRMK_BUTTON = 1, VRMK_NUMBER = 2, VRMK_RING = 3 };   /* vr223: VRMK_RING the shotgun's round reticle (RE4's) */   /* aiming dot, the "A" over what the action button would use, the holster's ammo count */
+enum { VRMK_DOT = 0, VRMK_BUTTON = 1, VRMK_NUMBER = 2, VRMK_RING = 3, VRMK_CURSOR = 4, VRMK_BALL = 5, VRMK_BALLW = 6 };   /* VRMK_BALL: a shaded ball (val = 0xRRGGBB) at a holster (the body's frame, as the count), VRMK_BALLW: the same at a world point (the hand) */   /* VRMK_CURSOR: the weapon wheel's pointer (a small square, 1.5 times the sight dot) */   /* vr223: VRMK_RING the shotgun's round reticle (RE4's) */   /* aiming dot, the "A" over what the action button would use, the holster's ammo count */
 
 /* small 4x4 helpers (column-major), vr_math.c */
 void vr_mat_identity(float m[16]);

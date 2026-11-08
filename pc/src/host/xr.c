@@ -135,6 +135,8 @@ static int lost;                /* the session ended for good: back to the deskt
 static double hz;               /* from the predicted display period */
 static int64_t chain_fmt;
 static GLuint blit_fbo;
+int g_vr_sr;    /* ini vr_sr: the sharpening upscale of the eye images (gs_gl.c present pass) */
+volatile int g_vr_stick_lock;   /* weapon wheel (vr_glue.c): the right stick is for choosing, not turning - turn and scope zoom see it centred */
 int g_vr_fps;   /* ini vr_fps: the frame-rate readout in the headset (fps_layer) */
 static Chain fps_chain;
 
@@ -427,6 +429,7 @@ static void read_actions(XrTime t)
         axis_hold(&hr, "right stick", &in.rx, &in.ry, now, STICK_HOLD_MS);
         axis_hold(&ht, "left trigger", &in.ltrig, &zero, now, STICK_HOLD_MS);
     }
+    if (g_vr_stick_lock) in.rx = in.ry = 0.0f;
     in.buttons = (get_b(a_a) ? VRB_A : 0) | (get_b(a_b) ? VRB_B : 0) | (get_b(a_x) ? VRB_X : 0) | (get_b(a_y) ? VRB_Y : 0) |
                  (get_b(a_menu) ? VRB_MENU : 0) | (get_b(a_lclick) ? VRB_LSTICK : 0) | (get_b(a_rclick) ? VRB_RSTICK : 0);
     {   /* Hold X for 2 s: the game in progress is saved to save 15 (the keyboard's F9); hold Y for 2 s: back to the title, which loads save 15 (F10) - in the

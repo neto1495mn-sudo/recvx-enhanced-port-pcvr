@@ -12,6 +12,7 @@
  * frame-blend copy in PS2_swap, ...).
  */
 #include "gs.h"
+#include "pouch_data.h"
 #include "native.h"
 #include "textures.h"
 #include "texreplace.h"
@@ -140,9 +141,18 @@ static DrawState batch_state;
 static int batch_valid;
 
 static GLuint prog, vao, vbo, present_prog, present_vao, svao, svbo;
-static GLint u_vr_on, u_vr_src, u_vr_dst, u_vr_m0, u_vr_m1, u_vr_m2, u_vr_m3, u_vr_zab, u_vr_zs, u_vr_hud;
+/* the overlay (ImGui) sets GL state behind the GL state cache's back (Android: gl_cache.c) */
+#ifdef __ANDROID__
+#define overlay_render_c() do { overlay_render(); { extern void and_glcache_reset(void); and_glcache_reset(); } } while (0)
+#else
+#define overlay_render_c() overlay_render()
+#endif
+static GLint u_vr_on, u_vr_src, u_vr_dst, u_vr_m0, u_vr_m1, u_vr_m2, u_vr_m3, u_vr_zab, u_vr_zs, u_vr_hud, u_vr_pr0, u_vr_pr1, u_vr_pr2, u_vr_pr3;
 /* VR re-projection of the draws being replayed for an eye (gs_present_vr); off otherwise */
-static struct { int on; float src[4], dst[4], m[16], zab[2], zs, hud[3]; } vr_u;
+static struct { int on; float src[4], dst[4], m[16], zab[2], zs, hud[3], pm[16]; int pl; } vr_u;   /* pm, pl: the panel held at the head as it is now (g_vr_panel_live) */
+volatile int g_vr_panel_live;   /* vr_glue.c: the weapon wheel is open - its 2D panel follows the head of every image, not the head of the game frame */
+extern int g_vr_sr;        /* xr.c: ini vr_sr - the super resolution: here the sharpening upscale in present_fs, there the compositor's hint */
+int g_vr_aa = 1;           /* ini vr_aa: anti-aliasing (FXAA) of the picture as it is drawn onto the eye images (present_fs) */
 int g_vr_hud_dist = 200;   /* ini vr_hud_dist: the panel of the game's texts and 2D, cm in front of the head */
 int g_vr_hud_y = 0;        /* ini vr_hud_y: the panel moved up (+) or down (-), cm */
 int g_vr_hud_angle = 42;   /* ini vr_hud_angle: its width seen from the head (degrees); 0 = drawn over the whole view as before */
@@ -164,7 +174,7 @@ static void vr_stat_vertex_p(const GlVertex* o, char path)
 static void vr_stat_vertex(const GlVertex* o) { vr_stat_vertex_p(o, 'N'); }
 static GLint u_rt_size, u_rt_margin, u_tme, u_tfx, u_tcc, u_fst, u_texsize, u_fge, u_fogcol, u_ate, u_atst, u_aref,
              u_tex, u_tex_alpha_scale, u_texofs, u_premul, u_zscale, u_clamp_mode, u_clamp_vals, u_afail_pass, u_rt16, u_dbg;
-static GLint up_tex, up_rect, up_pic;
+static GLint up_tex, up_rect, up_pic, up_aa, up_sr;
 
 static const char* vs_src =
     "#version 330 core\n"
@@ -180,7 +190,7 @@ static const char* vs_src =
        (columns) take V to the eye's view (same axes: x right, y down, z forward), which is
        projected with the eye's frustum onto the display area (u_vr_dst: c', k'). The GS depth
        is kept, so the game's depth tests between draws behave as before. */
-    "uniform int u_vr_on; uniform vec4 u_vr_src, u_vr_dst, u_vr_m0, u_vr_m1, u_vr_m2, u_vr_m3; uniform vec2 u_vr_zab; uniform float u_vr_zs; uniform vec4 u_vr_hud;\n"
+    "uniform int u_vr_on; uniform vec4 u_vr_src, u_vr_dst, u_vr_m0, u_vr_m1, u_vr_m2, u_vr_m3; uniform vec2 u_vr_zab; uniform float u_vr_zs; uniform vec4 u_vr_hud, u_vr_pr0, u_vr_pr1, u_vr_pr2, u_vr_pr3;\n"
     /* everything perspective-correct: for GS vertices w = 1, so that is the GS's screen-space
        interpolation; native 3D triangles stay whole where VU1 would have cut them at the guard
        band, and screen-linear colour/fog across a triangle reaching far off-screen near the
@@ -195,7 +205,12 @@ static const char* vs_src =
     /* a_vr 3: the game's own 2D (texts, message window, icons; not the screen layers): on a
        panel u_vr_hud.y units in front of the frame's head, u_vr_hud.x units per pixel from the
        screen centre - re-projected like the 3D, so it sits still in front of the eyes */
-    "    if (vrm > 2.5) V = vec3((P.x / P.w - u_vr_src.x) * u_vr_hud.x, (P.y / P.w - u_vr_src.y) * u_vr_hud.x - u_vr_hud.z, u_vr_hud.y);\n"
+    "    if (vrm > 2.5) {\n"
+    "      V = vec3((P.x / P.w - u_vr_src.x) * u_vr_hud.x, (P.y / P.w - u_vr_src.y) * u_vr_hud.x - u_vr_hud.z, u_vr_hud.y);\n"
+    /* u_vr_pr3.w: the panel kept at the head of THIS image: the panel's point in the frame's V space moved by u_vr_pr* (iA * head now * axes) - walking, the
+       frame's head is left behind between two game frames and the panel stepped at 30 Hz, a trail */
+    "      if (u_vr_pr3.w > 0.5) V = u_vr_pr0.xyz * V.x + u_vr_pr1.xyz * V.y + u_vr_pr2.xyz * V.z + u_vr_pr3.xyz;\n"
+    "    }\n"
     "    else {\n"
     /* a_vr 2: sprite/line corners of 3D points (w = 1): the view depth from the GS depth, z = -b / Vz - a */
     "      if (vrm > 1.5) P = vec4(P.xy, P.z, 1.0) * (-u_vr_zab.y / (P.z + u_vr_zab.x));\n"
@@ -290,9 +305,66 @@ static const char* present_vs =
    values, so the image is the same as without it. gs_picture is the same on the CPU. */
 static const char* present_fs =
     "#version 330 core\n"
-    "in vec2 v_uv; uniform sampler2D u_tex; uniform vec4 u_pic; out vec4 o;\n"
+    "in vec2 v_uv; uniform sampler2D u_tex; uniform vec4 u_pic; uniform float u_aa; uniform float u_sr; out vec4 o;\n"
+    "vec3 fx(vec2 uv){ return clamp(texture(u_tex, uv).rgb, 0.0, 1.0); }\n"
+    /* Snapdragon Game Super Resolution 1 (sgsr1_shader_mobile.frag, operation mode RGBA: the green channel is the luma), copied as it is from
+       https://github.com/SnapdragonGameStudios/snapdragon-gsr - Copyright (c) 2025, Qualcomm Innovation Center, Inc. All rights reserved. SPDX-License-Identifier: BSD-3-Clause.
+       Redistribution and use in source and binary forms, with or without modification, are permitted provided that the conditions of the BSD 3-Clause licence are met
+       (THIRD_PARTY_NOTICES.md has the licence text). Here it gives the luma change (deltaY) that the edge-aware 12-tap Lanczos-like filter wants at this pixel; the caller adds it. */
+    "float fastLanczos2(float x){ float wA = x - 4.0; float wB = x * wA - wA; wA *= wA; return wB * wA; }\n"
+    "vec2 weightY(float dx, float dy, float c, float std){ float x = ((dx * dx) + (dy * dy)) * 0.55 + clamp(abs(c) * std, 0.0, 1.0); float w = fastLanczos2(x); return vec2(w, w * c); }\n"
+    "float sgsrDelta(vec2 uv, float lumaC){\n"
+    "  vec2 sz = vec2(textureSize(u_tex, 0)); vec4 vp = vec4(1.0 / sz, sz);\n"
+    "  vec2 imgCoord = uv * vp.zw + vec2(-0.5, 0.5); vec2 imgPixel = floor(imgCoord); vec2 coord = imgPixel * vp.xy; vec2 pl = imgCoord - imgPixel;\n"
+    "  vec4 left = textureGather(u_tex, coord, 1);\n"
+    "  float edgeVote = abs(left.z - left.y) + abs(lumaC - left.y) + abs(lumaC - left.z);\n"
+    "  if (edgeVote <= 8.0 / 255.0) return 0.0;\n"
+    "  coord.x += vp.x;\n"
+    "  vec4 right = textureGather(u_tex, coord + vec2(vp.x, 0.0), 1);\n"
+    "  vec4 upDown; upDown.xy = textureGather(u_tex, coord + vec2(0.0, -vp.y), 1).wz; upDown.zw = textureGather(u_tex, coord + vec2(0.0, vp.y), 1).yx;\n"
+    "  float mean = (left.y + left.z + right.x + right.w) * 0.25;\n"
+    "  left -= vec4(mean); right -= vec4(mean); upDown -= vec4(mean);\n"
+    "  float cw = lumaC - mean;\n"
+    "  float sum = abs(left.x) + abs(left.y) + abs(left.z) + abs(left.w) + abs(right.x) + abs(right.y) + abs(right.z) + abs(right.w) + abs(upDown.x) + abs(upDown.y) + abs(upDown.z) + abs(upDown.w);\n"
+    "  float std = 2.181818 / sum;\n"
+    "  vec2 aWY = weightY(pl.x, pl.y + 1.0, upDown.x, std);\n"
+    "  aWY += weightY(pl.x - 1.0, pl.y + 1.0, upDown.y, std);\n"
+    "  aWY += weightY(pl.x - 1.0, pl.y - 2.0, upDown.z, std);\n"
+    "  aWY += weightY(pl.x, pl.y - 2.0, upDown.w, std);\n"
+    "  aWY += weightY(pl.x + 1.0, pl.y - 1.0, left.x, std);\n"
+    "  aWY += weightY(pl.x, pl.y - 1.0, left.y, std);\n"
+    "  aWY += weightY(pl.x, pl.y, left.z, std);\n"
+    "  aWY += weightY(pl.x + 1.0, pl.y, left.w, std);\n"
+    "  aWY += weightY(pl.x - 1.0, pl.y - 1.0, right.x, std);\n"
+    "  aWY += weightY(pl.x - 2.0, pl.y - 1.0, right.y, std);\n"
+    "  aWY += weightY(pl.x - 2.0, pl.y, right.z, std);\n"
+    "  aWY += weightY(pl.x - 1.0, pl.y, right.w, std);\n"
+    "  float finalY = aWY.y / aWY.x;\n"
+    "  float maxY = max(max(left.y, left.z), max(right.x, right.w)), minY = min(min(left.y, left.z), min(right.x, right.w));\n"
+    "  finalY = clamp(2.0 * finalY, minY, maxY);\n"
+    "  return clamp(finalY - cw, -23.0 / 255.0, 23.0 / 255.0);\n"
+    "}\n"
     "void main(){\n"
-    "  vec3 c = clamp(texture(u_tex, v_uv).rgb, 0.0, 1.0);\n"
+    "  vec3 c, m = fx(v_uv);\n"
+    /* The eye images only (draw_area_to; u_aa, u_sr 0 for every other use), in this same pass: the drawn target is stretched to the eye, and meanwhile
+       - u_aa: FXAA (Lottes' short form): the game's 3D is drawn into it without any anti-aliasing; find the edges by the luma of the four corners, blur along them;
+       - u_sr: Snapdragon Game Super Resolution 1 (above): its luma delta is added to the colour, which is then edge-aware sharpened as the upscale of the target. */
+    "  c = m;\n"
+    "  if (u_aa > 0.0) {\n"
+    "    vec2 px = 1.0 / vec2(textureSize(u_tex, 0));\n"
+    "    vec3 nw = fx(v_uv + vec2(-1.0, -1.0) * px), ne = fx(v_uv + vec2(1.0, -1.0) * px), sw = fx(v_uv + vec2(-1.0, 1.0) * px), se = fx(v_uv + vec2(1.0, 1.0) * px);\n"
+    "    const vec3 L = vec3(0.299, 0.587, 0.114);\n"
+    "    float lnw = dot(nw, L), lne = dot(ne, L), lsw = dot(sw, L), lse = dot(se, L), lm = dot(m, L);\n"
+    "    float lmin = min(lm, min(min(lnw, lne), min(lsw, lse))), lmax = max(lm, max(max(lnw, lne), max(lsw, lse)));\n"
+    "    vec2 dir = vec2(-((lnw + lne) - (lsw + lse)), (lnw + lsw) - (lne + lse));\n"
+    "    float red = max((lnw + lne + lsw + lse) * (0.25 / 8.0), 1.0 / 128.0);\n"
+    "    dir = clamp(dir * (1.0 / (min(abs(dir.x), abs(dir.y)) + red)), vec2(-8.0), vec2(8.0)) * px;\n"
+    "    vec3 a = 0.5 * (fx(v_uv + dir * (1.0 / 3.0 - 0.5)) + fx(v_uv + dir * (2.0 / 3.0 - 0.5)));\n"
+    "    vec3 b = a * 0.5 + 0.25 * (fx(v_uv + dir * -0.5) + fx(v_uv + dir * 0.5));\n"
+    "    float lb = dot(b, L);\n"
+    "    c = (lb < lmin || lb > lmax) ? a : b;\n"
+    "  }\n"
+    "  if (u_sr > 0.0) c = clamp(c + vec3(sgsrDelta(v_uv, m.g)), 0.0, 1.0);\n"
     "  if (u_pic.w != 0.0) c = clamp((pow(c, vec3(u_pic.z)) - 0.5) * u_pic.y + 0.5 + u_pic.x, 0.0, 1.0);\n"
     "  o = vec4(c, 1.0);\n"
     "}\n";
@@ -346,12 +418,14 @@ void gs_renderer_init(void)
 #define U(n) u_##n = glGetUniformLocation(prog, "u_" #n)
     U(rt_size); U(rt_margin); U(tme); U(tfx); U(tcc); U(fst); U(texsize); U(fge); U(fogcol); U(ate); U(atst); U(aref);
     U(tex); U(tex_alpha_scale); U(texofs); U(premul); U(zscale); U(clamp_mode); U(clamp_vals); U(afail_pass); U(rt16); U(dbg);
-    U(vr_on); U(vr_src); U(vr_dst); U(vr_m0); U(vr_m1); U(vr_m2); U(vr_m3); U(vr_zab); U(vr_zs); U(vr_hud);
+    U(vr_on); U(vr_src); U(vr_dst); U(vr_m0); U(vr_m1); U(vr_m2); U(vr_m3); U(vr_zab); U(vr_zs); U(vr_hud); U(vr_pr0); U(vr_pr1); U(vr_pr2); U(vr_pr3);
 #undef U
     present_prog = compile(present_vs, present_fs);
     up_tex = glGetUniformLocation(present_prog, "u_tex");
     up_rect = glGetUniformLocation(present_prog, "u_rect");
     up_pic = glGetUniformLocation(present_prog, "u_pic");
+    up_aa = glGetUniformLocation(present_prog, "u_aa");
+    up_sr = glGetUniformLocation(present_prog, "u_sr");
 
     glGenVertexArrays(1, &vao);
     glGenVertexArrays(1, &svao);
@@ -1327,6 +1401,10 @@ void gs_flush(void)
         uni2f(u_vr_zab, vr_u.zab[0], vr_u.zab[1]);
         uni1f(u_vr_zs, vr_u.zs);
         uni4f(u_vr_hud, vr_u.hud[0], vr_u.hud[1], vr_u.hud[2], 0.0f);
+        uni4f(u_vr_pr0, vr_u.pm[0], vr_u.pm[1], vr_u.pm[2], 0.0f);
+        uni4f(u_vr_pr1, vr_u.pm[4], vr_u.pm[5], vr_u.pm[6], 0.0f);
+        uni4f(u_vr_pr2, vr_u.pm[8], vr_u.pm[9], vr_u.pm[10], 0.0f);
+        uni4f(u_vr_pr3, vr_u.pm[12], vr_u.pm[13], vr_u.pm[14], vr_u.pl ? 1.0f : 0.0f);
     }
     {
         uint32_t zpsm = (st->ctx.zbuf >> 24) & 0xF;
@@ -1816,6 +1894,7 @@ static void draw_display(GLuint tex, int rt_vw, int rt_vh)
             int on = picture(&b, &k, &ig);
             glUniform4f(up_pic, b, k, ig, on ? 1.0f : 0.0f);
         }
+        glUniform1f(up_aa, 0.0f); glUniform1f(up_sr, 0.0f);   /* (draw_area_to turns the anti-aliasing and the super resolution on for the eye images only) */
         {
             float x0 = g_margin_x && dw > 640.0f ? 0.0f : (float)g_margin_x;
             glUniform4f(up_rect, x0 / rt_vw, 0.0f, (x0 + dw) / rt_vw, dh / rt_vh);
@@ -2283,6 +2362,29 @@ static const char* mk_fs =
     "    float a = max(ring, cd) * 0.9;\n"
     "    if (a <= 0.0) discard; o = vec4(1.0, 1.0, 1.0, a); return;\n"
     "  }\n"
+    "  if (u_kind == 5) {\n"   /* the colour of an ammo holster (the grenade launcher): a flat circle with a thin dark rim, its colour the value 0xRRGGBB */
+    "    float r = length(v_c); aa = fwidth(r);\n"
+    "    float a = 1.0 - smoothstep(1.0 - aa * 1.5, 1.0, r);\n"
+    "    if (a <= 0.0) discard;\n"
+    "    vec3 col = vec3(float((u_val >> 16) & 255), float((u_val >> 8) & 255), float(u_val & 255)) / 255.0;\n"
+    "    o = vec4(mix(col, vec3(0.05), smoothstep(0.82, 0.92, r)), a); return;\n"
+    "  }\n"
+    "  if (u_kind == 6) {\n"   /* the round itself, in the hand: a lit sphere, its colour the value 0xRRGGBB */
+    "    float r = length(v_c); aa = fwidth(r);\n"
+    "    float a = 1.0 - smoothstep(1.0 - aa * 1.5, 1.0, r);\n"
+    "    if (a <= 0.0) discard;\n"
+    "    vec3 col = vec3(float((u_val >> 16) & 255), float((u_val >> 8) & 255), float(u_val & 255)) / 255.0;\n"
+    "    vec3 nrm = vec3(v_c, sqrt(max(1.0 - r * r, 0.0)));\n"
+    "    vec3 ld = normalize(vec3(-0.4, 0.6, 0.7));\n"
+    "    float df = clamp(dot(nrm, ld), 0.0, 1.0);\n"
+    "    float sp = pow(max(dot(reflect(-ld, nrm), vec3(0.0, 0.0, 1.0)), 0.0), 24.0);\n"
+    "    o = vec4(col * (0.30 + 0.80 * df) + vec3(sp * 0.45), a); return;\n"
+    "  }\n"
+    "  if (u_kind == 4) {\n"   /* the weapon wheel's pointer: the sight's own dot (as u_kind 0), drawn a little larger */
+    "    float r = length(v_c); aa = fwidth(r);\n"
+    "    float a = 1.0 - smoothstep(1.0 - aa * 1.5, 1.0, r);\n"
+    "    if (a <= 0.0) discard; o = vec4(1.0, 1.0, 1.0, a); return;\n"
+    "  }\n"
     "  if (u_kind == 0) {\n"   /* the dot */
     "    float r = length(v_c); aa = fwidth(r);\n"
     "    float a = 1.0 - smoothstep(1.0 - aa * 1.5, 1.0, r);\n"
@@ -2362,7 +2464,7 @@ static void draw_markers(const VrView* v, const float M[16], const VrEye* E, int
         const float* p = v->mk[i];
         float V[3], e[3], tx, ty, nx, ny, hx, hy, ang;
         int kind = v->mk_kind[i];
-        if (kind == 2 && vr_world_ok) for (int k = 0; k < 3; k++) V[k] = vr_world_L[k] * p[0] + vr_world_L[4 + k] * p[1] + vr_world_L[8 + k] * p[2] + vr_world_L[12 + k];   /* vr130: the holster's count moves with the body, as its box */
+        if ((kind == 2 || kind == 4 || kind == 5) && vr_world_ok) for (int k = 0; k < 3; k++) V[k] = vr_world_L[k] * p[0] + vr_world_L[4 + k] * p[1] + vr_world_L[8 + k] * p[2] + vr_world_L[12 + k];   /* vr130: the holster's count moves with the body, as its box */
         else for (int k = 0; k < 3; k++) V[k] = v->G[k] * p[0] + v->G[4 + k] * p[1] + v->G[8 + k] * p[2] + v->G[12 + k];   /* world -> V */
         for (int k = 0; k < 3; k++) e[k] = M[k] * V[0] + M[4 + k] * V[1] + M[8 + k] * V[2] + M[12 + k];               /* V -> eye (x right, y down, z forward) */
         if (e[2] < 0.05f) continue;
@@ -2371,6 +2473,8 @@ static void draw_markers(const VrView* v, const float M[16], const VrEye* E, int
         ny = (ty - E->d) / (E->u - E->d) * 2.0f - 1.0f;
         if (kind == 0) { ang = tanf(g_vr_sight_size / 100.0f * (3.14159265f / 360.0f)); hx = hy = ang; }
         else if (kind == 1) { hx = hy = 0.04f / e[2]; }
+        else if (kind == 4) { hx = hy = tanf(g_vr_sight_size / 100.0f * (3.14159265f / 360.0f)) * 1.5f; }   /* the wheel's pointer: the sight's dot, 1.5 times larger (vr_sight_size) */
+        else if (kind >= 5) { hx = hy = 0.02f / e[2]; }   /* the ball: 4 cm across */
         else if (kind == 3) { hx = hy = tanf(1.6f * (3.14159265f / 180.0f)); }   /* vr223: the ring 3.2 degrees across, at any distance */                         /* 8 cm across */
         else {
             int val = v->mk_val[i], two = val >= 1000000, va = two ? (val - 1000000) / 1000 : val, vb = two ? val - 1000000 - va * 1000 : 0;
@@ -2384,6 +2488,96 @@ static void draw_markers(const VrView* v, const float M[16], const VrEye* E, int
         glUniform4f(um_rect, nx, ny, hx / (E->r - E->l) * 2.0f, hy / (E->u - E->d) * 2.0f);
         glDrawArrays(0x0005 /* GL_TRIANGLE_STRIP */, 0, 4);
     }
+    glBindVertexArray(vao);
+    glDisable(GL_BLEND);
+}
+
+/* The ammo guide (vr_glue.c guide_draw): the ammo's silhouette between its two ends - the bow gun's arrow (a shaft, a pointed head, a flared tail), a circle (the launcher's round) or a rectangle (the magazines, the shell) - faint orange, drawn over the picture. Its two ends are
+   projected, and the shape is made in the screen's tangent space (a quad over the ends' box; the fragment shader measures each pixel along and across the line). */
+static float vr_laser_L[2][16];   /* (defined below: world -> V, moved with the hand at the headset's rate) */
+static int vr_laser_on[2];
+static GLuint gh_prog;
+static GLint ugh_bb, ugh_fr, ugh_a, ugh_b, ugh_w, ugh_col, ugh_mode;
+static const char* gh_vs =
+    "#version 330 core\n"
+    "uniform vec4 u_bb; uniform vec4 u_fr;\n"
+    "out vec2 v_t;\n"
+    "void main(){\n"
+    "  vec2 c = vec2((gl_VertexID & 1) != 0 ? 1.0 : 0.0, (gl_VertexID & 2) != 0 ? 1.0 : 0.0);\n"
+    "  vec2 n = mix(u_bb.xy, u_bb.zw, c);\n"
+    "  v_t = vec2(u_fr.x + (n.x + 1.0) * 0.5 * (u_fr.y - u_fr.x), u_fr.w + (n.y + 1.0) * 0.5 * (u_fr.z - u_fr.w));\n"
+    "  gl_Position = vec4(n, 0.0, 1.0);\n"
+    "}\n";
+static const char* gh_fs =
+    "#version 330 core\n"
+    "in vec2 v_t; out vec4 o;\n"
+    "uniform vec2 u_a; uniform vec2 u_b; uniform vec4 u_w; uniform vec4 u_col; uniform int u_mode;\n"
+    "void main(){\n"
+    "  float a; float rim;\n"
+    "  if (u_mode == 1) {\n"
+    "    float r = length(v_t - 0.5 * (u_a + u_b)); float aa = fwidth(r) * 1.2;\n"
+    "    a = 1.0 - smoothstep(u_w.x - aa, u_w.x + aa, r); rim = smoothstep(0.6, 1.0, r / max(u_w.x, 1e-6));\n"
+    "  } else {\n"
+    "    vec2 ba = u_b - u_a; float L = max(length(ba), 1e-6); vec2 d = ba / L; vec2 nr = vec2(-d.y, d.x);\n"
+    "    vec2 q = v_t - u_a; float u = dot(q, d) / L; float t = dot(q, nr);\n"
+    "    if (u_mode == 2) {\n"
+    "      float s = u * L; float cr = u_w.x; float ds = s - clamp(s, cr, max(L - cr, cr));\n"
+    "      float dd = length(vec2(ds, t)); float aa2 = fwidth(dd) * 1.2;\n"
+    "      a = 1.0 - smoothstep(cr - aa2, cr + aa2, dd); rim = smoothstep(0.55, 1.0, dd / max(cr, 1e-6));\n"
+    "      if (a <= 0.0) discard;\n"
+    "      o = vec4(mix(u_col.rgb, vec3(1.0, 0.85, 0.55), rim * 0.5), u_col.a * a); return;\n"
+    "    }\n"
+    "    if (u < 0.0 || u > 1.0) discard;\n"
+    "    float half_w = u_w.x;\n"
+    "    if (u_mode == 0) {\n"
+    "      float hl = u_w.z;\n"
+    "      if (u > 1.0 - hl) half_w = u_w.y * (1.0 - u) / hl;\n"
+    "      if (u < 0.2) half_w = max(half_w, u_w.w * (1.0 - u / 0.2));\n"
+    "    }\n"
+    "    float aa = fwidth(t) * 1.2;\n"
+    "    a = smoothstep(-aa, aa, half_w - abs(t));\n"
+    "    rim = smoothstep(0.55, 1.0, abs(t) / max(half_w, 1e-6));\n"
+    "  }\n"
+    "  if (a <= 0.0) discard;\n"
+    "  o = vec4(mix(u_col.rgb, vec3(1.0, 0.85, 0.55), rim * 0.5), u_col.a * a);\n"
+    "}\n";
+static void draw_ghost(const VrView* v, const float M[16], const VrEye* E, int w, int h)
+{
+    float t[2][2], z[2], sc, nx[2], ny[2], padx, pady, al;
+    if (!v || !v->ghost_on) return;
+    for (int i = 0; i < 2; i++) {
+        const float* p = i ? v->ghost_b : v->ghost_a;
+        float V[3], e[3];
+        const float* L = vr_laser_on[0] ? vr_laser_L[0] : v->G;   /* the gun's hand: the guide moves with the controller as the gun does (not at the game's 30 frames) */
+        for (int k = 0; k < 3; k++) V[k] = L[k] * p[0] + L[4 + k] * p[1] + L[8 + k] * p[2] + L[12 + k];
+        for (int k = 0; k < 3; k++) e[k] = M[k] * V[0] + M[4 + k] * V[1] + M[8 + k] * V[2] + M[12 + k];
+        if (e[2] < 0.05f) return;
+        t[i][0] = e[0] / e[2]; t[i][1] = -e[1] / e[2]; z[i] = e[2];
+        nx[i] = (t[i][0] - E->l) / (E->r - E->l) * 2.0f - 1.0f;
+        ny[i] = (t[i][1] - E->d) / (E->u - E->d) * 2.0f - 1.0f;
+    }
+    sc = 1.0f / (0.5f * (z[0] + z[1]));   /* tangents a metre of the arrow covers */
+    padx = 0.03f * sc / (E->r - E->l) * 2.0f; pady = 0.03f * sc / (E->u - E->d) * 2.0f;
+    if (!gh_prog) {
+        gh_prog = compile(gh_vs, gh_fs);
+        ugh_bb = glGetUniformLocation(gh_prog, "u_bb"); ugh_fr = glGetUniformLocation(gh_prog, "u_fr");
+        ugh_a = glGetUniformLocation(gh_prog, "u_a"); ugh_b = glGetUniformLocation(gh_prog, "u_b");
+        ugh_w = glGetUniformLocation(gh_prog, "u_w"); ugh_col = glGetUniformLocation(gh_prog, "u_col"); ugh_mode = glGetUniformLocation(gh_prog, "u_mode");
+    }
+    al = (float)((v->ghost_val >> 24) & 127) / 127.0f;
+    glViewport(0, 0, w, h);
+    glEnable(GL_BLEND);
+    glBlendEquationSeparate(GL_FUNC_ADD, GL_FUNC_ADD);
+    glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ZERO, GL_ONE);
+    glUseProgram(gh_prog);
+    glUniform4f(ugh_bb, fminf(nx[0], nx[1]) - padx, fminf(ny[0], ny[1]) - pady, fmaxf(nx[0], nx[1]) + padx, fmaxf(ny[0], ny[1]) + pady);
+    glUniform4f(ugh_fr, E->l, E->r, E->u, E->d);
+    glUniform2f(ugh_a, t[0][0], t[0][1]); glUniform2f(ugh_b, t[1][0], t[1][1]);
+    glUniform4f(ugh_w, v->ghost_hw * sc, 0.020f * sc, 0.22f, 0.016f * sc);
+    glUniform1i(ugh_mode, v->ghost_shape);   /* 0 an arrow, 1 a circle, 2 a rectangle */
+    glUniform4f(ugh_col, (float)((v->ghost_val >> 16) & 255) / 255.0f, (float)((v->ghost_val >> 8) & 255) / 255.0f, (float)(v->ghost_val & 255) / 255.0f, al);
+    glBindVertexArray(present_vao);
+    glDrawArrays(0x0005 /* GL_TRIANGLE_STRIP */, 0, 4);
     glBindVertexArray(vao);
     glDisable(GL_BLEND);
 }
@@ -2548,11 +2742,14 @@ static const char* bx_fs =
     "    float gz = texture(u_depth, uv).r / u_z.x + u_z.w;\n"
     "    if (abs(gz) > 1e-6) { float ez = -u_z.z / (u_z.y * gz); if (ez > 0.0 && ez < v_ez - 0.01) discard; }\n"
     "  }\n"
+    /* the face's edge fades over ~1.5 px inside (the box is drawn after the eye image's FXAA, a hard-edged polygon with nothing to smooth it): blended, it is anti-aliased */
+    "  vec2 fw = fwidth(v_uv) + vec2(1e-6);\n"
+    "  float ea = clamp(min(min(v_uv.x, 1.0 - v_uv.x) / fw.x, min(v_uv.y, 1.0 - v_uv.y) / fw.y) / 1.5, 0.0, 1.0);\n"
     "  vec2 q = v_uv; vec3 col = vec3(0.30, 0.34, 0.16);\n"
     "  if (u_bt != 0) {\n"   /* vr131: the ammo's own box picture */
     "    float sh = v_face == 3 ? 1.0 : v_face == 2 ? 0.45 : v_face >= 4 ? 0.85 : 0.7;\n"
     "    vec3 amb = clamp(u_amb.rgb, vec3(0.35), vec3(1.0));\n"
-    "    o = vec4(texture(u_btex, v_tuv).rgb * sh * amb * 1.15, 1.0); return;\n"
+    "    o = vec4(texture(u_btex, v_tuv).rgb * sh * amb * 1.15, ea); return;\n"
     "  }\n"
     "  bool side = v_face >= 4, end = v_face <= 1;\n"
     "  if ((side || end) && q.y > 0.56 && q.y < 0.72) col = vec3(0.72, 0.58, 0.16);\n"
@@ -2564,19 +2761,197 @@ static const char* bx_fs =
     "  col *= 0.85 + 0.15 * h(floor(q * 24.0) + float(v_face));\n"
     "  float sh = v_face == 3 ? 1.0 : v_face == 2 ? 0.45 : side ? 0.8 : 0.65;\n"
     "  vec3 amb = clamp(u_amb.rgb, vec3(0.35), vec3(1.0));\n"
+    "  o = vec4(col * sh * amb * 1.15, ea);\n"
+    "}\n";
+/* The ammo box at the holster / in the left hand as a leather ammo pouch (pouch_data.c, tools/make_pouch.py: 7964 vertices, 11294 triangles, a 256x256 PNG map). It takes the
+   box's place and axes (the 8 corners, eye space): the model's up is the box's up, its front (the strap) faces away from the player. Back faces are left out by the
+   normal against the eye (nothing to depth-test them: the eye image has no depth buffer here), the world's depth hides it behind walls as the box is. ini vr_pouch; 0 or a
+   failure: the plain box. */
+int g_vr_pouch = 1;
+static GLuint po_prog, po_vao, po_vbo, po_ebo, po_tex;
+static GLint pu_c, pu_x, pu_y, pu_z, pu_fr, pu_depth, pu_rect, pu_eye, pu_zz, pu_amb, pu_tex, pu_ho;
+static int po_state;   /* 0 not tried, 1 ready, -1 failed */
+static const char* po_vs =
+    "#version 330 core\n"
+    "layout(location=0) in vec3 a_p; layout(location=1) in vec3 a_n; layout(location=2) in vec2 a_t; layout(location=3) in float a_part;\n"
+    "uniform vec4 u_pc, u_px, u_py, u_pz, u_fr; uniform vec4 u_ho;\n"
+    "out vec2 v_t; out float v_ez; out vec3 v_nrm; out vec3 v_pos; out vec3 v_up;\n"
+    "void main(){\n"
+    "  vec3 p = a_p, nn = a_n;\n"
+    /* the flap (part 1) turns about the x axis through (y, z) = u_ho.yz by u_ho.x radians: its free edge, the front-bottom, lifts up and back */
+    "  if (a_part > 0.5 && u_ho.x != 0.0) {\n"
+    "    float cs = cos(u_ho.x), sn = sin(u_ho.x), dy = p.y - u_ho.y, dz = p.z - u_ho.z;\n"
+    "    p = vec3(p.x, u_ho.y + dy * cs - dz * sn, u_ho.z + dy * sn + dz * cs);\n"
+    "    nn = vec3(nn.x, nn.y * cs - nn.z * sn, nn.y * sn + nn.z * cs);\n"
+    "  }\n"
+    "  vec3 e = u_pc.xyz + u_px.xyz * p.x + u_py.xyz * p.y + u_pz.xyz * p.z;\n"
+    "  v_up = normalize(u_py.xyz);\n"
+    "  v_nrm = normalize(u_px.xyz) * nn.x + v_up * nn.y + normalize(u_pz.xyz) * nn.z;\n"
+    "  v_pos = e; v_t = a_t; v_ez = e.z;\n"
+    "  float tx = e.x / e.z, ty = -e.y / e.z;\n"
+    "  vec2 n = vec2((tx - u_fr.x) / (u_fr.y - u_fr.x) * 2.0 - 1.0, (ty - u_fr.w) / (u_fr.z - u_fr.w) * 2.0 - 1.0);\n"
+    "  gl_Position = vec4(n * e.z, 0.0, e.z);\n"
+    "  gl_ClipDistance[0] = e.z - 0.05;\n"
+    "}\n";
+static const char* po_fs =
+    "#version 330 core\n"
+    "in vec2 v_t; in float v_ez; in vec3 v_nrm; in vec3 v_pos; in vec3 v_up; out vec4 o;\n"
+    "uniform sampler2D u_depth; uniform vec4 u_rect; uniform vec2 u_eye; uniform vec4 u_z; uniform vec4 u_amb; uniform sampler2D u_ptex;\n"
+    "void main(){\n"
+    "  vec3 n = normalize(v_nrm);\n"
+    "  if (u_z.y > 0.0) {\n"
+    "    vec2 c = gl_FragCoord.xy / u_eye; vec2 uv = vec2(mix(u_rect.x, u_rect.z, c.x), mix(u_rect.y, u_rect.w, 1.0 - c.y));\n"
+    "    float gz = texture(u_depth, uv).r / u_z.x + u_z.w;\n"
+    "    if (abs(gz) > 1e-6) { float ez = -u_z.z / (u_z.y * gz); if (ez > 0.0 && ez < v_ez - 0.01) discard; }\n"
+    "  }\n"
+    "  vec3 col = texture(u_ptex, v_t).rgb;\n"
+    "  float sh = 0.62 + 0.38 * (dot(n, v_up) * 0.5 + 0.5);\n"
+    "  vec3 amb = clamp(u_amb.rgb, vec3(0.35), vec3(1.0));\n"
     "  o = vec4(col * sh * amb * 1.15, 1.0);\n"
     "}\n";
-static void draw_box(const VrView* v, const float M[16], const VrEye* E, int w, int h, const RenderTarget* rt)
+extern unsigned char* stbi_load_from_memory(const unsigned char* buffer, int len, int* x, int* y, int* comp, int req_comp);
+extern void stbi_image_free(void* p);
+static int pouch_init(void)
+{
+    int tw = 0, th = 0, tn = 0;
+    unsigned char* px;
+    float* vb;
+    if (po_state) return po_state > 0;
+    po_state = -1;
+    px = stbi_load_from_memory(pouch_jpg, (int)pouch_jpg_len, &tw, &th, &tn, 4);
+    if (!px) { host_log("pouch: the map did not decode\n"); return 0; }
+    po_prog = compile(po_vs, po_fs);
+    if (!po_prog) { stbi_image_free(px); host_log("pouch: the shader did not compile - the plain box\n"); return 0; }
+    pu_c = glGetUniformLocation(po_prog, "u_pc"); pu_x = glGetUniformLocation(po_prog, "u_px"); pu_y = glGetUniformLocation(po_prog, "u_py"); pu_z = glGetUniformLocation(po_prog, "u_pz");
+    pu_fr = glGetUniformLocation(po_prog, "u_fr"); pu_depth = glGetUniformLocation(po_prog, "u_depth"); pu_rect = glGetUniformLocation(po_prog, "u_rect");
+    pu_eye = glGetUniformLocation(po_prog, "u_eye"); pu_zz = glGetUniformLocation(po_prog, "u_z"); pu_amb = glGetUniformLocation(po_prog, "u_amb"); pu_tex = glGetUniformLocation(po_prog, "u_ptex"); pu_ho = glGetUniformLocation(po_prog, "u_ho");
+    glGenTextures(1, &po_tex);
+    glBindTexture(GL_TEXTURE_2D, po_tex);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, tw, th, 0, GL_RGBA, GL_UNSIGNED_BYTE, px);
+    stbi_image_free(px);
+    glGenerateMipmap(GL_TEXTURE_2D);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, 0x2703 /* GL_LINEAR_MIPMAP_LINEAR */);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, 0x2901 /* GL_REPEAT */); glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, 0x2901);
+    vb = (float*)malloc((size_t)pouch_nverts * 9 * sizeof(float));
+    if (!vb) return 0;
+    for (int i = 0; i < pouch_nverts; i++) {
+        const PouchVertex* q = &pouch_verts[i];
+        float* o = vb + i * 9;
+        o[0] = q->x / 32767.0f * 0.5f; o[1] = q->y / 32767.0f * 0.5f; o[2] = q->z / 32767.0f * 0.5f;
+        o[3] = q->nx / 127.0f; o[4] = q->ny / 127.0f; o[5] = q->nz / 127.0f;
+        o[6] = q->u / 2048.0f; o[7] = q->v / 2048.0f; o[8] = (float)q->part;
+    }
+    glGenVertexArrays(1, &po_vao); glGenBuffers(1, &po_vbo); glGenBuffers(1, &po_ebo);
+    glBindVertexArray(po_vao);
+    glBindBuffer(GL_ARRAY_BUFFER, po_vbo);
+    glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)((size_t)pouch_nverts * 9 * sizeof(float)), vb, GL_STATIC_DRAW);
+    free(vb);
+    glEnableVertexAttribArray(0); glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 9 * sizeof(float), (const void*)0);
+    glEnableVertexAttribArray(1); glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 9 * sizeof(float), (const void*)(3 * sizeof(float)));
+    glEnableVertexAttribArray(2); glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 9 * sizeof(float), (const void*)(6 * sizeof(float)));
+    glEnableVertexAttribArray(3); glVertexAttribPointer(3, 1, GL_FLOAT, GL_FALSE, 9 * sizeof(float), (const void*)(8 * sizeof(float)));
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, po_ebo);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, (GLsizeiptr)((size_t)pouch_nidx * sizeof(uint16_t)), pouch_idx, GL_STATIC_DRAW);
+    glBindVertexArray(vao);
+    po_state = 1;
+    host_log("pouch: model ready (%d vertices, %d triangles, map %dx%d)\n", pouch_nverts, pouch_nidx / 3, tw, th);
+    return 1;
+}
+static int draw_pouch(const float e8[8][3], GLuint dtex, const VrView* v, const VrEye* E, int w, int h, const RenderTarget* rt, float open)
+{
+    /* open: 0 closed .. 1 open (vr_glue.c: the magazine is out, or the aim is held; the hand at it) */
+    float c[3] = { 0, 0, 0 }, ax[3][3], k = 0.0f;
+    uint32_t zpsm;
+    float zmax, dw = 640.0f + 2.0f * g_margin_x;
+    if (!pouch_init()) return 0;
+    for (int i = 0; i < 8; i++) for (int a = 0; a < 3; a++) c[a] += e8[i][a] / 8.0f;
+    for (int a = 0; a < 3; a++) {   /* the box's x, y, z axes in the eye space, unit */
+        const float* t = e8[a == 0 ? 1 : a == 1 ? 2 : 4];
+        float d[3] = { t[0] - e8[0][0], t[1] - e8[0][1], t[2] - e8[0][2] }, l = sqrtf(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+        if (l < 1e-6f) return 0;
+        for (int q = 0; q < 3; q++) ax[a][q] = d[q] / l;
+        if (a == 0) k = l;
+    }
+    k = k / 0.09f * 0.115f;   /* the box is 9 cm wide (BOX_W): the pouch's longest side (its height) 11.5 cm at that scale */
+    {   /* Which way the triangles seen from outside wind on the screen, whatever the mesh's winding and the box axes' handedness: take the biggest of the first base triangles, its outward
+           normal by the vertex normals, its facing the eye, and its screen area's sign - and cull the other (the mesh has no depth buffer to sort itself with). */
+        float best = 0.0f, area_sign = 1.0f, facing = 1.0f;
+        for (int t = 0; t < 600 && t * 3 + 2 < pouch_nidx; t++) {
+            float p[3][3], n[3];
+            float g[3], a[3], b[3], o[3], nl, sx[3], sy[3], area, ez;
+            for (int q = 0; q < 3; q++) {
+                const PouchVertex* pv = &pouch_verts[pouch_idx[t * 3 + q]];
+                float m[3] = { pv->x / 32767.0f * 0.5f, pv->y / 32767.0f * 0.5f, pv->z / 32767.0f * 0.5f };
+                for (int a2 = 0; a2 < 3; a2++) p[q][a2] = c[a2] + (-ax[0][a2] * m[0] + ax[1][a2] * m[1] - ax[2][a2] * m[2]) * k;
+                sx[q] = p[q][0] / p[q][2]; sy[q] = -p[q][1] / p[q][2];
+            }
+            {   /* the triangle's outward normal in eye space: the vertex normals' mean mapped as the positions are */
+                const PouchVertex* p0 = &pouch_verts[pouch_idx[t * 3]];
+                float nm[3] = { p0->nx / 127.0f, p0->ny / 127.0f, p0->nz / 127.0f };
+                for (int a2 = 0; a2 < 3; a2++) n[a2] = -ax[0][a2] * nm[0] + ax[1][a2] * nm[1] - ax[2][a2] * nm[2];
+            }
+            for (int a2 = 0; a2 < 3; a2++) { a[a2] = p[1][a2] - p[0][a2]; b[a2] = p[2][a2] - p[0][a2]; }
+            g[0] = a[1] * b[2] - a[2] * b[1]; g[1] = a[2] * b[0] - a[0] * b[2]; g[2] = a[0] * b[1] - a[1] * b[0];
+            nl = sqrtf(g[0] * g[0] + g[1] * g[1] + g[2] * g[2]);
+            area = (sx[1] - sx[0]) * (sy[2] - sy[0]) - (sx[2] - sx[0]) * (sy[1] - sy[0]);
+            ez = p[0][2];
+            (void)o; (void)ez;
+            if (nl > 1e-9f && fabsf(area) > best) {
+                float gn = g[0] * n[0] + g[1] * n[1] + g[2] * n[2];   /* >0: the winding's normal is the outward one */
+                float to_eye = -(n[0] * p[0][0] + n[1] * p[0][1] + n[2] * p[0][2]);   /* >0: the outward normal faces the eye */
+                best = fabsf(area); area_sign = area > 0 ? 1.0f : -1.0f;
+                facing = (gn > 0 ? 1.0f : -1.0f) * (to_eye > 0 ? 1.0f : -1.0f);   /* the winding's normal faces the eye (+1) or not (-1) */
+            }
+        }
+        /* a triangle that faces the eye has the screen sign of the front; one that does not has the opposite */
+        glFrontFace(area_sign * facing > 0 ? GL_CCW : GL_CW);
+    }
+    glViewport(0, 0, w, h);
+    glDisable(GL_BLEND);
+    clip_distances(1);
+    glUseProgram(po_prog);
+    zpsm = (uint32_t)((gs.ctx[0].zbuf >> 24) & 0xF);
+    zmax = zpsm == 0 ? 4294967296.0f : zpsm == 1 ? 16777216.0f : 65536.0f;
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, dtex);
+    glUniform1i(pu_depth, 0);
+    glUniform4f(pu_rect, 0.0f, 0.0f, rt ? dw / rt->vw : 1.0f, rt ? 480.0f / rt->vh : 1.0f);
+    glUniform2f(pu_eye, (float)w, (float)h);
+    glUniform4f(pu_zz, 1.0f / zmax, dtex ? vr_u.zs : 0.0f, v->zb, v->za);
+    glUniform4f(pu_fr, E->l, E->r, E->u, E->d);
+    glUniform4f(pu_amb, v->box_amb[0], v->box_amb[1], v->box_amb[2], 1.0f);
+    glUniform4f(pu_ho, open * 2.0f, pouch_hinge[0], pouch_hinge[1], 0.0f);   /* the flap opens up to 2 radians (115 degrees) */
+    glUniform4f(pu_c, c[0], c[1], c[2], 1.0f);
+    /* a half turn about the up axis (x and z reversed): the strap side, the model's -z, comes to the box's +z, away from the player */
+    glUniform4f(pu_x, -ax[0][0] * k, -ax[0][1] * k, -ax[0][2] * k, 0.0f);
+    glUniform4f(pu_y, ax[1][0] * k, ax[1][1] * k, ax[1][2] * k, 0.0f);
+    glUniform4f(pu_z, -ax[2][0] * k, -ax[2][1] * k, -ax[2][2] * k, 0.0f);
+    glActiveTexture(GL_TEXTURE0 + 3);
+    glBindTexture(GL_TEXTURE_2D, po_tex);
+    glUniform1i(pu_tex, 3);
+    glActiveTexture(GL_TEXTURE0);
+    glBindVertexArray(po_vao);
+    glEnable(GL_CULL_FACE); glCullFace(GL_BACK);
+    glDrawElements(GL_TRIANGLES, pouch_nidx, GL_UNSIGNED_SHORT, (const void*)0);
+    glDisable(GL_CULL_FACE); glFrontFace(GL_CCW);
+    glBindVertexArray(vao);
+    clip_distances(0);
+    return 1;
+}
+static void draw_box_at(const VrView* v, const float M[16], const VrEye* E, int w, int h, const RenderTarget* rt, float dx, float open)
 {
     const float* L;
-    float e8[8][3];
+    float e8[8][3], axw[3];
     GLuint dtex = 0;
     if (!v || !v->box_mode) return;
     L = v->box_mode == 2 ? (vr_laser_on[1] ? vr_laser_L[1] : NULL) : (vr_world_ok ? vr_world_L : NULL);
     if (!L) return;
+    for (int k = 0; k < 3; k++) axw[k] = (v->box_c[1][k] - v->box_c[0][k]) * (dx / 0.09f);   /* the box's x axis (BOX_W = 9 cm) times the shift in metres */
     for (int c = 0; c < 8; c++) {
-        const float* p = v->box_c[c];
+        float p[3];
         float V[3];
+        for (int k = 0; k < 3; k++) p[k] = v->box_c[c][k] + axw[k];
         for (int k = 0; k < 3; k++) V[k] = L[k] * p[0] + L[4 + k] * p[1] + L[8 + k] * p[2] + L[12 + k];
         for (int k = 0; k < 3; k++) e8[c][k] = M[k] * V[0] + M[4 + k] * V[1] + M[8 + k] * V[2] + M[12 + k];
     }
@@ -2590,8 +2965,14 @@ static void draw_box(const VrView* v, const float M[16], const VrEye* E, int w, 
         ub_btex = glGetUniformLocation(bx_prog, "u_btex"); ub_bt = glGetUniformLocation(bx_prog, "u_bt");
     }
     for (int i = 0; i < 8 && rt; i++) if (dz[i].tex && dz[i].zbp == rt->zbp && dz[i].pw == rt->pw && dz[i].ph == rt->ph) dtex = dz[i].tex;
+#ifdef __ANDROID__
+    if (and_mv_dview) dtex = and_mv_dview;   /* (multiview: the eye's layer) */
+#endif
+    if (g_vr_pouch && draw_pouch(e8, dtex, v, E, w, h, rt, open)) return;   /* the leather pouch model in the box's place */
     glViewport(0, 0, w, h);
-    glDisable(GL_BLEND);
+    glEnable(GL_BLEND);   /* (the face edges fade: bx_fs ea) */
+    glBlendEquationSeparate(GL_FUNC_ADD, GL_FUNC_ADD);
+    glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ZERO, GL_ONE);
     clip_distances(1);
     glUseProgram(bx_prog);
     {
@@ -2645,7 +3026,13 @@ static void draw_box(const VrView* v, const float M[16], const VrEye* E, int w, 
     glBindVertexArray(present_vao);
     glDrawArrays(GL_TRIANGLES, 0, 36);
     glBindVertexArray(vao);
+    glDisable(GL_BLEND);
     clip_distances(0);
+}
+static void draw_box(const VrView* v, const float M[16], const VrEye* E, int w, int h, const RenderTarget* rt)
+{
+    int n = v && v->box_n > 0 ? (v->box_n > 4 ? 4 : v->box_n) : 1;   /* (the grenade launcher: a holster for each ammo type) */
+    for (int i = 0; i < n; i++) draw_box_at(v, M, E, w, h, rt, v && v->box_n > 0 ? v->box_dx[i] : 0.0f, v && v->box_n > 0 ? v->box_op[i] : v->box_open);
 }
 
 static void vignette_pass(const VrEye* E, float amt, float r, float g, float b, float r0, float r1)
@@ -2725,6 +3112,8 @@ static void draw_area_to(GLuint tex, int rt_vw, int rt_vh, int w, int h)
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glUniform1i(up_tex, 0);
+    glUniform1f(up_aa, g_vr_aa ? 1.0f : 0.0f);
+    glUniform1f(up_sr, g_vr_sr ? 1.0f : 0.0f);
     glUniform4f(up_rect, x0 / rt_vw, 0.0f, (x0 + dw) / rt_vw, 480.0f / rt_vh);
     glBindVertexArray(present_vao);
     glDrawArrays(0x0005 /* GL_TRIANGLE_STRIP */, 0, 4);
@@ -3066,6 +3455,20 @@ static int present_vr_stereo_(const struct Frame* cur, float t)
             vr_u.hud[0] = d * tanf(g_vr_hud_angle * (3.14159265f / 360.0f)) / 320.0f;
             vr_u.hud[2] = g_vr_hud_y / 100.0f * vr_u.zs;   /* V.y is down: up is subtracted */
         } else vr_u.hud[0] = vr_u.hud[1] = vr_u.hud[2] = 0.0f;
+        vr_u.pl = 0;
+        if (g_vr_panel_live && vr_u.hud[1] > 0.0f) {   /* the panel at this image's head: iA * head(now, the eyes' middle) * axes(y down, z forward) * metres per unit */
+            const VrEye *E0 = xr_frame_eye(0), *E1 = xr_frame_eye(1);
+            VrPose hp = E0->pose;
+            float H[16], iA2[16], S4[16], Zs[16], T[16];
+            hp.px = (E0->pose.px + E1->pose.px) * 0.5f; hp.py = (E0->pose.py + E1->pose.py) * 0.5f; hp.pz = (E0->pose.pz + E1->pose.pz) * 0.5f;
+            vr_mat_from_pose(H, &hp);
+            if (vr_mat_invert(iA2, A)) {
+                vr_mat_identity(S4); S4[5] = -1.0f; S4[10] = -1.0f;
+                vr_mat_identity(Zs); Zs[0] = Zs[5] = Zs[10] = 1.0f / vr_u.zs;
+                vr_mat_mul(T, H, S4); vr_mat_mul(T, T, Zs); vr_mat_mul(vr_u.pm, iA2, T);
+                vr_u.pl = 1;
+            }
+        }
         vr_u.on = 1;
         {
             static unsigned nlog;
@@ -3092,7 +3495,25 @@ static int present_vr_stereo_(const struct Frame* cur, float t)
         if (rt && tex) {
             glBindFramebuffer(GL_FRAMEBUFFER, vr_fbo);
             glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
-            VR_TM(2, draw_area_to(rt->tex, rt->vw, rt->vh, w, h); draw_lasers(v, M, E, w, h, rt); draw_box(v, M, E, w, h, rt); draw_markers(v, M, E, w, h); draw_vignette(E, w, h); hold_keep_and_dim(e, w, h, vr_fbo));
+#ifdef __ANDROID__
+            { extern void and_gq_stage(int); and_gq_stage(2); }
+#endif
+#ifdef __ANDROID__
+            GLuint and_area_tex = and_eye_src;
+#else
+            GLuint and_area_tex = rt->tex;
+#endif
+            VR_TM(2, draw_area_to(and_area_tex, rt->vw, rt->vh, w, h); draw_lasers(v, M, E, w, h, rt); draw_box(v, M, E, w, h, rt); draw_markers(v, M, E, w, h); draw_ghost(v, M, E, w, h); draw_vignette(E, w, h); hold_keep_and_dim(e, w, h, vr_fbo));
+#ifdef __ANDROID__
+            glBindFramebuffer(GL_FRAMEBUFFER, vr_fbo);
+            glViewport(0, 0, w, h);
+#endif
+#ifdef __ANDROID__
+            /* Android (Quest): no mirror - the window is never swapped in VR (gs_present_vr's end), and the clear and
+               the scaled copy were GPU work in every headset image (the runtime holds the images at half rate when the
+               GPU is late: 7-10 ms an image measured) */
+            if (0)
+#endif
             if (e == 0) {   /* vr127: the window mirrors the left eye (a copy on the GPU), filling it, the middle kept */
                 uint64_t tm0 = SDL_GetTicksNS();
                 int ww = 0, wh = 0;
@@ -3261,8 +3682,9 @@ static uint64_t gs_present_vr(const struct Frame* cur, float t)
         }
         if (fr == 1 && SDL_GetAtomicInt(&g_vr_turn_allow) && xr_input(&in)) {
             float want = fabsf(in.rx) > 0.15f ? in.rx : 0.0f, k = tdt / 0.05f;   /* ~95% of the way in 0.15 s, most of it in 0.1 */
-            rx_s += (want - rx_s) * (k > 1.0f ? 1.0f : k);
-            if (want == 0.0f && fabsf(rx_s) < 0.02f) rx_s = 0.0f;
+            /* eased IN only: the stick let go ends the turn at once - the ease-out went on turning slowly after the release (nausea) */
+            if (want == 0.0f) rx_s = 0.0f;
+            else rx_s += (want - rx_s) * (k > 1.0f ? 1.0f : k);
         } else rx_s = 0.0f;
         if (rx_s != 0.0f) {
             int tot = SDL_GetAtomicInt(&g_vr_turn_total);

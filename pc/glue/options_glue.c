@@ -190,6 +190,7 @@ static int row_hidden(const Setting* s)
 {
     static const char* const names[] = { "Cutscene bars", "Frame blend (trail)", "Fullscreen", "Window size", "VSync", "Frame rate limit", "Show frame rate",
                                          "Native 3D renderer", "Native textures", "Cull off-screen models", "Display-rate frames" };
+    if ((s->flags & SET_DEV) && !g_extras_unlocked) return 1;   /* the developer rows: only with the code, not with "Advanced settings" */
     if (adv_shown() || s->page != SP_DISPLAY) return 0;
     for (size_t k = 0; k < sizeof(names) / sizeof(names[0]); k++)
         if (!strcmp(s->label, names[k])) return 1;

@@ -782,7 +782,7 @@ unsigned int trep_lookup(uint64_t tex0, uint64_t texa)
     e->last = (uint32_t)SDL_GetTicks();
     pending = NULL;
     if (!e->tex && !e->failed) {
-        if (!loaders) { if (!load_entry(e)) return 0; }
+        if (!loaders || e->path[0] == 1) { if (!load_entry(e)) return 0; }   /* a texture in the .pack is read at once, as if it were the game's own: no original drawn first, no switch; only the loose files are read in the background */
         else { bg_queue(e); pending = e; return 0; }   /* vr157: read in the background; the original meanwhile */
     }
     if (!e->tex) return 0;

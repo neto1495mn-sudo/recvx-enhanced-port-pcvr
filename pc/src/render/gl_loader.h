@@ -77,6 +77,8 @@ typedef ptrdiff_t GLsizeiptr; typedef ptrdiff_t GLintptr;
 #define GL_ARRAY_BUFFER 0x8892
 #define GL_STREAM_DRAW 0x88E0
 #define GL_DYNAMIC_DRAW 0x88E8
+#define GL_STATIC_DRAW 0x88E4
+#define GL_ELEMENT_ARRAY_BUFFER 0x8893
 #define GL_TRIANGLES 0x4
 #define GL_LINES 0x1
 #define GL_POINTS 0x0
@@ -264,6 +266,18 @@ extern PFN_glVertexAttribIPointer gl_VertexAttribIPointer;
 typedef void (GLAPIENTRY *PFN_glDrawArrays)(GLenum mode, GLint first, GLsizei count);
 extern PFN_glDrawArrays gl_DrawArrays;
 #define glDrawArrays gl_DrawArrays
+#define GL_CW 0x0900
+#define GL_CCW 0x0901
+#define GL_BACK 0x0405
+typedef void (GLAPIENTRY *PFN_glFrontFace)(GLenum mode);
+extern PFN_glFrontFace gl_FrontFace;
+#define glFrontFace gl_FrontFace
+typedef void (GLAPIENTRY *PFN_glCullFace)(GLenum mode);
+extern PFN_glCullFace gl_CullFace;
+#define glCullFace gl_CullFace
+typedef void (GLAPIENTRY *PFN_glDrawElements)(GLenum mode, GLsizei count, GLenum type, const void* indices);
+extern PFN_glDrawElements gl_DrawElements;
+#define glDrawElements gl_DrawElements
 typedef void (GLAPIENTRY *PFN_glReadPixels)(GLint x, GLint y, GLsizei width, GLsizei height, GLenum format, GLenum type, void* pixels);
 extern PFN_glReadPixels gl_ReadPixels;
 #define glReadPixels gl_ReadPixels
