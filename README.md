@@ -26,7 +26,7 @@ decompilation by AshfordFamily. All credit for the PC port goes to them.
 
 ### How to play in VR
 
-1. Download `RE-Code-Veronica-X-PC-Port-VR-v1.5.0-windows.zip` from the [Releases](https://github.com/neto1495mn-sudo/recvx-enhanced-port-pcvr/releases)
+1. Download `RE-Code-Veronica-X-Port-PCVR-v1.5.0-windows.zip` from the [Releases](https://github.com/neto1495mn-sudo/recvx-enhanced-port-pcvr/releases)
    page and unpack it anywhere.
 2. Start your OpenXR runtime (tested only on a Quest 2 through Virtual Desktop / VDXR).
 3. Run `recvx_vr.exe` (or `PLAY_VR.bat`). On the first start, pick your own `.iso` of the game (PS2, NTSC-U,
