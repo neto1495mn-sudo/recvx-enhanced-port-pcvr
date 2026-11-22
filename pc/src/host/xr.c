@@ -28,6 +28,11 @@ static int rec_eye_h, rec_eye_w;     /* the headset's recommended eye size (pixe
 int xr_recommended_eye_height(void) { return rec_eye_h; }
 int xr_recommended_eye_width(void) { return rec_eye_w; }
 int g_vr_screen_angle = 60;   /* ini vr_screen_angle: the cinema screen's width as seen from the head (degrees) */
+int g_vr_lefty = 0;           /* ini vr_lefty: left-handed - the weapon is in the left hand (and the lighter in the right): the hands' poses and their grips and triggers swap, the sticks and the other buttons stay */
+int g_vr_3d = 0;              /* ini vr_3d: the flat screen in 3D (fixed camera, cutscenes): the game drawn for two eyes, each shown on the screen to that eye only */
+int g_vr_cut_imm = 0;         /* ini vr_cut_imm: the cutscenes (the game's scripted camera) are seen from inside: the head at the cutscene camera, looking around with the head */
+int g_vr_3d_strength = 50;    /* ini vr_3d_strength: how much depth, percent (10..100) */
+int g_vr_screen_follow = 0;   /* ini vr_screen_follow: 0 the flat screen appears in front of you and stays where it appeared (default), 1 it follows the head slowly */
 
 /* recentring (shared): recentred = Ry(-yaw0) * (local - origin) */
 static SDL_SpinLock pose_lock;
@@ -353,6 +358,7 @@ static int hap_ms[2];
 void xr_haptic(int hand, float amplitude, int ms)
 {
     if (hand < 0 || hand > 1) return;
+    if (g_vr_lefty) hand = 1 - hand;   /* (the game's right hand is the left controller) */
     SDL_LockSpinlock(&hap_lock);
     if (amplitude > hap_amp[hand]) hap_amp[hand] = amplitude;
     if (ms > hap_ms[hand]) hap_ms[hand] = ms;
@@ -472,6 +478,18 @@ static void read_actions(XrTime t)
         static int last = -1;
         int now = in.aim_valid | (in.aiml_valid << 1) | (in.grip_valid << 2) | (in.gripl_valid << 3);
         if (now != last) { host_log("vr: controller poses: right %s, left %s; grips: right %s, left %s\n", in.aim_valid ? "tracked" : "lost", in.aiml_valid ? "tracked" : "lost", in.grip_valid ? "tracked" : "lost", in.gripl_valid ? "tracked" : "lost"); last = now; }
+    }
+    if (g_vr_lefty) {   /* left-handed: the game's right hand (weapon: aim, fire) is the left controller, its left hand (knife, pouch, run) the right one. Poses, grips and
+           triggers swap; the sticks and the face buttons stay where they are */
+        float f;
+        int v;
+        VrPose p;
+        f = in.ltrig; in.ltrig = in.rtrig; in.rtrig = f;
+        f = in.lgrip; in.lgrip = in.rgrip; in.rgrip = f;
+        p = in.aim; in.aim = in.aiml; in.aiml = p;
+        v = in.aim_valid; in.aim_valid = in.aiml_valid; in.aiml_valid = v;
+        p = in.grip; in.grip = in.gripl; in.gripl = p;
+        v = in.grip_valid; in.grip_valid = in.gripl_valid; in.gripl_valid = v;
     }
     SDL_LockSpinlock(&pose_lock);
     input_now = in;
@@ -666,7 +684,7 @@ int xr_frame_begin(void)
     if (fs.predictedDisplayPeriod > 0) hz = 1e9 / (double)fs.predictedDisplayPeriod;
     if (!xr_ok(xrBeginFrame(sess, &bi), "xrBeginFrame")) return -1;
     in_frame = 1;
-    SDL_SetAtomicInt(&stereo_ready, g_vr_stereo && (state == XR_SESSION_STATE_VISIBLE || state == XR_SESSION_STATE_FOCUSED));
+    SDL_SetAtomicInt(&stereo_ready, (g_vr_stereo || g_vr_3d || g_vr_cut_imm) && (state == XR_SESSION_STATE_VISIBLE || state == XR_SESSION_STATE_FOCUSED));
     if (!fs.shouldRender) return 0;
     update_head(fs.predictedDisplayTime);
     read_actions(fs.predictedDisplayTime);
@@ -779,8 +797,43 @@ void xr_frame_end_none(void)
     end_frame(NULL, 0);
 }
 
+/* gs_gl.c: this frame's eye images are a 3D screen (two views of the game's picture, aspect w/h), not the head's view: they go to the headset as two screens */
+static void update_screen_pose(void);
+static int s3d_on;
+static float s3d_aspect = 4.0f / 3.0f;
+void xr_screen3d(int on, float aspect) { s3d_on = on; if (aspect > 0.1f) s3d_aspect = aspect; }
+
+static void xr_frame_end_stereo_screen(void)
+{
+    XrCompositionLayerQuad q[2];
+    const XrCompositionLayerBaseHeader* layers[2];
+    float width;
+    if (!eye_chain[0].h || !eye_chain[1].h) { xr_frame_end_none(); return; }
+    update_screen_pose();
+    {
+        int ang = g_vr_screen_angle;
+        float a = (float)(ang < 20 ? 20 : ang > 120 ? 120 : ang) * (3.14159265f / 360.0f);
+        width = 2.0f * ((float)g_vr_screen_dist / 100.0f) * tanf(a);
+    }
+    for (int e = 0; e < 2; e++) {
+        q[e] = (XrCompositionLayerQuad){ XR_TYPE_COMPOSITION_LAYER_QUAD };
+        q[e].layerFlags = 0;
+        q[e].space = local_space;
+        q[e].eyeVisibility = e ? XR_EYE_VISIBILITY_RIGHT : XR_EYE_VISIBILITY_LEFT;
+        q[e].subImage.swapchain = eye_chain[e].h;
+        q[e].subImage.imageRect.extent.width = eye_chain[e].w;
+        q[e].subImage.imageRect.extent.height = eye_chain[e].ht;
+        q[e].pose = screen_pose;
+        q[e].size.width = width;
+        q[e].size.height = width / s3d_aspect;
+        layers[e] = (const XrCompositionLayerBaseHeader*)&q[e];
+    }
+    end_frame(layers, 2);
+}
+
 void xr_frame_end_stereo(void)
 {
+    if (s3d_on && eyes_valid) { xr_frame_end_stereo_screen(); return; }
     XrCompositionLayerProjection proj = { XR_TYPE_COMPOSITION_LAYER_PROJECTION };
     XrCompositionLayerProjectionView pv[2] = { { XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW }, { XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW } };
     const XrCompositionLayerBaseHeader* layers[1];
@@ -828,6 +881,52 @@ void xr_frame_end_held(void)
 
 void xr_frame_end_quad(int w, int h) { xr_frame_end_quad_rect(0, 0, w, h); }
 
+/* where the screen is: in front of the gaze when it appears; then it stays (default) or follows the head slowly ("Screen follows head"). screen_pose */
+static void update_screen_pose(void)
+{
+    static uint64_t last_ms;   /* the last time the screen was shown: a gap of over 0.5 s means it appears anew */
+    static int screen_placed;
+    int appears = !last_ms || SDL_GetTicks() - last_ms > 500;
+    int hold = !g_vr_screen_follow && screen_placed && !appears;   /* fixed (default): placed in front of the gaze when it appears, then it stays */
+    if (hold) last_ms = SDL_GetTicks();
+    if (!hold) {   /* placed in front of the gaze when it appears; with "Screen follows head" on, it then follows the head's
+           heading and pitch slowly (~1.2 s), at vr_dist */
+        static float sy, sp, shp[3];
+        XrSpaceLocation loc = { XR_TYPE_SPACE_LOCATION };
+        uint64_t now = SDL_GetTicks();
+        if (view_space && XR_SUCCEEDED(xrLocateSpace(view_space, local_space, fs.predictedDisplayTime, &loc)) &&
+            (loc.locationFlags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT) && (loc.locationFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT)) {
+            const XrQuaternionf* q = &loc.pose.orientation;
+            float fy = -2.0f * (q->y * q->z - q->w * q->x);
+            float yaw = yaw_of(q), pitch = asinf(fy < -1.0f ? -1.0f : fy > 1.0f ? 1.0f : fy), d = (float)g_vr_screen_dist / 100.0f, k;
+            float hp[3] = { loc.pose.position.x, loc.pose.position.y, loc.pose.position.z };
+            if (pitch > 0.1f) pitch = 0.1f;   /* vr100: at the eyes' height - it follows sideways, up and down only ~6 degrees */
+            if (pitch < -0.1f) pitch = -0.1f;
+            if (appears) { sy = yaw; sp = 0.0f; memcpy(shp, hp, sizeof(shp)); }   /* appears: in front, level with the eyes (even looking down) */
+            else {
+                float dt = (now - last_ms) / 1000.0f, dy = yaw - sy;
+                while (dy > 3.14159265f) dy -= 6.2831853f;
+                while (dy < -3.14159265f) dy += 6.2831853f;
+                k = 1.0f - expf(-dt / 1.2f);
+                sy += dy * k; sp += (pitch - sp) * k;
+                for (int i = 0; i < 3; i++) shp[i] += (hp[i] - shp[i]) * k;
+            }
+            last_ms = now;
+            screen_placed = 1;
+            {
+                float cy = cosf(sy * 0.5f), syh = sinf(sy * 0.5f), cp = cosf(sp * 0.5f), sph = sinf(sp * 0.5f);
+                screen_pose.orientation.x = cy * sph;   /* yaw (about y) then pitch (about x) */
+                screen_pose.orientation.y = syh * cp;
+                screen_pose.orientation.z = -syh * sph;
+                screen_pose.orientation.w = cy * cp;
+                screen_pose.position.x = shp[0] - sinf(sy) * cosf(sp) * d;
+                screen_pose.position.y = shp[1] + sinf(sp) * d;
+                screen_pose.position.z = shp[2] - cosf(sy) * cosf(sp) * d;
+            }
+        }
+    }
+}
+
 /* the cinema screen: the game's picture (x, y, w, h of the window's back buffer, the black
    bars left out) at its own aspect, as wide as vr_screen_angle degrees seen from vr_dist */
 void xr_frame_end_quad_rect(int x, int y, int w, int h)
@@ -852,42 +951,7 @@ void xr_frame_end_quad_rect(int x, int y, int w, int h)
     quad.subImage.swapchain = quad_chain.h;
     quad.subImage.imageRect.extent.width = quad_chain.w;
     quad.subImage.imageRect.extent.height = quad_chain.ht;
-    {   /* the screen floats where the head looks: placed in front of the gaze when it appears,
-           then following the head's heading and pitch slowly (~1.2 s), at vr_dist */
-        static float sy, sp, shp[3];
-        static uint64_t last_ms;
-        XrSpaceLocation loc = { XR_TYPE_SPACE_LOCATION };
-        uint64_t now = SDL_GetTicks();
-        if (view_space && XR_SUCCEEDED(xrLocateSpace(view_space, local_space, fs.predictedDisplayTime, &loc)) &&
-            (loc.locationFlags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT) && (loc.locationFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT)) {
-            const XrQuaternionf* q = &loc.pose.orientation;
-            float fy = -2.0f * (q->y * q->z - q->w * q->x);
-            float yaw = yaw_of(q), pitch = asinf(fy < -1.0f ? -1.0f : fy > 1.0f ? 1.0f : fy), d = (float)g_vr_screen_dist / 100.0f, k;
-            float hp[3] = { loc.pose.position.x, loc.pose.position.y, loc.pose.position.z };
-            if (pitch > 0.1f) pitch = 0.1f;   /* vr100: at the eyes' height - it follows sideways, up and down only ~6 degrees */
-            if (pitch < -0.1f) pitch = -0.1f;
-            if (!last_ms || now - last_ms > 500) { sy = yaw; sp = 0.0f; memcpy(shp, hp, sizeof(shp)); }   /* appears: in front, level with the eyes (even looking down) */
-            else {
-                float dt = (now - last_ms) / 1000.0f, dy = yaw - sy;
-                while (dy > 3.14159265f) dy -= 6.2831853f;
-                while (dy < -3.14159265f) dy += 6.2831853f;
-                k = 1.0f - expf(-dt / 1.2f);
-                sy += dy * k; sp += (pitch - sp) * k;
-                for (int i = 0; i < 3; i++) shp[i] += (hp[i] - shp[i]) * k;
-            }
-            last_ms = now;
-            {
-                float cy = cosf(sy * 0.5f), syh = sinf(sy * 0.5f), cp = cosf(sp * 0.5f), sph = sinf(sp * 0.5f);
-                screen_pose.orientation.x = cy * sph;   /* yaw (about y) then pitch (about x) */
-                screen_pose.orientation.y = syh * cp;
-                screen_pose.orientation.z = -syh * sph;
-                screen_pose.orientation.w = cy * cp;
-                screen_pose.position.x = shp[0] - sinf(sy) * cosf(sp) * d;
-                screen_pose.position.y = shp[1] + sinf(sp) * d;
-                screen_pose.position.z = shp[2] - cosf(sy) * cosf(sp) * d;
-            }
-        }
-    }
+    update_screen_pose();
     quad.pose = screen_pose;
     {
         float a = (float)(g_vr_screen_angle < 20 ? 20 : g_vr_screen_angle > 120 ? 120 : g_vr_screen_angle) * (3.14159265f / 360.0f);

@@ -9,6 +9,9 @@ extern int g_vr_hol[2][2][4];   /* glue/vr_glue.c: [standing, seated][single amm
 extern void vr_hol_defaults(int mode);
 extern int g_vr_radial, g_vr_seated, g_vr_aa, g_vr_pouch;   /* glue/vr_glue.c */
 extern int g_adv_settings;   /* glue/options_glue.c */
+extern int g_vr_lefty;   /* xr.c */
+extern int g_vr_3d, g_vr_3d_strength, g_vr_cut_imm;   /* xr.c */
+extern int g_vr_screen_follow;   /* xr.c */
 extern int g_vr_scale, g_vr_eye_height, g_vr_fov, g_vr_turn, g_vr_hand_aim, g_vr_fx_fix, g_vr_gun_min, g_vr_hand_offset, g_vr_slash_speed, g_vr_hit_tilt, g_vr_danger_fx, g_vr_eye_shape, g_vr_screen_angle, g_vr_left_mirror, g_vr_dmg_head, g_vr_dmg_body, g_vr_dmg_arm, g_vr_dmg_leg, g_vr_recoil, g_vr_haptics, g_vr_hud_dist, g_vr_hud_angle, g_vr_sight, g_vr_sight_size, g_vr_holster, g_vr_hud_y, g_vr_roomscale, g_vr_manual_reload, g_vr_prompts, g_vr_dmg_body_max, g_vr_wake_shots, g_vr_precise_hits, g_vr_barrel_pitch, g_vr_hud_dist, g_vr_hud_angle, g_vr_aim_walk, g_vr_cam_steady, g_vr_move_direct, g_vr_heart_sound, g_vr_close_push, g_vr_bite_push, g_vr_comfort, g_update_check, g_tex_hd_per_frame, g_tex_loaders, g_tex_upload, g_vr_dyn_res, g_launcher, g_launcher_lang;
 extern int g_vr_savespot;
 extern char g_tex_dir[1024];   /* gs/texreplace.c: a folder of replacement textures chosen in the launcher */
@@ -122,6 +125,11 @@ static const struct { const char* key; int* val; int lo, hi; } keys[] = {
     { "tex_hd_per_frame", &g_tex_hd_per_frame, 1, 4 }, /* vr119: HD textures converted (mipmaps) per frame - fewer: lighter, longer stutter */            /* vr116: dark edges while walking with the stick / turning: 0 off, 1 weak, 2 medium, 3 strong */       /* vr115: each bite pushes the camera back this many cm; 0 = off */     /* vr112: the camera keeps an enemy's body this many cm from the eyes; 0 = off */
     { "vr_eye_shape", &g_vr_eye_shape, 0, 1 },
     { "vr_screen_angle", &g_vr_screen_angle, 20, 120 },
+    { "vr_3d", &g_vr_3d, 0, 1 },                          /* the flat screen in 3D (xr.c, vr_glue.c vr3d_after_draw) */
+    { "vr_cut_imm", &g_vr_cut_imm, 0, 1 },               /* immersive cutscenes (vr_glue.c vr3d_after_draw) */
+    { "vr_3d_strength", &g_vr_3d_strength, 10, 100 },     /* ... how much depth, percent */
+    { "vr_lefty", &g_vr_lefty, 0, 1 },   /* left-handed: the weapon in the left hand (xr.c) */
+    { "vr_screen_follow", &g_vr_screen_follow, 0, 1 },   /* 0 the flat screen stays where it appeared (default), 1 it follows the head (xr.c) */
     { "vr_left_mirror", &g_vr_left_mirror, 0, 3 },
     { "vr_dmg_head", &g_vr_dmg_head, 0, 1000 },
     { "vr_dmg_body", &g_vr_dmg_body, 0, 1000 },

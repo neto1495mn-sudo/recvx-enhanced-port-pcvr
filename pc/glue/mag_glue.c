@@ -382,6 +382,7 @@ static int slide_fail(const char* why, float a, float b)
 
 int pc_slide_zone(const float P2[2][3], float along[2])
 {
+    extern int g_vr_lefty;   /* xr.c */
     O_WRK* op = sys ? (O_WRK*)sys->obwp : NULL;
     ML_WORK* ml;
     NJS_CNK_OBJECT* so;
@@ -432,6 +433,10 @@ int pc_slide_zone(const float P2[2][3], float along[2])
             in[i] = fabsf(pl[0] - md->center.x) <= r + SLIDE_MARGIN &&
                     fabsf(pl[1] - md->center.y) <= SLIDE_HALF_SECTION + SLIDE_MARGIN &&
                     fabsf(pl[2] - md->center.z) <= SLIDE_HALF_SECTION + SLIDE_MARGIN;
+            if (!in[i] && g_vr_lefty) {   /* left-handed: the whole model takes the slide, wherever the hand touches it (the sphere round the model's centre, its own radius, 1.5 cm more) */
+                float ex = pl[0] - md->center.x, ey = pl[1] - md->center.y, ez = pl[2] - md->center.z;
+                in[i] = ex * ex + ey * ey + ez * ez <= (r + SLIDE_MARGIN) * (r + SLIDE_MARGIN);
+            }
         }
     }
 

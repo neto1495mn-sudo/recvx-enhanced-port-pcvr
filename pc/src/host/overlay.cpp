@@ -151,6 +151,7 @@ static bool setting_widget(int i)
     return changed;
 }
 
+extern "C" int g_adv_settings;   /* glue/options_glue.c: "Advanced settings" */
 static bool settings_imgui(int page, bool all = true)
 {
     bool changed = false;
@@ -158,6 +159,7 @@ static bool settings_imgui(int page, bool all = true)
         const Setting* s = &g_settings[i];
         if (s->page != page || !(all || (s->flags & SET_F1))) continue;
         if ((s->flags & SET_DEV) && !g_extras_unlocked) continue;   /* the developer rows: only with the code */
+        if ((s->flags & SET_ADV) && !g_extras_unlocked && !g_adv_settings) continue;   /* the advanced rows: "Advanced settings" or the code */
         if (s->group && all) ImGui::SeparatorText(s->group);
         changed |= setting_widget(i);
     }
@@ -815,7 +817,7 @@ void overlay_render(void)
    the mod), else a dark panel. One PLAY button: the game is played in VR. The options on their own page, in
    Portuguese. Main thread, before xr_init; the game's window itself, small and centred, given back its own size /
    full screen on PLAY. ini launcher = 1 (--no-launcher skips it). Returns 0 to quit, 1 to play. */
-extern "C" int g_vr_aa, g_vr_seated;   /* xr.c, gs_gl.c, vr_glue.c */
+extern "C" int g_vr_aa, g_vr_seated, g_vr_lefty;   /* xr.c, gs_gl.c, vr_glue.c */
 extern "C" int g_vr_request, g_launcher, g_tex_hd, g_tex_hd_per_frame, g_tex_loaders, g_tex_upload, g_vr_turn, g_vr_comfort, g_vr_sight, g_vr_res;
 extern "C" char g_update_tag[64];
 extern "C" int g_update_newer;
@@ -1293,7 +1295,7 @@ extern "C" int overlay_launcher(void)
                 if (button("##addtex", T[Q_ADD_TEX], cx, by + 210.0f, 330.0f, 72.0f, 26.0f, cPlay, cRed, 2.0f, 12.0f)) browse_start(2);
             } else {   /* settings */
                 float y = by;
-                const float rowH = 47.0f;   /* eight rows = the emblem's height (380) */
+                const float rowH = 47.0f;   /* the rows together = the emblem's height (380) */
                 char id[32];
                 auto row = [&](const char* label) {
                     text(cx, y + (rowH - 21.0f) * 0.5f - 1.0f, 21.0f, cWhite, label);
@@ -1391,6 +1393,21 @@ extern "C" int overlay_launcher(void)
                         x -= w;
                         SDL_snprintf(id, sizeof id, "##seat%d", v);
                         if (seg(id, lb[v], x, w, (g_vr_seated != 0) == (v != 0), false)) { g_vr_seated = v; config_save(); }
+                        x -= 8.0f;
+                    }
+                    y += rowH;
+                }
+                {   /* the hand the weapon is in (xr.c, ini vr_lefty): right (the default) / left: the weapon and the lighter in the left hand, aim and fire on the left controller */
+                    static const char* const hand_t[3] = { "Hand", "M\xC3\xA3o", "Mano" };
+                    static const char* const hand_lb[3][2] = { { "Right", "Left" }, { "Direita", "Esquerda" }, { "Derecha", "Izquierda" } };
+                    const char* const* lb = hand_lb[lang >= 0 && lang < 3 ? lang : 0];
+                    row(hand_t[lang >= 0 && lang < 3 ? lang : 0]);
+                    float x = right;
+                    for (int v = 1; v >= 0; v--) {
+                        float w = tw(19.0f, lb[v]) + 32.0f;
+                        x -= w;
+                        SDL_snprintf(id, sizeof id, "##hand%d", v);
+                        if (seg(id, lb[v], x, w, (g_vr_lefty != 0) == (v != 0), false)) { g_vr_lefty = v; config_save(); }
                         x -= 8.0f;
                     }
                 }
