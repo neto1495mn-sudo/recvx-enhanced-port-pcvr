@@ -115,6 +115,9 @@ static const char* const extras[] = { "Off", "Up to 1 per room", "Up to 2 per ro
 
 /* vr116: the VR comfort page - the few VR options to set before playing (the rest stay in recvx.ini) */
 extern int g_vr_seated;
+extern int g_vr_screen_follow;   /* xr.c: ini vr_screen_follow */
+extern int g_vr_lefty;           /* xr.c: ini vr_lefty */
+extern int g_vr_3d, g_vr_3d_strength, g_vr_cut_imm;   /* xr.c: ini vr_3d, vr_3d_strength, vr_cut_imm */
 extern int g_vr_turn, g_vr_sight, g_vr_comfort, g_vr_res, g_vr_dyn_res, g_vr_fps, g_vr_radial, g_vr_seated, g_vr_sr, g_vr_aa, g_vr_pouch;
 static const int vr_turns[] = { 0, 15, 30, 45, 60, 90 };
 static int vr_turn_get(void) { int b = 0; for (int i = 0; i < (int)SDL_arraysize(vr_turns); i++) if (abs(vr_turns[i] - g_vr_turn) < abs(vr_turns[b] - g_vr_turn)) b = i; return b; }
@@ -138,6 +141,9 @@ static void arr_adj(void) { vr_arr_adjust(); }
 extern void vr_recoil_learn(void);
 static void rc_learn(void) { vr_recoil_learn(); }
 static const char* const vr_positions[] = { "Standing", "Seated" };
+extern int g_vr_stereo;   /* xr.c: ini vr_stereo */
+static const char* const vr_views[] = { "Fixed camera", "Immersive" };
+static void vr_view_apply(void) { g_tps.on = g_vr_stereo ? 1 : 0; }   /* the head's camera is the free camera (xr.c host.c: "stereo needs the free camera"); the fixed camera is the game's own */
 static int vr_pos_get(void) { return g_vr_seated ? 1 : 0; }
 static void vr_pos_set(int v) { g_vr_seated = v ? 1 : 0; }
 static int vr_comfort_get(void) { return g_vr_comfort <= 0 ? 0 : g_vr_comfort <= 2 ? 1 : 2; }
@@ -163,6 +169,8 @@ static void subs_set(int v) { g_subtitles = subs_at(v) < 0 ? 0 : 2 + subs_at(v);
 static const char* subs_name(int v, char* b, int n) { snprintf(b, n, "%s", subs_at(v) < 0 ? tr("Off") : lang_names[subs_at(v)]); return b; }
 static const char* subs_locked(void) { return subs_n() < 2 ? "No language with subtitles is installed." : NULL; }
 const Setting g_settings[] = {
+    { SP_VR, "VR view", V(g_vr_stereo), 0, 1, 1, vr_views, .apply = vr_view_apply, .group = "VIEW",
+      .help = "Immersive: you are in the game, first person, and look around. Fixed camera: the game as it was, with the original cameras, on the screen in front of you (with 3D on, in depth)." },
     { SP_VR, "Position", NULL, 0, 1, 1, vr_positions, .get = vr_pos_get, .set = vr_pos_set, .group = "POSITION",
       .help = "Standing: the ammo box at your belt. Seated: the ammo box up at your chest, close and easy to reach in a chair." },
     { SP_VR, "Adjust holster: single ammo", NULL, .flags = SET_ACTION, .apply = hol_adj1, .group = "HOLSTERS",
@@ -191,6 +199,16 @@ const Setting g_settings[] = {
       .help = "Each eye's resolution, in percent of what the headset recommends. Higher is sharper and heavier for the GPU." },
     { SP_VR, "Ammo pouch model", V(g_vr_pouch), 0, 1, 1,
       .help = "The ammo box at your holster is drawn as a leather pouch (a 3D model). Off: the plain box." },
+    { SP_VR, "Left-handed", V(g_vr_lefty), 0, 1, 1,
+      .help = "The weapon goes in your left hand and the lighter in your right. Only the grips and triggers change sides (aim and fire become the left controller's grip and trigger; the right grip and trigger do the knife, the pouch and the run); the sticks and the other buttons stay." },
+    { SP_VR, "3D", V(g_vr_3d), 0, 1, 1, .group = "SCREEN", .flags = SET_ADV,
+      .help = "The flat screen (the fixed camera, cutscenes, doors, menus) with depth: the game is drawn for each eye, and each eye sees its own picture on the screen. Costs GPU: it draws the game twice." },
+    { SP_VR, "3D strength", V(g_vr_3d_strength), 10, 100, 10, .fmt = "%d%%", .flags = SET_ADV,
+      .help = "How much depth the 3D shows, from 10% (little) to 100% (a lot). Too much can tire the eyes." },
+    { SP_VR, "Immersive cutscenes", V(g_vr_cut_imm), 0, 1, 1, .flags = SET_ADV,
+      .help = "The cutscenes (the game's own scenes, not the videos) are seen from inside: your head is at the scene's camera and you look around. The camera moves as the scene makes it: it can be uncomfortable. Off: they stay on the screen in front of you." },
+    { SP_VR, "Screen follows head", V(g_vr_screen_follow), 0, 1, 1,
+      .help = "The flat screen (menus, inventory, scenes). Off: it appears in front of you and stays where it appeared. On: it follows your head slowly." },
     { SP_VR, "Anti-aliasing", V(g_vr_aa), 0, 1, 1,
       .help = "Smooths the jagged edges of the picture in the headset (FXAA). A little GPU; it also softens the picture slightly." },
     { SP_VR, "Super Resolution", V(g_vr_sr), 0, 1, 1,

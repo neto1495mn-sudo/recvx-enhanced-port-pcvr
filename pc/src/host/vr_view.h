@@ -58,6 +58,8 @@ typedef struct {
     float step[3], step_prev[3]; /* vr72/73: the player's own move (the stick; its position, not the swaying body) this frame and the one before (world) */
     int   turn_at;              /* vr141: g_vr_turn_total as this frame took it (the renderer shows the rest) */
     float turn;                 /* vr120: the view's smooth turn this frame (radians, the change of vr_yaw; 0 for a snap turn) */
+    int   screen3d;             /* a 3D screen (fixed camera, cutscenes): not the head's view - two eyes of a rig in the game camera's own frame, shown as a stereo screen; G is the game's camera, W puts the rig there */
+    float sep, conv;            /* ... half the eyes' separation and the distance of the plane they converge on (the screen's depth), metres */
 } VrView;
 enum { VRMK_DOT = 0, VRMK_BUTTON = 1, VRMK_NUMBER = 2, VRMK_RING = 3, VRMK_CURSOR = 4, VRMK_BALL = 5, VRMK_BALLW = 6 };   /* VRMK_BALL: a shaded ball (val = 0xRRGGBB) at a holster (the body's frame, as the count), VRMK_BALLW: the same at a world point (the hand) */   /* VRMK_CURSOR: the weapon wheel's pointer (a small square, 1.5 times the sight dot) */   /* vr223: VRMK_RING the shotgun's round reticle (RE4's) */   /* aiming dot, the "A" over what the action button would use, the holster's ammo count */
 

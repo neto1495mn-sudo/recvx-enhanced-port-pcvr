@@ -231,12 +231,13 @@ static GLuint prog, vao, vbo, present_prog, present_vao, svao, svbo;
 #endif
 static GLint u_vr_on, u_vr_src, u_vr_dst, u_vr_m0, u_vr_m1, u_vr_m2, u_vr_m3, u_vr_zab, u_vr_zs, u_vr_hud, u_vr_pr0, u_vr_pr1, u_vr_pr2, u_vr_pr3;
 /* VR re-projection of the draws being replayed for an eye (gs_present_vr); off otherwise */
-static struct { int on; float src[4], dst[4], m[16], zab[2], zs, hud[3], pm[16]; int pl; } vr_u;   /* pm, pl: the panel held at the head as it is now (g_vr_panel_live) */
+static struct { int on; float src[4], dst[4], m[16], zab[2], zs, hud[3], hudy, pm[16]; int pl; } vr_u;   /* pm, pl: the panel held at the head as it is now (g_vr_panel_live) */
 volatile int g_vr_panel_live;   /* vr_glue.c: the weapon wheel is open - its 2D panel follows the head of every image, not the head of the game frame */
 extern int g_vr_sr;        /* xr.c: ini vr_sr - the super resolution: here the sharpening upscale in present_fs, there the compositor's hint */
 int g_vr_aa = 1;           /* ini vr_aa: anti-aliasing (FXAA) of the picture as it is drawn onto the eye images (present_fs) */
 int g_vr_hud_dist = 200;   /* ini vr_hud_dist: the panel of the game's texts and 2D, cm in front of the head */
 int g_vr_hud_y = 0;        /* ini vr_hud_y: the panel moved up (+) or down (-), cm */
+extern int g_vr_3d;   /* xr.c: the flat screen in 3D (vr3d_after_draw in vr_glue.c) */
 int g_vr_hud_angle = 42;   /* ini vr_hud_angle: its width seen from the head (degrees); 0 = drawn over the whole view as before */
 /* VR diagnosis: what the first eye's replay draws, by path (logged now and then while stereo is on) */
 /* path: 'N' native triangles, 'S' sprites/lines (gs_draw_raw), 'R' GS register writes (VU1 / packets) */
@@ -288,7 +289,7 @@ static const char* vs_src =
        panel u_vr_hud.y units in front of the frame's head, u_vr_hud.x units per pixel from the
        screen centre - re-projected like the 3D, so it sits still in front of the eyes */
     "    if (vrm > 2.5) {\n"
-    "      V = vec3((P.x / P.w - u_vr_src.x) * u_vr_hud.x, (P.y / P.w - u_vr_src.y) * u_vr_hud.x - u_vr_hud.z, u_vr_hud.y);\n"
+    "      V = vec3((P.x / P.w - u_vr_src.x) * u_vr_hud.x, (P.y / P.w - u_vr_src.y) * (u_vr_hud.w > 0.0 ? u_vr_hud.w : u_vr_hud.x) - u_vr_hud.z, u_vr_hud.y);\n"
     /* u_vr_pr3.w: the panel kept at the head of THIS image: the panel's point in the frame's V space moved by u_vr_pr* (iA * head now * axes) - walking, the
        frame's head is left behind between two game frames and the panel stepped at 30 Hz, a trail */
     "      if (u_vr_pr3.w > 0.5) V = u_vr_pr0.xyz * V.x + u_vr_pr1.xyz * V.y + u_vr_pr2.xyz * V.z + u_vr_pr3.xyz;\n"
@@ -2332,7 +2333,7 @@ void gs_flush(void)
 #endif
         uni2f(u_vr_zab, vr_u.zab[0], vr_u.zab[1]);
         uni1f(u_vr_zs, vr_u.zs);
-        uni4f(u_vr_hud, vr_u.hud[0], vr_u.hud[1], vr_u.hud[2], 0.0f);
+        uni4f(u_vr_hud, vr_u.hud[0], vr_u.hud[1], vr_u.hud[2], vr_u.hudy);
         uni4f(u_vr_pr0, vr_u.pm[0], vr_u.pm[1], vr_u.pm[2], 0.0f);
         uni4f(u_vr_pr1, vr_u.pm[4], vr_u.pm[5], vr_u.pm[6], 0.0f);
         uni4f(u_vr_pr2, vr_u.pm[8], vr_u.pm[9], vr_u.pm[10], 0.0f);
@@ -3552,7 +3553,7 @@ void gs_frame_executed(int interpolate)
         final_vw = rt->vw; final_vh = rt->vh;
         if (dump_on()) { draw_display(img[fin].tex, final_vw, final_vh); dump_frame(0); }   /* RECVX_DUMP_FRAMES: the real image */
         final_dumped = 1;
-        if (interpolate || (xr_active() && g_vr_stereo)) { snapshot_valid = rt_snapshot(); gs_native_cache_upload(); }   /* VR: eye replays */
+        if (interpolate || (xr_active() && (g_vr_stereo || g_vr_3d))) { snapshot_valid = rt_snapshot(); gs_native_cache_upload(); }   /* VR: eye replays */
     } else {
         final_vw = 0;
     }
@@ -4572,6 +4573,7 @@ static int present_vr_stereo(const struct Frame* cur, float t)
     uint64_t t0 = SDL_GetTicksNS(), t1;
     double hz = xr_display_hz() > 1.0 ? xr_display_hz() : 90.0, budget = 1e9 / hz;
     int r = present_vr_stereo_(cur, t);
+    { const VrView* sv = r && cur ? stream_frame_vr(cur) : NULL; extern void xr_screen3d(int on, float aspect); xr_screen3d(sv && sv->screen3d, (640.0f + 2.0f * (float)g_margin_x) / 480.0f); }   /* (the headset gets two screens, one for each eye) */
     t1 = SDL_GetTicksNS();
     if (last_ns) { uint64_t g = t0 - last_ns; if (g > worst_gap) worst_gap = g; if (g > 1.5 * budget) gaps++; }
     last_ns = t0;
@@ -4589,6 +4591,8 @@ static int present_vr_stereo_(const struct Frame* cur, float t)
 {
     static GLuint vr_fbo;
     const VrView* v = cur ? stream_frame_vr(cur) : NULL;
+    int s3d = v && v->screen3d;   /* a 3D screen: the eyes are a rig in the game camera's frame, not the head's */
+    VrEye seye[2];
     float iG[16], iW[16], A[16];
     float dw = 640.0f + 2.0f * g_margin_x;
     int w = (int)(dw * g_scale + 0.5f), h = (int)(480.0f * g_scale + 0.5f), ok = 1;
@@ -4620,9 +4624,26 @@ static int present_vr_stereo_(const struct Frame* cur, float t)
         }
         if (why) return 0;
     }
+#define EYE(k) (s3d ? &seye[k] : xr_frame_eye(k))
+    if (s3d) {   /* the two eyes of the rig, in the game camera's own frame (x right, y up, -z forward, metres): the picture the game draws, from a point a little to
+                    the left and to the right. Each eye's frustum is the game's own (its projection: c + k * V.xy / V.z), shifted so that both agree on the plane
+                    v->conv metres away: what is there has no parallax (the screen), what is nearer comes out of it, what is farther goes behind it */
+        float cxo = v->cx - ofx, cyo = v->cy - ofy, l0 = -(cxo + (float)g_margin_x) / v->kx, u0 = cyo / v->ky;
+        float sh = v->conv > 0.1f ? v->sep / v->conv : 0.0f;
+        for (int k = 0; k < 2; k++) {
+            float sg = k ? 1.0f : -1.0f;
+            memset(&seye[k], 0, sizeof(seye[k]));
+            seye[k].pose.px = sg * v->sep;
+            seye[k].pose.qw = 1.0f;
+            seye[k].l = l0 - sg * sh;
+            seye[k].r = seye[k].l + dw / v->kx;
+            seye[k].u = u0;
+            seye[k].d = u0 - 480.0f / v->ky;
+        }
+    }
     {   /* vr67: walking moves the play space (W) once a game frame: in between, the play space at t
            (still scenery and characters move with the body at the headset's rate) */
-        const struct Frame* pf = g_vr_interpolate && (t < 0.999f || walk_smooth_on()) ? stream_prev_frame(cur) : NULL;
+        const struct Frame* pf = !s3d && g_vr_interpolate && (t < 0.999f || walk_smooth_on()) ? stream_prev_frame(cur) : NULL;
         const VrView* pv = pf ? stream_frame_vr(pf) : NULL;
         float Wt[16], iWt[16], mv = 0.0f, zs = sqrtf(v->W[0] * v->W[0] + v->W[1] * v->W[1] + v->W[2] * v->W[2]);
         float dl[3];
@@ -4670,7 +4691,7 @@ static int present_vr_stereo_(const struct Frame* cur, float t)
                          !g_vr_interp_body ? "off (vr_interp_body 0)" : use ? "on" : "not this frame", mv, v->follow[0], v->follow[1], nused, njump, nwall);
         }
         float e = (float)(int)((unsigned)SDL_GetAtomicInt(&g_vr_turn_total) - (unsigned)v->turn_at) * 1e-6f;   /* vr141: turned since the frame */
-        if (fabsf(e) > 1e-5f && fabsf(e) < 0.5f) {   /* vr120: a smooth turn shown at the headset's rate (vr125: by its own t,
+        if (!s3d && fabsf(e) > 1e-5f && fabsf(e) < 0.5f) {   /* vr120: a smooth turn shown at the headset's rate (vr125: by its own t,
                also past the frame while the next is a little late, and on frames not interpolated otherwise):
                the play space as the frame made it, turned back by what is left of this frame's turn, about the head
                (W(yaw - e) = W(yaw) * T(head) * Ry(-e) * T(-head) - the head stays where it is) */
@@ -4698,7 +4719,7 @@ static int present_vr_stereo_(const struct Frame* cur, float t)
             extern int g_hand_on;
             extern float g_hand_M[2][16];
             VrInput in;
-            float P0[16], iP0[16], A0[16], iA[16], B[16], C[16], D[16], Mn[16], iMt[16];
+            float P0[16], iP0[16], A0[16], iA[16], B[16], C[16], D[16], Dm[16], Mn[16], iMt[16];
             int have = xr_input(&in);
             g_hand_on = 0;
             vr_laser_on[0] = vr_laser_on[1] = 0;
@@ -4720,10 +4741,18 @@ static int present_vr_stereo_(const struct Frame* cur, float t)
                         vr_mat_from_pose(Mn, now);
                         vr_mat_rigid_inverse_pose(iMt, &v->hand[h]);
                         vr_mat_mul(D, Mn, iMt);   /* in the recentred space the controller poses are in */
+                        {   /* left-handed (xr.c swaps the hands: the game's right hand, the weapon's, is the left controller): the hand and what it holds are drawn MIRRORED,
+                               across the plane of the controller (its x axis): a right hand mirrored is a left hand, and the left controller shows a left hand with the
+                               weapon. Moved from where it was made to where the controller is now: Mn * Fx * inverse(Mt) (the lasers keep D: their beam is not mirrored) */
+                            extern int g_vr_lefty;
+                            if (g_vr_lefty) { float Fx[16], T1[16]; vr_mat_identity(Fx); Fx[0] = -1.0f; vr_mat_mul(T1, Mn, Fx); vr_mat_mul(Dm, T1, iMt); }
+                            else memcpy(Dm, D, sizeof(Dm));
+                        }
                         vr_mat_mul(C, D, Rc); vr_mat_mul(D, iRc, C);   /* vr70: to local (eye poses' space): inverse(rec) * D * rec */
+                        vr_mat_mul(C, Dm, Rc); vr_mat_mul(Dm, iRc, C);
                         if (h == 0) { float tr = D[0] + D[5] + D[10], cc = (tr - 1.0f) * 0.5f; dbg_turn = acosf(cc > 1.0f ? 1.0f : cc < -1.0f ? -1.0f : cc) * 57.2958f; }
                         vr_mat_mul(B, A0, iP0);   /* GS -> local as made */
-                        vr_mat_mul(C, D, B);
+                        vr_mat_mul(C, Dm, B);
                         vr_mat_mul(B, iA, C);     /* -> V of this image */
                         vr_mat_mul(g_hand_M[h], P0, B);
                         if (vr_mat_invert(iWf, v->W)) { vr_mat_mul(t1, D, iWf); vr_mat_mul(t2, iA, t1); memcpy(vr_laser_L[h], t2, sizeof(t2)); vr_laser_on[h] = 1; }   /* vr77: world -> V, moved with the hand */
@@ -4765,7 +4794,7 @@ static int present_vr_stereo_(const struct Frame* cur, float t)
     int and_mv_done = 0;   /* this image's replay drew both eyes (multiview) */
 #endif
     for (int e = 0; e < 2 && ok; e++) {
-        const VrEye* E = xr_frame_eye(e);
+        const VrEye* E = EYE(e);
         float iE[16], M[16], l = E->l, r = E->r, u = E->u, d = E->d;
         RenderTarget* rt;
         GLuint tex;
@@ -4789,8 +4818,13 @@ static int present_vr_stereo_(const struct Frame* cur, float t)
             vr_u.hud[0] = d * tanf(g_vr_hud_angle * (3.14159265f / 360.0f)) / 320.0f;
             vr_u.hud[2] = g_vr_hud_y / 100.0f * vr_u.zs;   /* V.y is down: up is subtracted */
         } else vr_u.hud[0] = vr_u.hud[1] = vr_u.hud[2] = 0.0f;
+        vr_u.hudy = 0.0f;
+        if (s3d) {   /* the game's own 2D (menus, texts, the HUD) on the screen's plane, as the game draws it: the plane at v->conv, the pixels' size from the projection */
+            float zc = v->conv * vr_u.zs;
+            vr_u.hud[1] = zc; vr_u.hud[0] = zc / v->kx; vr_u.hud[2] = 0.0f; vr_u.hudy = zc / v->ky;
+        }
         vr_u.pl = 0;
-        if (g_vr_panel_live && vr_u.hud[1] > 0.0f) {   /* the panel at this image's head: iA * head(now, the eyes' middle) * axes(y down, z forward) * metres per unit */
+        if (g_vr_panel_live && !s3d && vr_u.hud[1] > 0.0f) {   /* the panel at this image's head: iA * head(now, the eyes' middle) * axes(y down, z forward) * metres per unit */
             const VrEye *E0 = xr_frame_eye(0), *E1 = xr_frame_eye(1);
             VrPose hp = E0->pose;
             float H[16], iA2[16], S4[16], Zs[16], T[16];
@@ -4826,7 +4860,7 @@ static int present_vr_stereo_(const struct Frame* cur, float t)
             if (e == 0 && (and_tr_n2++ % 200) == 100) { extern int and_pass_trace(int); and_tr_active = and_pass_trace(1); }
             if (e == 0 && and_mv_try()) {   /* multiview: one replay draws both eyes */
                 for (int k = 0; k < 2; k++) {
-                    const VrEye* Ek = xr_frame_eye(k);
+                    const VrEye* Ek = EYE(k);
                     float iEk[16], Mk[16];
                     vr_mat_rigid_inverse_pose(iEk, &Ek->pose);
                     vr_mat_mul(Mk, iEk, A);

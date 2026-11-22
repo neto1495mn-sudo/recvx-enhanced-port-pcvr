@@ -153,6 +153,7 @@ void bhMainSequence()
         }
         
 #ifdef TARGET_PC
+        { extern void vr3d_after_draw(void); vr3d_after_draw(); }   /* the flat screen in 3D (vr_glue.c): before tps_after_draw, which clears the head camera's frame */
         if (tps_on)
         {
             tps_after_draw();

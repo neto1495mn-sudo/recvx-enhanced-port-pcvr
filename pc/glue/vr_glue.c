@@ -547,8 +547,10 @@ static int knife_equipped(void);
 static int dual_equipped(void);
 int vr_on(void);
 static float holster_w[3];          /* the holster (world), when a gun is in hand */
+static float holster_w2[3];         /* left-handed: the same place on the other side of the body (the hand takes the ammo at either) */
 static int holster_ok;
 static float hand_pos[2][3];        /* where each hand was put this frame (world) */
+static float ctrl_right[2][3];      /* each controller's own right axis (world): the normal of the plane the left-handed drawing is mirrored across (gs_gl.c, Mn * Fx * inverse(Mt)) */
 static int hand_ok[2];
 static VrPose hand_aim[2];
 static void aim_rows(float r[9], const VrPose* p);   /* vr196: the right controller's rows, turned for the two-handed hold */
@@ -711,6 +713,19 @@ static void guide_draw(int steady)
     gd_world(l, ghost_b);
     ghost_shape = sh->shape; ghost_hw = sh->half_w; ghost_on = 1;
 }
+/* Left-handed: the gun is drawn mirrored (gs_gl.c), so a place on it - the magazine's guide, the slide - is where the mirror puts it, not where the game has it: the point reflected
+   across the gun's vertical plane (through the weapon hand's origin; its normal the horizontal side of the barrel, as the slide's code takes it). Right-handed: untouched. */
+static float muzzle_w[2][3];
+static int barrel_ok[2];
+static void lefty_mirror_side(float p[3], int side)   /* a point reflected across the plane of that hand's controller: the drawing's mirror (gs_gl.c) */
+{
+    extern int g_vr_lefty;
+    float dl2;
+    if (!g_vr_lefty || !hand_ok[side]) return;
+    dl2 = (p[0] - hand_pos[side][0]) * ctrl_right[side][0] + (p[1] - hand_pos[side][1]) * ctrl_right[side][1] + (p[2] - hand_pos[side][2]) * ctrl_right[side][2];
+    for (int k = 0; k < 3; k++) p[k] -= 2.0f * dl2 * ctrl_right[side][k];
+}
+static void lefty_mirror(float p[3]) { lefty_mirror_side(p, 0); }   /* a place on the gun (the weapon hand's) */
 /* the held ammo is at its fitting place: the guide's (its middle within 7 cm) when this gun has one, else the left hand within 20 cm of the right */
 static int ammo_in_place(void)
 {
@@ -719,7 +734,29 @@ static int ammo_in_place(void)
         float g[3], c[3], c0[3], l[3] = { -0.85f, -0.4f, it == 7 ? -1.04f : 0.0f };   /* (the arrow lies along the model's z) */
         for (int k = 0; k < 3; k++) c0[k] = g_vr_gd[it][k] / 100.0f;
         if (!plp || !plp->mlwP || plp->mlwP->obj_num <= 13 || !gd_world(c0, g)) return 0;
+        extern int g_vr_lefty;
+        float g0[3] = { g[0], g[1], g[2] }, cv[3];
+        lefty_mirror(g);   /* (left-handed: the guide is drawn mirrored, across the gun hand's controller) */
         node_pt(plp->mlwP->owP[13].mtx, l, c);
+        memcpy(cv, c, sizeof(cv));
+        lefty_mirror_side(cv, 1);   /* (... and the ammo in the other hand, mirrored across its own controller) */
+        {   /* log: where the held ammo is and where its place is (every half second while it is held) */
+            static uint64_t last;
+            uint64_t now = SDL_GetTicks();
+            if (now - last > 500) {
+                last = now;
+                vr_log("vr-lefty: ammo held: hand %.2f %.2f %.2f, the guide's place %.2f %.2f %.2f (mirrored: %d), %.1f cm from it (7 cm needed)\n", c[0], c[1], c[2], g[0], g[1], g[2],
+                       g_vr_lefty, dist3(c, g) / (g_vr_scale / 100.0f) * 10.0f);
+            }
+        }
+        if (g_vr_lefty) {   /* left-handed: any pair takes it - what is drawn (both mirrored), or as the game has them */
+            float d = dist3(cv, g);
+            if (dist3(c, g0) < d) d = dist3(c, g0);
+            if (dist3(c, g) < d) d = dist3(c, g);
+            if (dist3(cv, g0) < d) d = dist3(cv, g0);
+            if (hand_ok[0] && hand_ok[1] && dist3(hand_pos[0], hand_pos[1]) < 2.0f * (g_vr_scale / 100.0f)) return 1;   /* (as the guns without a guide: the hands together) */
+            return d < 0.7f * (g_vr_scale / 100.0f);
+        }
         return dist3(c, g) < 0.7f * (g_vr_scale / 100.0f);
     }
     return hand_ok[0] && hand_ok[1] && dist3(hand_pos[0], hand_pos[1]) < 2.0f * (g_vr_scale / 100.0f);
@@ -832,9 +869,10 @@ static int lau_near(void)
    them), turned with the head's heading smoothed - the box ammo of the gun in hand */
 static void holster_update(const float Wg[16], const VrPose* h)
 {
+    extern int g_vr_lefty;
     static float yaw_s;
     static int have;
-    float hr[9], fx, fz, yaw, yh, pl[3], pw[3];   /* yh: the holster's heading (the head's, smoothed, plus its turn) */
+    float hr[9], fx, fz, yaw, yh, pl[3], pl2[3], pw[3];   /* yh: the holster's heading (the head's, smoothed, plus its turn) */
     int n;
     holster_ok = 0;
     lau_n = 0; box_n = 0;
@@ -864,9 +902,11 @@ static void holster_update(const float Wg[16], const VrPose* h)
         int it = eg ? (int)((*eg >> 16) & 0xFF) : 0, two = hol_adj ? hol_adj == 2 : (it == 6 || it == 7);   /* the grenade launcher and the bow gun: their own place */
         const int* hv = g_vr_hol[g_vr_seated ? 1 : 0][two ? 1 : 0];   /* the place of this position (standing / seated) and gun group */
         float down = hv[0] / 100.0f, out = hv[1] / 100.0f, side = hv[2] / 100.0f;
+        if (g_vr_lefty) side = -side;   /* left-handed: the pouch on the other side, where the right hand (the supporting one) is */
         yh = yaw_s + hv[3] * (3.14159265f / 180.0f);   /* as if fixed to the chest: it hangs where the head looks and turns with it, plus its own turn */
         pl[0] = h->px + sinf(yaw_s) * out; pl[1] = h->py - down; pl[2] = h->pz + cosf(yaw_s) * out;
-        pl[0] += -cosf(yaw_s) * side; pl[2] += sinf(yaw_s) * side;   /* 8 cm to the player's right (the right of the heading yaw_s: (-cos, sin) - yaw is of the forward (sin, cos)) */
+        pl[0] += -cosf(yaw_s) * side; pl[2] += sinf(yaw_s) * side;
+        pl2[0] = pl[0] + 2.0f * cosf(yaw_s) * side; pl2[1] = pl[1]; pl2[2] = pl[2] - 2.0f * sinf(yaw_s) * side;   /* the same place on the other side (left-handed: either takes the ammo) */   /* 8 cm to the player's right (the right of the heading yaw_s: (-cos, sin) - yaw is of the forward (sin, cos)) */
     }
     pw[0] = Wg[0] * pl[0] + Wg[4] * pl[1] + Wg[8] * pl[2] + Wg[12];
     pw[1] = Wg[1] * pl[0] + Wg[5] * pl[1] + Wg[9] * pl[2] + Wg[13];
@@ -898,7 +938,7 @@ static void holster_update(const float Wg[16], const VrPose* h)
                 for (int k = 0; k < 3; k++) loc[k] = inv[k] * tw[0] + inv[4 + k] * tw[1] + inv[8 + k] * tw[2] + inv[12 + k];
                 dx = loc[0] - h->px; dz = loc[2] - h->pz;
                 *po = (int)lroundf((dx * sinf(yaw_s) + dz * cosf(yaw_s)) * 100.0f);
-                *ps = (int)lroundf((-dx * cosf(yaw_s) + dz * sinf(yaw_s)) * 100.0f);
+                *ps = (int)lroundf((-dx * cosf(yaw_s) + dz * sinf(yaw_s)) * 100.0f * (g_vr_lefty ? -1.0f : 1.0f));   /* (kept as for the right-handed: the other side shows it mirrored) */
                 *pd = (int)lroundf((h->py - loc[1]) * 100.0f);
                 if (*po < -20) *po = -20; if (*po > 60) *po = 60;
                 if (*ps < -50) *ps = -50; if (*ps > 50) *ps = 50;
@@ -908,6 +948,9 @@ static void holster_update(const float Wg[16], const VrPose* h)
         }
     }
     memcpy(holster_w, pw, sizeof(pw)); holster_ok = 1;
+    for (int k = 0; k < 3; k++) holster_w2[k] = Wg[k] * pl2[0] + Wg[4 + k] * pl2[1] + Wg[8 + k] * pl2[2] + Wg[12 + k];
+
+
     if (g_vr_holster && !hol_adj) {   /* vr132: "in the magazine / in the boxes" (the magazine out: 0 / its rounds with the boxes'), in front of the box, towards her */
         unsigned* g = gun_slot();
         int mag = g ? (int)(*g & 0xFFFF) : 0, box = n + (mag_out >= 0 ? mag_kept : 0);
@@ -1055,7 +1098,11 @@ int vr_hide_shadows(void) { return vr_on() && !g_vr_shadows; }
 /* ini vr_debug_log: the enemies' diary - every change of an enemy's state, life, hittability,
    scene control and position jumps (or walks through a wall), with the time and room, so a
    misbehaving zombie can be followed in recvx.log. Only changes are written. */
-int g_vr_debug_log = 0;   /* off in released builds (the log grew past 1 MB in minutes); recvx.ini's vr_debug_log = 1 turns it on */
+#ifdef RECVX_LOGS
+int g_vr_debug_log = 1;   /* a build with logs: the diary on */
+#else
+int g_vr_debug_log = 0;
+#endif   /* off in released builds (the log grew past 1 MB in minutes); recvx.ini's vr_debug_log = 1 turns it on */
 static void enemy_diary(void)
 {
     static struct { int seen, m, hp, flg, type; float x, z; } last[128];
@@ -1227,7 +1274,12 @@ static float dist3(const float* a, const float* b) { float x = a[0] - b[0], y = 
    hand at the belt is free for the knife and the two-handed hold. */
 static float holster_open;   /* 0 closed .. 1 open: the pouch at the holster (gs_gl.c draw_pouch) */
 static int ammo_ready(float rgrip) { if (launcher_gun()) return lau_open; return mag_out >= 0 || (rgrip > 0.5f && !rack_gun()); }   /* (a pistol: only after B, the magazine out - no reload with the aim held) */
-static int near_holster(void) { return holster_ok && hand_ok[1] && dist3(hand_pos[1], holster_w) < (g_vr_seated ? 1.6f : 2.5f) * (g_vr_scale / 100.0f); }   /* seated: the hand has to be at the box (16 cm from its centre: the box is 9 cm wide and the hand point is the palm, behind the fingers), not reach for it from afar (25 cm) */
+static int near_holster(void)
+{
+    extern int g_vr_lefty;
+    float r = (g_vr_seated ? 1.6f : 2.5f) * (g_vr_scale / 100.0f);
+    return holster_ok && hand_ok[1] && (dist3(hand_pos[1], holster_w) < r || (g_vr_lefty && dist3(hand_pos[1], holster_w2) < r));
+}   /* seated: the hand has to be at the box (16 cm from its centre: the box is 9 cm wide and the hand point is the palm, behind the fingers), not reach for it from afar (25 cm) */
 
 /* the launcher opens / shuts: its own animation (the weapon object, as the game's reload plays it), the sound, and the pouch with it */
 static void lau_set(int open, const char* why)
@@ -1248,7 +1300,24 @@ static void reload_update(void)
     int b, gr;
     if (tec_ms && SDL_GetTicks() >= tec_ms) { tec_ms = 0; if (g_vr_haptics) xr_haptic(0, 0.35f, 30); }   /* vr130: "tec-tec" */
     if (!g_vr_manual_reload || hol_adj || !xr_input(&in)) return;   /* (adjusting the holster: the left grip is the drag, not a reload) */
-    b = (in.buttons & VRB_B) != 0; gr = in.lgrip > 0.5f;
+    {   /* the magazine's button (and the launcher's): B; left-handed, Y - the weapon hand is the left one, its face button is Y - while aiming (else Y stays the status screen) */
+        extern int g_vr_lefty;
+        b = g_vr_lefty ? ((in.buttons & VRB_Y) != 0 && in.rgrip > 0.5f) : (in.buttons & VRB_B) != 0;
+    }
+    gr = in.lgrip > 0.5f;
+    {   /* log (left-handed): the magazine's button, and the support hand's grip with where the pouch is */
+        extern int g_vr_lefty;
+        static int yb_was, gr_was;
+        if (g_vr_lefty) {
+            int yb = (in.buttons & VRB_Y) != 0;
+            if (yb != yb_was) { vr_log("vr-lefty: Y %s: aim (left grip) %.2f, magazine button %d, gun %d, magazine out %d, box ammo %d\n", yb ? "pressed" : "let go", in.rgrip, b, gun_slot() ? 1 : 0, mag_out >= 0, box_ammo()); yb_was = yb; }
+            if (gr && !gr_was)
+                vr_log("vr-lefty: support grip (right controller) pressed: pouch shown %d, hand ok %d, hand to the pouch %.1f cm, to the other side %.1f cm (needs %.1f), ammo ready %d, magazine out %d, box ammo %d, held %d\n",
+                       holster_ok, hand_ok[1], dist3(hand_pos[1], holster_w) / (g_vr_scale / 100.0f) * 10.0f, dist3(hand_pos[1], holster_w2) / (g_vr_scale / 100.0f) * 10.0f,
+                       (g_vr_seated ? 1.6f : 2.5f) * 10.0f, ammo_ready(in.rgrip), mag_out >= 0, box_ammo(), mag_held);
+            gr_was = gr;
+        }
+    }
     g = gun_slot();
     if (!g && launcher_gun()) g = gun_slot_any();   /* (endless rounds in it: still this gun's reload) */
     if (!g || !launcher_gun()) lau_open = 0;
@@ -1613,10 +1682,10 @@ void vr_camera(void)
     vr_frame = 0;
     {
         static int last = -1;
-        int why = !plp ? 1 : !xr_stereo_ready() ? 2 : !xr_head_pose(&h) ? 3 : 0;
+        int why = !plp ? 1 : !g_vr_stereo ? 4 : !xr_stereo_ready() ? 2 : !xr_head_pose(&h) ? 3 : 0;   /* (g_vr_stereo 0: the fixed camera, in 3D or flat) */
         if (why != last) {
             extern void host_log(const char* fmt, ...);
-            static const char* names[] = { "on", "off (no player)", "off (headset not showing us yet)", "off (no head pose yet)" };
+            static const char* names[] = { "on", "off (no player)", "off (headset not showing us yet)", "off (no head pose yet)", "off (fixed camera view)" };
             host_log("vr: camera %s\n", names[why]);
             last = why;
         }
@@ -2430,20 +2499,57 @@ unsigned vr_tps_keys(void)
         if (!dual_aim) pull_ms[0] = pull_ms[1] = 0;
     }
     if (in.buttons & VRB_A) k |= 32;     /* TPS_K_ACTION */
-    if (in.buttons & VRB_Y) k |= 64;   /* TPS_K_STATUS (vr155: LT + Y is no longer Start) */
+    {   /* TPS_K_STATUS (vr155: LT + Y is no longer Start); left-handed, Y aimed with a gun in hand is the magazine's button */
+        extern int g_vr_lefty;
+        if ((in.buttons & VRB_Y) && !(g_vr_lefty && g_vr_manual_reload && vr_playing() && gun_slot_any() && in.rgrip > 0.5f)) k |= 64;
+    }
     rw_y(&in);   /* (the weapon wheel: the right stick's click) */
     if (in.buttons & VRB_X) k |= 128;   /* TPS_K_MAP: the right stick's click (vr197), and X again (vr228: the knife is back on the left grip) */
     if (in.rgrip > 0.5f && !vr_on_stairs()) k |= 256;       /* TPS_K_AIM (vr186: not on stairs - raising a weapon there takes her out of the stair walk, off its path, through the wall) */
     else if (in.rgrip > 0.5f) { static uint64_t lm; uint64_t t = SDL_GetTicksNS() / 1000000; if (t > lm + 1000) { lm = t; vr_log("vr: aim held on the stairs - not passed to the game (mode %d/%d)\n", plp->mode1, plp->mode2); } }
     if (in.rtrig > 0.5f && !(vr_playing() && knife_equipped() && g_vr_slash_speed > 0)) k |= 512;   /* TPS_K_FIRE (the knife cuts by swinging) */
     vw_fire_vr = (k & 512) != 0; vw_fire_finger = in.ltrig > 0.5f || in.rtrig > 0.5f;   /* vr108 watch */
-    if ((in.buttons & VRB_B) && !(g_vr_manual_reload && vr_playing() && gun_slot_any())) k |= 1024;   /* TPS_K_CANCEL (with a gun in hand B drops the magazine) */
+    {   /* a pull of the trigger while the game cannot take a shot (the recoil of the last one, mode 69: the game throws it away - the log of the left-handed test: about half of the pulls) is KEPT
+           (350 ms) and fired as soon as the game takes it (65..67): the key off for a frame, then pressed - the game fires only on a press (at_flg 0x40) */
+        static uint64_t pend_until;
+        static int rel_done, tr_was;
+        int tr = in.rtrig > 0.5f;
+        int ready = plp && ((plp->mode2 >= 65 && plp->mode2 <= 67) || (plp->mode2 == 169 && (plp->at_flg & 0x10)));
+        int single = vr_playing() && plp && (k & 256) && !dual_equipped() && !knife_equipped() && !launcher_gun();
+        uint64_t now = SDL_GetTicks();
+        if (!single) { pend_until = 0; rel_done = 0; }
+        else {
+            if (tr && !tr_was && !ready) pend_until = now + 350;
+            if (pend_until && now > pend_until) { pend_until = 0; rel_done = 0; }
+            if (pend_until && ready) {
+                if (!rel_done) { k &= ~512u; rel_done = 1; }
+                else { k |= 512u; pend_until = 0; rel_done = 0; }
+            } else if (pend_until) k &= ~512u;
+        }
+        tr_was = tr;
+    }
+    {   /* TPS_K_CANCEL (with a gun in hand B drops the magazine; left-handed it is Y, and B is the plain cancel) */
+        extern int g_vr_lefty;
+        if ((in.buttons & VRB_B) && (g_vr_lefty || !(g_vr_manual_reload && vr_playing() && gun_slot_any()))) k |= 1024;
+    }
     {   /* the slide not pulled yet: the trigger only clicks */
         static int click_was;
         if ((need_rack || lau_open) && vr_playing() && (k & 512)) {
             if (!click_was) CallPlayerWeaponSeEx((NJS_POINT3*)&plp->mlwP->owP[9].mtx[12], 264, 0);
             click_was = 1; k &= ~512u;
         } else if (!(in.rtrig > 0.5f)) click_was = 0;
+    }
+    {   /* log (left-handed): the trigger of the weapon hand (the left controller's), what the game gets from it */
+        extern int g_vr_lefty;
+        static int was;
+        int now = in.rtrig > 0.5f;
+        if (g_vr_lefty && now != was) {
+            unsigned* gs = gun_slot();
+            vr_log("vr-lefty: trigger %s: left trigger %.2f, aim (left grip) %.2f, keys %x (fire %d aim %d), slide to pull %d, launcher open %d, magazine out %d, rounds %d, weapon %d, mode %d/%d/%d, wheel %d\n",
+                   now ? "pulled" : "let go", in.rtrig, in.rgrip, k, (k & 512) != 0, (k & 256) != 0, need_rack, lau_open, mag_out >= 0, gs ? (int)(*gs & 0xFFFF) : -1,
+                   plp ? plp->wpnr_no : -1, plp ? plp->mode0 : -1, plp ? plp->mode1 : -1, plp ? plp->mode2 : -1, rw_state);
+            was = now;
+        }
     }
     if (rw_state == 2) k &= ~512u;   /* the weapon wheel is open: no shot while choosing */
     if (radial_hold_aim()) k &= ~(256u | 512u);   /* weapon just changed in the aim stance: let the game leave it (knife_glue.c radial_apply) */
@@ -3185,6 +3291,7 @@ void vr_hand(BH_PWORK* p)
                 kick = recoil_back[side] * e;   /* metres back */
             }
         }
+        ctrl_right[side][0] = cy * ra[0] + sy * ra[6]; ctrl_right[side][1] = ra[3]; ctrl_right[side][2] = -sy * ra[0] + cy * ra[6];   /* (C's first column: the controller's x axis in the world) */
         for (int j = 0; j < 3; j++) {   /* C = Ry(vr_yaw) * Rhand */
             C[0 * 3 + j] = cy * ra[0 * 3 + j] + sy * ra[2 * 3 + j];
             C[1 * 3 + j] = ra[1 * 3 + j];
@@ -3309,22 +3416,50 @@ void vr_hand(BH_PWORK* p)
             len = sqrtf(f[0] * f[0] + f[1] * f[1] + f[2] * f[2]);
             if (len > 1e-6f) {
                 float d[3] = { P[0] - h9r[12], P[1] - h9r[13], P[2] - h9r[14] }, c[3], dd, pull, zl[2] = { 0, 0 }, P2[2][3];
-                int zin;
+                int zin, mir = 0, zina = 0;
+                float d0[3] = { d[0], d[1], d[2] }, hold0[3] = { 0, 0, 0 };
                 int grip = xr_input(&ri) && ri.lgrip > 0.5f;
                 for (int k = 0; k < 3; k++) f[k] /= len;
                 lf[0] = f[2]; lf[1] = 0.0f; lf[2] = -f[0]; ll = sqrtf(lf[0] * lf[0] + lf[2] * lf[2]);
                 if (ll > 1e-6f) { lf[0] /= ll; lf[2] /= ll; }
+                {   /* left-handed: the gun is drawn mirrored, its slide is where the mirror puts it: the hand's place mirrored across the gun's vertical plane (normal: lf) */
+                    extern int g_vr_lefty;
+                    if (g_vr_lefty && hand_ok[0]) { float dl2 = d[0] * ctrl_right[0][0] + d[1] * ctrl_right[0][1] + d[2] * ctrl_right[0][2]; for (int k = 0; k < 3; k++) d[k] -= 2.0f * dl2 * ctrl_right[0][k]; mir = 1; }
+                }
                 c[0] = (d[0] * f[0] + d[1] * f[1] + d[2] * f[2]) / sc2 * 100.0f;
                 c[1] = d[1] / sc2 * 100.0f;
                 c[2] = (d[0] * lf[0] + d[2] * lf[2]) / sc2 * 100.0f;
-                memcpy(P2[0], P, sizeof P2[0]);
+                for (int k = 0; k < 3; k++) P2[0][k] = mir ? h9r[12 + k] + d[k] : P[k];
                 {   /* where the hand holds things: the left hand node's frame at the place the magazine is held in it */
                     const float* hn = p->mlwP->owP[13].mtx;
                     static const float hold[3] = { -0.85f, -0.4f, 0.0f };
                     for (int k = 0; k < 3; k++) P2[1][k] = hn[k] * hold[0] + hn[4 + k] * hold[1] + hn[8 + k] * hold[2] + hn[12 + k];
+                    for (int k = 0; k < 3; k++) hold0[k] = P2[1][k];
+                    if (mir) {   /* (the same mirror) */
+                        float dl2 = (P2[1][0] - h9r[12]) * ctrl_right[0][0] + (P2[1][1] - h9r[13]) * ctrl_right[0][1] + (P2[1][2] - h9r[14]) * ctrl_right[0][2];
+                        for (int k = 0; k < 3; k++) P2[1][k] -= 2.0f * dl2 * ctrl_right[0][k];
+                    }
                 }
                 zin = pc_slide_zone((const float(*)[3])P2, zl);   /* only to TAKE it: once taken it is held until the grip is let go, and pulled as it always was (the controller along the barrel) */
                 dd = sqrtf((c[0] - g_vr_sl[0] / 10.0f) * (c[0] - g_vr_sl[0] / 10.0f) + (c[1] - g_vr_sl[1] / 10.0f) * (c[1] - g_vr_sl[1] / 10.0f) + (c[2] - g_vr_sl[2] / 10.0f) * (c[2] - g_vr_sl[2] / 10.0f));
+                if (grip && !rack_grip_was)   /* log: the left grip with the slide to be pulled */
+                    vr_log("vr-lefty: slide grip: hand at %.1f %.1f %.1f cm (learned %d %d %d mm), %.1f cm from it, zone %d, mirrored %d\n", c[0], c[1], c[2], g_vr_sl[0], g_vr_sl[1], g_vr_sl[2], dd, zin, mir, 0);
+                if (mir && zin == 0) {   /* left-handed: the mirror is exact only as far as the controllers' poses are: the hand 3 cm to either side of its mirrored place takes the slide too (the whole of it must take it) */
+                    for (int sh = -1; sh <= 1 && zin == 0; sh += 2) {
+                        float P2s[2][3], zls[2] = { 0, 0 };
+                        int zs;
+                        for (int k = 0; k < 3; k++) { P2s[0][k] = P2[0][k] + sh * 0.3f * ctrl_right[0][k]; P2s[1][k] = P2[1][k] + sh * 0.3f * ctrl_right[0][k]; }
+                        zs = pc_slide_zone((const float(*)[3])P2s, zls);
+                        if (zs > 0) zin = zs;
+                    }
+                }
+                if (mir) {   /* left-handed: the hand as the game has it (not mirrored) takes the slide as well */
+                    float ca[3] = { (d0[0] * f[0] + d0[1] * f[1] + d0[2] * f[2]) / sc2 * 100.0f, d0[1] / sc2 * 100.0f, (d0[0] * lf[0] + d0[2] * lf[2]) / sc2 * 100.0f }, P2a[2][3], zla[2] = { 0, 0 }, dda;
+                    for (int k = 0; k < 3; k++) { P2a[0][k] = P[k]; P2a[1][k] = hold0[k]; }
+                    zina = pc_slide_zone((const float(*)[3])P2a, zla);
+                    dda = sqrtf((ca[0] - g_vr_sl[0] / 10.0f) * (ca[0] - g_vr_sl[0] / 10.0f) + (ca[1] - g_vr_sl[1] / 10.0f) * (ca[1] - g_vr_sl[1] / 10.0f) + (ca[2] - g_vr_sl[2] / 10.0f) * (ca[2] - g_vr_sl[2] / 10.0f));
+                    if (zina >= 0 ? zina != 0 : dda < SLIDE_GRAB_CM) zin = zin >= 0 ? 1 : zina;
+                }
                 if (grip && !rack_arm && !rack_grip_was && (zin >= 0 ? zin != 0 : dd < SLIDE_GRAB_CM)) {   /* taken on the slide: a buzz */
                     rack_arm = 1; rack_d0 = c[0];
                     CallPlayerWeaponSeEx((NJS_POINT3*)&h9r[12], 264, 0);
@@ -3546,6 +3681,60 @@ void vr_after_draw(void)
     mk_n = 0;   /* as drawn (vr_camera), not the room's restored by tps_after_draw */
     stream_vr_view(&v);
     vr_frame = 0;
+}
+
+/* The flat screen in 3D ("3D", settings; ini vr_3d): a frame the head's camera did not draw (the fixed camera, a cutscene, a door, a menu) is told to the renderer as a
+   3D screen: the game's own camera (G), the play space put in that camera's frame (W: local, metres, x right, y up, -z forward, is the camera's own: W = inverse(G) *
+   diag(s, -s, -s), s units per metre), and two eyes a little to the left and to the right of it (gs_gl.c present_vr_stereo_) converging on the plane of the player:
+   what the game draws is shown from two points, each eye on the screen of its own (xr.c). Called every game frame, BEFORE tps_after_draw (which clears vr_frame, the
+   frame the head's camera drew, whose view is the other one). "3D strength" 10..100 %: the eyes' separation, 5 cm at 100 % (it was 20: too strong, tiring at 10 %). */
+void vr3d_after_draw(void)
+{
+    VrView v;
+    float s = g_vr_scale / 10.0f, iG[16], Sm[16], zc = 4.0f;
+    extern int g_vr_3d, g_vr_3d_strength, g_vr_cut_imm;
+    extern float Ps2_zbuff_a, Ps2_zbuff_b;
+    int cut = g_vr_cut_imm && (cam.flg & 0x2);   /* a cutscene: the game's scripted (event) camera */
+    {   /* the head's camera not running (the fixed camera: no third-person hook, vr_camera and vr_after_draw are not called): what they left set is stale */
+        extern int tps_on;
+        if (!tps_on) { vr_frame = 0; vr_active = 0; }
+    }
+    {   /* why a frame is (not) a 3D screen: logged when it changes (a build with RECVX_LOGS) */
+        static int last = -1;
+        int why = (!g_vr_3d && !cut) ? 1 : vr_frame ? 2 : !xr_stereo_ready() ? 3 : !plp ? 4 : cut ? 5 : 0;
+        if (why != last) {
+            static const char* names[] = { "a 3D screen", "3D off", "the head's camera drew it", "headset not showing us", "no player", "an immersive cutscene" };
+            vr_log("vr3d: this frame is %s (3D strength %d, VR view %s)\n", names[why], g_vr_3d_strength, g_vr_stereo ? "immersive" : "fixed camera");
+            last = why;
+        }
+    }
+    if ((!g_vr_3d && !cut) || vr_frame || !xr_stereo_ready() || !plp) return;
+    memset(&v, 0, sizeof(v));
+    memcpy(v.G, cam.mtx, sizeof(v.G));
+    v.G[3] = v.G[7] = v.G[11] = 0.0f; v.G[15] = 1.0f;
+    if (!vr_mat_invert(iG, v.G)) return;
+    memset(Sm, 0, sizeof(Sm));
+    Sm[0] = s; Sm[5] = -s; Sm[10] = -s; Sm[15] = 1.0f;
+    if (cut) {   /* an immersive cutscene: the tracking space put in the camera's frame with the head at the camera (as the recentring puts it at the player's eyes in play):
+                    local -> recentred (the head at the origin, looking -z at the recentring) -> the camera's frame -> world. The eyes are the headset's own. */
+        float rec[16], T[16];
+        xr_recenter_matrix(rec);
+        rec[3] = rec[7] = rec[11] = 0.0f; rec[15] = 1.0f;
+        vr_mat_mul(T, iG, Sm);
+        vr_mat_mul(v.W, T, rec);
+        v.turn_at = turn_taken;   /* (no smooth turn of ours to show) */
+    } else vr_mat_mul(v.W, iG, Sm);
+    v.cx = fVu1OffsetX; v.cy = fVu1OffsetY;
+    v.kx = fVu1AspectW * fVu1Projection; v.ky = fVu1AspectH * fVu1Projection;
+    v.za = Ps2_zbuff_a; v.zb = Ps2_zbuff_b;
+    v.valid = 1;
+    if (!cut) {
+        v.screen3d = 1;
+        zc = (v.G[2] * plp->px + v.G[6] * plp->py + v.G[10] * plp->pz + v.G[14]) / s;   /* the player's depth in the camera: the screen's plane */
+        v.conv = zc < 1.5f ? 1.5f : zc > 12.0f ? 12.0f : zc;
+        v.sep = 0.025f * (float)(g_vr_3d_strength < 10 ? 10 : g_vr_3d_strength > 100 ? 100 : g_vr_3d_strength) / 100.0f;
+    }
+    stream_vr_view(&v);
 }
 
 static void vr_log(const char* fmt, ...)

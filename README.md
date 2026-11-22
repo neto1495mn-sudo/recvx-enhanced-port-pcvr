@@ -38,6 +38,25 @@ decompilation by AshfordFamily. All credit for the PC port goes to them.
 
 When a newer version is out, the game says so when it starts (see "Update check" below).
 
+### What's new in 1.5.2
+
+**Left-handed mode**
+- **Hand** in the launcher (Settings) and **Left-handed** in VR settings: the weapon and the lighter go in your left hand. Only the grips and triggers change sides: aim and fire are the left controller's grip and trigger, the right grip and trigger do the knife, the ammo pouch and the run. The sticks and the A, B, X, Y buttons stay where they are.
+- The hand and the weapon are drawn mirrored, so the left controller shows a left hand. The ammo pouch is on the other side of your body.
+- The magazine comes out with **Y** while you aim (B is the plain cancel), and the slide can be taken anywhere on its 3D model.
+- Right-handed is the default, and the last choice is kept.
+
+**The flat screen**
+- The flat screen (menus, inventory, cutscenes) now appears in front of you and **stays where it appeared**. **Screen follows head** (VR settings) brings back the old, slowly following screen.
+
+**Advanced settings** (hidden until *Advanced settings* is chosen or the developer code is given; all off by default)
+- **3D**: the flat screen with depth, for the fixed camera and the cutscenes. **3D strength** from 10% to 100%.
+- **Immersive cutscenes**: the game's own cutscenes are seen from inside, with the head at the scene's camera.
+- **VR view**: Immersive or Fixed camera.
+
+**Fixes**
+- A pull of the trigger given while the pistol is still in its recoil is kept for a moment and fires as soon as the game takes the next shot.
+
 ### What's new in 1.5.1
 
 **From aikatore's port**
