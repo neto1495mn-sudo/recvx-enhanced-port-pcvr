@@ -3338,6 +3338,7 @@ void bhEne01_DmgCheck(BH_PWORK* epw)
 #ifdef TARGET_PC
 int vr_head_joint(int djnt); void vr_head_ofs(BH_PWORK* epp, BH_PWORK* epw, NJS_POINT3* o); int vr_crit_take(BH_PWORK* epw);
 #endif
+int pc_blood_at_hit(BH_PWORK* pp, float* ofs);   /* tps_glue.c: the blood where the shot hit (-1: the game's place) */
 void bhEne01_SetBlood(BH_PWORK* epw, int hp)
 {
 	WPNDAMAGE_WORK* wp_tbl;
@@ -3345,6 +3346,10 @@ void bhEne01_SetBlood(BH_PWORK* epw, int hp)
     BH_PWORK* epp;
     NJS_POINT3 ofp;
 	int obj_no;
+#ifdef TARGET_PC
+    NJS_POINT3 pc_ofs;
+    int pc_j;
+#endif
 
     wp_tbl = En01_WpnDamageTbl;
     wp_tbl += epw->wpnr_no;
@@ -3357,24 +3362,15 @@ void bhEne01_SetBlood(BH_PWORK* epw, int hp)
         epp = epw;
     }
     
-#ifdef TARGET_PC
-    /* VR (vr216): a head shot bleeds at the point hit on the head (vr_glue.c) */
-    int vr_hb = vr_head_joint(epw->djnt_no);
-    NJS_POINT3 vr_hofs;
-    if (vr_hb) vr_head_ofs(epp, epw, &vr_hofs);
-#define VRB_OBJ(o) (vr_hb ? 11 : (o))
-#define VRB_OFS(p) (vr_hb ? &vr_hofs : (p))
-#else
 #define VRB_OBJ(o) (o)
 #define VRB_OFS(p) (p)
+#ifdef TARGET_PC   /* a shot of ours hit the part: the blood bursts where it hit, on the joint it hit (tps_glue.c pc_blood_at_hit, as
+                      upstream's third person; the game: on the chest, or the hips for a leg). Replaces VR's own head blood (vr216). */
+    pc_j = epp == epw ? pc_blood_at_hit(epw, &pc_ofs.x) : -1;
 #endif
     if (!(wp_tbl->flg & 0x4000))
     {
-#ifdef TARGET_PC
-        if ((epw->djnt_no == 9) || (epw->djnt_no == 1) || (epw->djnt_no == 8) || vr_head_joint(epw->djnt_no))   /* VR: the head too (vr_glue.c, vr215) */
-#else
         if ((epw->djnt_no == 9) || (epw->djnt_no == 1) || (epw->djnt_no == 8))
-#endif
         {
             ofp.x = -epw->dvx;
             ofp.y = -epw->dvy;
@@ -3400,6 +3396,13 @@ void bhEne01_SetBlood(BH_PWORK* epw, int hp)
                     ofp.y = 2.5f;
                     obj_no = 9;
                 }
+#ifdef TARGET_PC
+                if (pc_j >= 0)
+                {
+                    ofp = pc_ofs;
+                    obj_no = pc_j;
+                }
+#endif
 
                 if (wp_tbl->cb_blood == 9)
                 {
@@ -3440,6 +3443,13 @@ void bhEne01_SetBlood(BH_PWORK* epw, int hp)
                     ofp.y = 2.5f;
                     obj_no = 9;
                 }
+#ifdef TARGET_PC
+                if (pc_j >= 0)
+                {
+                    ofp = pc_ofs;
+                    obj_no = pc_j;
+                }
+#endif
                 
                 if (epw->comb_flg & 0x40)
                 {
@@ -3462,6 +3472,14 @@ void bhEne01_SetBlood(BH_PWORK* epw, int hp)
         ofp.x = owk->mtx[12];
         ofp.y = owk->mtx[13];
         ofp.z = owk->mtx[14];
+#ifdef TARGET_PC
+        if (pc_j >= 0)   /* the chunks from the hit (the game: the joint the blood table named, the chest for the head) */
+        {
+            ofp.x = epw->dpx;
+            ofp.y = epw->dpy;
+            ofp.z = epw->dpz;
+        }
+#endif
         bhEne_SetNikuhenEffect2(epp, 0, &ofp, 4, bhEne01_ChgTextID(epp, 5));
     }
 #undef VRB_OBJ

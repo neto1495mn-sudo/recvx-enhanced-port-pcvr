@@ -3,6 +3,7 @@
 #include "xr.h"
 extern int g_vr_fps;   /* xr.c */
 extern int g_vr_rcc[40][12][6], g_vr_rcn[40];   /* glue/vr_glue.c: each gun's learned recoil curve (by the gun's item): 12 points of turn x, y, z (tenths of a degree), right, up, back (mm) */
+extern int g_vr_gp[40];   /* glue/vr_glue.c: the pistols' magazine guide tipped forward or back (degrees) */
 extern int g_vr_gd[40][4];   /* glue/vr_glue.c: each gun's ammo guide (by the gun's item): x, y, z (mm), yaw (degrees) */
 extern int g_vr_hol[2][2][4];   /* glue/vr_glue.c: [standing, seated][single ammo, several kinds][down, forward, side (cm), turn (degrees)] */
 extern void vr_hol_defaults(int mode);
@@ -50,13 +51,14 @@ static const struct { const char* key; int* val; int lo, hi; } keys[] = {
     { "fast_doors", &g_fast_doors, 0, 1 },            /* ps2/kernel.c */
     { "vr_door_fade", &g_vr_door_fade, 0, 1 },
     { "vr_shadows", &g_vr_shadows, 0, 1 },
-    { "vr_debug_cores", &g_vr_debug_cores, 0, 1 },            /* glue/vr_glue.c */        /* gs/gs_gl.c: room changes fade in the headset */
-    { "vr_debug_log", &g_vr_debug_log, 0, 1 },
     { "vr_interp_body", &g_vr_interp_body, 0, 1 },   /* gs/gs_gl.c: the stick walking smoothed to the headset's rate */
     { "vr_interpolate", &g_vr_interpolate, 0, 1 },    /* gs/gs_gl.c: the characters smoothed to the headset's rate */        /* glue/vr_glue.c: the enemies' diary */
     { "quick_knife", &g_config.quick_knife, 0, 1 },
     { "model_cull", &g_config.model_cull, 0, 1 },
     { "skip_intro", &g_config.skip_intro, 0, 1 },
+    { "tps_hit_react", &g_tps.hit_react, 0, 1 },
+    { "head_blowoff", &g_config.head_blowoff, 0, 1 },
+    { "difficulty_select", &g_config.difficulty_select, 0, 1 },
     { "battle_unlocked", &g_config.battle_unlocked, 0, 1 },
     { "no_ink_ribbon", &g_config.no_ink_ribbon, 0, 1 },   /* typewriters save without an ink ribbon (co-op: the host's) */
     { "save_system", &g_config.save_system, 0, 1 },     /* 0 native files, 1 memory card */
@@ -140,6 +142,7 @@ static const struct { const char* key; int* val; int lo, hi; } keys[] = {
     { "vr_hol2_down", &g_vr_hol[0][1][0], 0, 120 }, { "vr_hol2_out", &g_vr_hol[0][1][1], -20, 60 }, { "vr_hol2_side", &g_vr_hol[0][1][2], -50, 50 },   /* ... the grenade launcher and the bow gun */
     { "vr_hol_s_down", &g_vr_hol[1][0][0], 0, 120 }, { "vr_hol_s_out", &g_vr_hol[1][0][1], -20, 60 }, { "vr_hol_s_side", &g_vr_hol[1][0][2], -50, 50 },   /* seated */
     { "vr_hol2_s_down", &g_vr_hol[1][1][0], 0, 120 }, { "vr_hol2_s_out", &g_vr_hol[1][1][1], -20, 60 }, { "vr_hol2_s_side", &g_vr_hol[1][1][2], -50, 50 },
+    { "vr_gd5_pitch", &g_vr_gp[5], -180, 180 }, { "vr_gd9_pitch", &g_vr_gp[9], -180, 180 },
     { "vr_gd1_x", &g_vr_gd[1][0], -3000, 3000 }, { "vr_gd1_y", &g_vr_gd[1][1], -3000, 3000 }, { "vr_gd1_z", &g_vr_gd[1][2], -3000, 3000 }, { "vr_gd1_yaw", &g_vr_gd[1][3], -180, 180 },
     { "vr_gd2_x", &g_vr_gd[2][0], -3000, 3000 }, { "vr_gd2_y", &g_vr_gd[2][1], -3000, 3000 }, { "vr_gd2_z", &g_vr_gd[2][2], -3000, 3000 }, { "vr_gd2_yaw", &g_vr_gd[2][3], -180, 180 },
     { "vr_gd3_x", &g_vr_gd[3][0], -3000, 3000 }, { "vr_gd3_y", &g_vr_gd[3][1], -3000, 3000 }, { "vr_gd3_z", &g_vr_gd[3][2], -3000, 3000 }, { "vr_gd3_yaw", &g_vr_gd[3][3], -180, 180 },

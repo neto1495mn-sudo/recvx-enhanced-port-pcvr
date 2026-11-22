@@ -341,3 +341,63 @@ void enemy_extras_frame(void)
     }
     if (nc) host_log("enemies: room %04d: %d extra enemies (of %d eligible records, option %d)\n", room_file_now(), made, nc, o->extra);
 }
+
+/* ---------------------------------------------------------------- head blow-offs (from upstream 0.6.5; no enemy variants here)
+   en01.c destroys a zombie's head (bhEne01_DmgCheckType00 -> exp0 + 0x78 = -1, the burst effect 356 at
+   the neck; bhEne01_CutHead) but every zombie look is one skinned mesh on node 1, and nothing hides the
+   head: the PS2's skin cutter npCutSkin is empty. Drawn here without it: the rotation of its head node
+   (11, the node the game's head damage and look-at use) and of the nodes below it is zeroed while it is
+   drawn, so the vertices the head bone carries meet at the head joint and the neck closes into a stump
+   (the same for every look: all share the 18-node zombie skeleton). The game's state is untouched (the
+   matrices are put back after the draw); off (setting "Head blow-offs"): as the original. */
+int pc_head_blowoff_on(void);           /* host.c */
+#define HEAD_NODES 16
+static float head_rot[HEAD_NODES][9];
+static float* head_mtx[HEAD_NODES];
+static int head_n;
+
+static void head_hide_node(ML_WORK* m, NJS_CNK_OBJECT* o, int top)
+{
+    int k = (int)(o - m->objP), j;
+    if (k < 0 || k >= (int)m->obj_num || head_n >= HEAD_NODES) return;
+    head_mtx[head_n] = m->owP[k].mtx;
+    for (j = 0; j < 9; j++) { head_rot[head_n][j] = m->owP[k].mtx[j + j / 3]; m->owP[k].mtx[j + j / 3] = 0.0f; }
+    head_n++;
+    if (o->child) head_hide_node(m, o->child, 0);
+    if (!top && o->sibling) head_hide_node(m, o->sibling, 0);
+}
+
+static void head_hide(ML_WORK* m, int node)
+{
+    head_n = 0;
+    if (m && m->objP && m->owP && node >= 0 && node < (int)m->obj_num) head_hide_node(m, &m->objP[node], 1);
+}
+
+static void head_show(void)
+{
+    int i, j;
+    for (i = 0; i < head_n; i++)
+        for (j = 0; j < 9; j++) head_mtx[i][j + j / 3] = head_rot[i][j];
+    head_n = 0;
+}
+
+/* r (a zombie's body) has lost its head, and it is not the head flying off (en01b.c: the head part, exp0 + 0x10, in its mode 3) */
+static int headless(BH_PWORK* r)
+{
+    BH_PWORK* part;
+    if (!pc_head_blowoff_on() || r < ene || r >= ene + 128 || r->id != 1 || (r->flg & 0x80) || !r->exp0 || *(int*)(r->exp0 + 0x78) != -1) return 0;
+    part = *(BH_PWORK**)(r->exp0 + 0x10);
+    return !(part >= ene && part < ene + 128 && part->mode0 == 3);
+}
+
+/* MdlPut.c bhPutModel, around drawing ep: hide 1 = its head hidden for the draw (1 returned: the draw is
+   wrapped), 0 = put back */
+int pc_zombie_head(BH_PWORK* ep, int hide)
+{
+    if (!hide) { head_show(); return 0; }
+    if (ep < ene || ep >= ene + 128 || ep->id != 1 || !headless((ep->flg & 0x80) ? (BH_PWORK*)ep->lkwkp : ep) ||
+        !ep->mlwP || ep->mlwP->obj_num <= 11)
+        return 0;
+    head_hide(ep->mlwP, 11);
+    return head_n > 0;
+}

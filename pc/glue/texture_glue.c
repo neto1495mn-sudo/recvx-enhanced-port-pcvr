@@ -6,6 +6,7 @@
 #include "../../decomp/include/ps2/veronica/prog/types.h"
 #include "../src/gs/stream.h"
 #include "../src/gs/textures.h"
+#include "../../decomp/include/ps2/veronica/prog/ps2_NaTextureFunction.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -19,6 +20,37 @@ typedef struct { uintptr_t ptr; uint32_t check, id, bytes; uint64_t last; } Know
 #define KNOWN_BYTES_MAX (96u << 20)   /* definitions kept by the render thread (32-bit address space) */
 static Known known[NKNOWN];
 static uint64_t known_bytes, known_clock;
+
+/* TIM2s the port cuts its own menu words from (EXTRA, EXIT, MULTIPLAYER: letters of the title's plate texture; the Language
+   plates): an HD texture pack keeps them original, so the letters are where they were measured and match the plates around
+   them. The game thread names the texture (pc_tex_keep_original, the current texture list's number), the render thread asks
+   by the definition's id (textures.c). */
+#define NKEEP 16
+static volatile uint32_t keep_ids[NKEEP];
+static unsigned keep_n;
+
+void pc_tex_keep_original(int texno)
+{
+    const NJS_TEXMEMLIST* m;
+    const void* t;
+    uintptr_t p;
+    if (!Ps2_current_texlist || texno < 0 || texno >= (int)Ps2_current_texlist->nbTexture) return;
+    m = (const NJS_TEXMEMLIST*)(uintptr_t)Ps2_current_texlist->textures[texno].texaddr;
+    if (!m || !(t = m->texinfo.texsurface.pSurface)) return;
+    p = (uintptr_t)t;
+    for (int i = 0; i < NKNOWN; i++)
+        if (known[i].id && known[i].ptr == p) {
+            for (int k = 0; k < NKEEP; k++) if (keep_ids[k] == known[i].id) return;
+            keep_ids[keep_n++ % NKEEP] = known[i].id;
+            return;
+        }
+}
+
+int pc_tex_id_kept(uint32_t id)   /* render thread */
+{
+    for (int k = 0; k < NKEEP; k++) if (keep_ids[k] == id) return 1;
+    return 0;
+}
 
 /* definition ids: NTEX_ID_SLOTS slots, each with a generation (textures.h); every id alive is
    in known[] or rtex[] */

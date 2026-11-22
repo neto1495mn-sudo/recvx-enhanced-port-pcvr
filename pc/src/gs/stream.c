@@ -227,11 +227,13 @@ static int clip_plane(const NativeVertex* in, int n, NativeVertex* out, int plan
    in the pool), so a strip has the same vertices in every frame and an in-between frame can
    blend them one to one; culling and clipping happen when drawn (native_draw). */
 int g_native_tag;                  /* game thread: the strips recorded now are a character's (game.c bhDrawEnemy) */
+int g_native_notex;                /* game thread: the strips recorded now are drawn without texture (the pistols' magazine guide, mag_glue.c) */
 static int native_tag_force = -1;  /* a deferred strip's own tag (native_marker) */
 void native_strip(unsigned int prim, const NativeVertex* v, int n)
 {
     Frame* f = recording();
     uint8_t tag = (uint8_t)(native_tag_force >= 0 ? native_tag_force : g_native_tag);   /* 1 character, 2/3 right/left hand (VR) */
+    if (g_native_notex) prim &= ~0x10u;   /* PRIM.TME off: the vertex colour only */
     uint32_t len = (uint32_t)(n * sizeof(NativeVertex));
     if (n < 3) return;
     GROW(f->pool, f->npool, f->cpool, len);
@@ -287,6 +289,7 @@ uint32_t native_defer(unsigned int prim, const NativeVertex* v, int n, uint32_t 
     GROW(defv, ndefv, cdefv, (size_t)n);
     memcpy(defv + ndefv, v, (size_t)n * sizeof(*v));
     GROW(deferred, ndef, cdef, 1);
+    if (g_native_notex) prim &= ~0x10u;
     deferred[ndef] = (Deferred){ prim, (uint32_t)ndefv, (uint32_t)n, mesh, strip, 0, (uint8_t)g_native_tag };
     ndefv += (size_t)n;
     return (uint32_t)ndef++;

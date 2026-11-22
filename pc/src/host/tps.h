@@ -17,6 +17,7 @@ typedef struct TpsConfig {
     int aim_sens;             /* sensitivity while aiming, percent of the above */
     int invert_y, crosshair;
     int auto_aim;             /* 1 = keep the game's lock-on when raising the weapon */
+    int hit_react;            /* "Locational Hit Reactions": a zombie hit on the head, an arm or a leg flinches there (tps_glue.c, drawn only) */
     int atmos;                /* light and fog: 1 = smooth (fades between the cuts' settings), 0 = per cut */
     int free_cam;             /* mouse/keyboard camera: 0 = B (behind the character, the mouse turns it),
                                  1 = A (free: the mouse orbits the camera, WASD walk relative to it) */

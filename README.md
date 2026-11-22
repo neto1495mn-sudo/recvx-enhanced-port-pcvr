@@ -38,6 +38,27 @@ decompilation by AshfordFamily. All credit for the PC port goes to them.
 
 When a newer version is out, the game says so when it starts (see "Update check" below).
 
+### What's new in 1.5.1
+
+**From aikatore's port**
+- **Locational hit reactions**: enemies react to where they are hit (head, body, legs) and to how hard.
+- **Difficulty select** when you start a new game.
+- **Zombie heads** can be blown off.
+- **Blood** comes out of the exact point where a shot lands, the head included.
+- **B.O.W. gas flash**.
+- **Import system**: *EXTRA > IMPORT* on the title screen, to bring in your own models and rooms.
+- **Battle Game**: the characters are unlocked as in the original port.
+- **Title screen** with the same text as aikatore's port (EXTRA, EXIT, IMPORT, MULTIPLAYER), in English whatever the disc's language.
+
+**Pistols**
+- The slide **glows orange and breathes** while it has to be pulled. Take it with the left grip anywhere on the glowing piece: it stays in your hand until you let go, and it fires again only after the whole pull.
+- The magazine **guide** of the pistols is a breathing orange light in the magazine's own shape, fixed to the gun. In the developer adjust it turns and tilts freely.
+
+**Clean release**
+- No log files are written and the debug options of the picture are gone.
+- The tuning options stay hidden until the developer code (left grip twice, then X, Y, X).
+- Quest: Super Resolution stays in the VR settings. The PC version has no Super Resolution.
+
 ### What's new in 1.5.0
 
 **Reloading by hand**

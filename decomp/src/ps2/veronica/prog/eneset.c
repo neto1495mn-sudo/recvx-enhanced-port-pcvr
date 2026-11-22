@@ -186,6 +186,7 @@ static BH_PWORK* pc_root(BH_PWORK* ep)   /* a part's or child's parent enemy */
 
 void pc_enemy_watch(BH_PWORK* ep, int slot, int ran);   /* coop_glue.c */
 void pc_enemy_unhold(BH_PWORK* ep);
+int pc_hit_react(BH_PWORK* ep, int on);     /* tps_glue.c */
 void host_log(const char* fmt, ...);
 
 /* co-op (coop_glue.c grab_in): the host's zombie hands its grab to our game, which puts our player in
@@ -926,6 +927,9 @@ void bhDrawEnemy()
 {
     BH_PWORK* ep;
     int i;
+#ifdef TARGET_PC
+    int pc_react;
+#endif
     unsigned int argb;
     
     ep = ene;
@@ -938,6 +942,9 @@ void bhDrawEnemy()
             {
                 bhCalcModel(ep);
             }
+#ifdef TARGET_PC
+            pc_react = pc_hit_react(ep, 1);   /* a zombie flinches where it was hit, for the draw only (tps_glue.c) */
+#endif
             
             if ((((ep->mdflg & 0x20)) || (bhCheckClipModel(ep) == 0)) && (!(ep->mdflg & 0x1)) && (ep->mlwP->objP != NULL)) 
             {
@@ -992,6 +999,12 @@ void bhDrawEnemy()
                     }
                 }
             }
+#ifdef TARGET_PC
+            if (pc_react)
+            {
+                pc_hit_react(ep, 0);
+            }
+#endif
         }
     }
 }

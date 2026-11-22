@@ -1408,6 +1408,9 @@ void bhSysCallMonitor()
                 datp += dt; 
                 
                 sys->mes_sp = (unsigned int*)(datp + 4);
+#ifdef TARGET_PC
+                sys->mes_sp = pc_lang_sys_mes(sys->mes_sp);   /* a language's messages whole (pc/glue/lang_glue.c) */
+#endif
                 
                 sys->mn_md1 = 3; 
             }
@@ -1775,6 +1778,12 @@ void bhSysCallMonitor()
                         
                         sys->ply_stflg[sys->ply_id] = plp->stflg;
                         
+#ifdef TARGET_PC
+                        if ((coop_on != 0) || (appear_on != 0))
+                        {
+                            coop_player_unload();   /* "You appear as": the character's own model back, so its textures are the ones released */
+                        }
+#endif
                         for (i = 0; i < plp->mdl_n; i++) 
                         {
                             if (plp->mdl[i].texP != NULL) 

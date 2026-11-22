@@ -30,6 +30,10 @@ long pc_prs_expand(const unsigned char* s, long n, unsigned char** out, long* ca
 /* lax: a stream that stops at the data's end without the end mark gives what it expanded so far (the Russian fan
    translation's rooms, docs/LANGUAGES.md) */
 long pc_prs_expand_ex(const unsigned char* s, long n, unsigned char** out, long* cap, int lax);
+/* n bytes as a PRS stream of literals only (as the Brazilian Portuguese translation's rooms), with the end mark, into out
+   (PC_PRS_PACKED(n) bytes): its size */
+#define PC_PRS_PACKED(n) ((n) + (n) / 8 + 4)
+uint32_t pc_prs_pack_literals(const uint8_t* s, uint32_t n, uint8_t* out);
 
 /* ---------------------------------------------------------------- AFS archives (adx.c, import ob2.c)
    Header (8 bytes): "AFS", u32 count; then count x (u32 offset, u32 size). */
@@ -79,6 +83,27 @@ int pc_png_size(const uint8_t* d, size_t n, uint32_t* w, uint32_t* h);
    insn: the script instructions' lengths (net/coop_proto.c coop_insn_len_raw). */
 #define PC_KIT_MAX 256
 int pc_startkit_scan(const uint8_t* d, uint32_t n, uint32_t* at, int max, int (*insn)(const uint8_t*));
+
+/* ---------------------------------------------------------------- message tables (decomp message.c)
+   u32 count, count u32 offsets (from the table's start) of u16 texts ending in 0xFFFF. 0xFF02 (wait) and 0xFF03 (an
+   item's name) take an operand, which can be 0xFFFF (0xFF03 0xFFFF: the current item's name, "Take the ...?"): it is
+   not the end. A text shows at most 16 choices (0xFF04: the game keeps 16 places, sys->mes_sps). */
+/* the length in u16 (with the end) of the text at t, within max u16; 0 if it does not end there or has more choices */
+uint32_t pc_mes_len(const uint8_t* t, uint32_t max);
+/* the length of message i of the table t (size bytes) within its place (up to the next message's start); 0 if it is
+   not whole there (a language import before the 0xFF03 0xFFFF fix cut the text at that operand) */
+uint32_t pc_mes_at(const uint8_t* t, uint32_t size, uint32_t i);
+
+/* ---------------------------------------------------------------- a language's pictures (lang_glue.c, docs/LANGUAGES.md)
+   A language's file l (nl bytes) against the disc's d (nd bytes), texture by texture: the TIM2 files in both (raw, or
+   a PVP chunk's payload), the k-th of l paired with the k-th of d (the same count, the same geometry). A texture is read
+   from the disc when it shows the same picture (every pixel within 8 of the disc's colour, 16 of its alpha: a
+   re-encode, no writing changed), or, with all, whenever it pairs (but the textures of keep, a bit mask by index: the
+   fonts); never when that changes a palette bank (the PLI chunk before it) that a texture staying the language's
+   draws with. out: the parts to read from the disc (offset in l, offset in d, length). Returns their count. */
+typedef struct PcPart { uint32_t off, disc, len; } PcPart;
+#define PC_PARTS_MAX 64
+int pc_lang_parts(const uint8_t* l, uint32_t nl, const uint8_t* d, uint32_t nd, uint64_t keep, int all, PcPart* out, int max);
 
 #ifdef __cplusplus
 }

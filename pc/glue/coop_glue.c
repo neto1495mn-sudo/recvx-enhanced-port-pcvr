@@ -250,12 +250,12 @@ static struct { NJS_CNK_OBJECT* objP; unsigned char* lkwkp; int lkono; float lox
 
 static int self_ours(void) { return plp->mdl[0].objP && (unsigned char*)plp->mdl[0].objP >= self_mdl && (unsigned char*)plp->mdl[0].objP < self_mdl + sizeof(self_mdl); }
 
-static void self_release(NJS_TEXLIST** tex, ML_WORK* mdl, int n)
+static void self_release(ML_WORK* mdl, int n)
 {
     int i;
     if (self_tex_gone) return;   /* njReleaseTextureAll took them */
     for (i = 0; i < n; i++)
-        if (tex ? tex[i] : mdl[i].texP) njReleaseTexture(tex ? tex[i] : mdl[i].texP);
+        if (mdl[i].texP) njReleaseTexture(mdl[i].texP);
     bhGarbageTexture(NULL, 0);
 }
 
@@ -264,18 +264,20 @@ static void self_put_back(void);
 /* back to the character's own mesh (or forget ours when the game has reloaded the player) */
 static void self_restore(void)
 {
-    int i;
     if (self_mesh < 0) return;
     if (self_ours()) {
-        self_release(NULL, plp->mdl, plp->mdl_n);
+        self_release(plp->mdl, plp->mdl_n);
         self_put_back();
         setup_hair(sys->obwp, plp, sys->ply_id);
-    } else {
-        for (i = 0; i < self_orig.mdl_n; i++) self_orig.txp[i] = self_orig.mdl[i].texP;
-        self_release(self_orig.txp, NULL, self_orig.mdl_n);   /* the old model's textures we kept */
     }
+    /* else the game has loaded the player again: after the game ended (coop_textures_released) or a
+       character switch (coop_player_unload put the original back first). The original's texture lists
+       were in the buffer the new load overwrote: releasing them crashed (story switch, Battle Game). */
     self_mesh = -1;
 }
+
+/* system.c bhSysCallMonitor: the game releases the player's textures and loads another character */
+void coop_player_unload(void) { self_restore(); }
 
 /* The player's node matrices (O_WORK) are last tick's pose: bhFixPosition (motions that plant a foot,
    plp->flg 0x40000) moves the player by the difference between them and the new pose. A model swapped
@@ -320,7 +322,7 @@ static int self_load(int mesh)
     plp->mnwP = mnw; plp->mnwPb = mnwb;
     for (i = 0; i < plp->mdl_n; i++) ok &= plp->mdl[i].owP != NULL;
     if (!plp->mdl_n || !ok) {   /* keep the original */
-        self_release(NULL, plp->mdl, plp->mdl_n);
+        self_release(plp->mdl, plp->mdl_n);
         self_put_back();
         return 0;
     }
@@ -393,6 +395,12 @@ void coop_textures_released(void)
     forget();   /* njReleaseTextureAll freed them; the model is reloaded when next needed */
     actor_textures_released();
     self_tex_gone = 1;
+    /* our mesh ends with the game too: the character's own model data back in the player work (its
+       head part comes with the next game's bhSetPlayer). Left in place, the session's end at the title
+       (back from a game, OPEN THE LOBBY or BACK there, F3) put it back itself and set up the head part
+       in sys->obwp, NULL there: the crash. */
+    if (self_mesh >= 0 && self_ours()) self_put_back();
+    self_mesh = -1;
     /* the game ended (bhExitGame: continue, title, load): our player is not in a game until
        coop_control_remote runs again. Set in this frame before the exit, it made the hand-off load
        the appearance and write sys->obwp[2] of the zeroed game state (NULL): the crash on continue. */
@@ -1632,6 +1640,8 @@ static int apply_fx(const Event* e)
     if (e->u.fx.mlw >= 0) op->mlwP = (ML_WORK*)&own->mdl[e->u.fx.mlw];
     op->exp0 = (unsigned char*)ex;
     fx_mirror[k] = 1;
+    if (op->id == 356 && lk && lk->id == 1 && lk->exp0 && !(lk->flg & 0x80))   /* en01.c's head burst: the zombie's head is gone here too */
+        *(int*)(lk->exp0 + 0x78) = -1;                                          /* (its exp0 is not in the snapshots; "Head blow-offs") */
     if (e->u.fx.owner < 128) {   /* its sounds from the bank of the enemy type that made it (effect.c, eneset.c) */
         extern short pc_eff_owner[512][2];
         int pc_enemy_sound_type(int slot);

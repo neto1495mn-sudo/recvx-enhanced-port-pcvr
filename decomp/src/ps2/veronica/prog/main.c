@@ -144,7 +144,11 @@ void njUserInit(void)
     
     njpmemp = freemem + (12255232 + PC_ARENA_EXTRA - hws->vtx_total); 
     
-    Ps2_PXLCONV = njpmemp + 4294639616;
+    /* the swizzle scratch of every texture over 128x128 (ps2_pxlconv.c Tim2_Format_Check): its own block, not the
+       320 KB at the room arena's top, where a room file is read before it is expanded. Our own models load their
+       textures at any frame (extras, actors, the co-op partner): one loaded on the game over's retry, while the room
+       was read, damaged the room and it crashed (bhSetRoom). 1 MB: the largest it converts (1023 x 1023, 8 bits) */
+    Ps2_PXLCONV = malloc(1 << 20);
     
     vwbmemp = freemem + (12517376 + PC_ARENA_EXTRA - hws->vtx_total); 
     vebmemp = freemem + (12845056 + PC_ARENA_EXTRA - hws->vtx_total); 

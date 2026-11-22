@@ -8,7 +8,11 @@
 #include "../../decomp/include/ps2/veronica/prog/ps2_NaMatrix.h"
 #include "../../decomp/include/ps2/veronica/prog/ps2_NinjaCnk.h"
 #include "../../decomp/include/ps2/veronica/prog/ps2_NaGraphics3D.h"
+#include "../../decomp/include/ps2/veronica/prog/ps2_NaSystem.h"
 #include <stdlib.h>
+#include <stdint.h>
+#include <math.h>
+#include <string.h>
 #include <stdio.h>
 
 int vr_mag_held(void);   /* vr_glue.c: the left hand holds the ammo taken from the pouch */
@@ -207,4 +211,244 @@ int pc_vr_weapon_frame(float m[16])
     njTranslate(m, op->lox, op->loy, op->loz);
     njRotateXYZ(m, op->ax, op->ay, op->az);
     return 1;
+}
+
+/* The pistols' magazine guide (vr_glue.c guide_draw): the magazine's own model - the game's, as in the hand - drawn at the fitting place in the weapon's frame as a light: orange, translucent,
+   a little larger, blinking as the ammo guide does, so the owner sees where to put it (and, adjusting, where it is). Called at the end of bhDrawEffect, with the held magazine. */
+int vr_mag_guide(float c[3], float* a, float* yaw, float* pitch);   /* vr_glue.c: the guide's middle in the weapon's frame (game units), its alpha this frame and its turns (degrees); 0 none */
+extern int g_native_notex;   /* stream.c */
+int pc_vr_weapon_frame(float m[16]);
+extern unsigned int _nj_control_3d_flag_;
+
+/* the model's longest axis, from its vertices: the effect model's vertex list (a header, then vertices of some size in words) is read with the stride at which every vertex lies within the model's
+   radius of its centre; -1 when none does (then the model's y is taken). Logged once. */
+static int mag_thin = 2;   /* the model's thinnest axis (the width is added there) */
+static int mag_axis(NJS_CNK_MODEL* md, float cen[3])
+{
+    static NJS_CNK_MODEL* done;
+    static int axis = -1;
+    static float c0[3];
+    int o, st, n, i;
+    if (done == md) { for (i = 0; i < 3; i++) cen[i] = c0[i]; return axis; }
+    done = md; axis = -1;
+    for (i = 0; i < 3; i++) c0[i] = (&md->center.x)[i];
+    n = (int)((unsigned int)md->vlist[1] >> 16);
+    if (n > 0 && n < 1000 && md->r > 0.01f) {
+        float bestscore = 1e9f;
+        for (o = 2; o <= 4; o++)
+            for (st = 3; st <= 9; st++) {
+                float mn[3] = { 1e9f, 1e9f, 1e9f }, mx[3] = { -1e9f, -1e9f, -1e9f };
+                int ok = 1;
+                for (i = 0; i < n && ok; i++) {
+                    const float* v = (const float*)&md->vlist[o + i * st];
+                    float d = 0;
+                    for (int k = 0; k < 3; k++) {
+                        float t = v[k];
+                        if (!(t > -100.0f && t < 100.0f)) { ok = 0; break; }
+                        if (t < mn[k]) mn[k] = t;
+                        if (t > mx[k]) mx[k] = t;
+                        d += (t - c0[k]) * (t - c0[k]);
+                    }
+                    if (ok && d > md->r * md->r * 1.7f) ok = 0;
+                }
+                if (ok) {   /* the reading whose box fits the model's centre and radius */
+                    float err = 0, hd = 0, e[3] = { mx[0] - mn[0], mx[1] - mn[1], mx[2] - mn[2] };
+                    for (i = 0; i < 3; i++) { float cc = (mn[i] + mx[i]) * 0.5f; err += (cc - (&md->center.x)[i]) * (cc - (&md->center.x)[i]); hd += e[i] * e[i] * 0.25f; }
+                    err = sqrtf(err) + fabsf(sqrtf(hd) - md->r);
+                    if (err < bestscore && err <= md->r * 0.35f) {
+                        bestscore = err;
+                        axis = e[0] >= e[1] && e[0] >= e[2] ? 0 : e[1] >= e[2] ? 1 : 2;
+                        mag_thin = e[0] <= e[1] && e[0] <= e[2] ? 0 : e[1] <= e[2] ? 1 : 2;
+                        for (i = 0; i < 3; i++) c0[i] = (mn[i] + mx[i]) * 0.5f;
+                        { char ln[200]; snprintf(ln, sizeof ln, "vr: magazine guide: model %d vertices (header %d, stride %d), size %.2f %.2f %.2f, long axis %d, thin %d", n, o, st, e[0], e[1], e[2], axis, mag_thin); vr_log_str(ln); }
+                    }
+                }
+            }
+    }
+    if (axis < 0) { axis = 1; mag_thin = 2; vr_log_str("vr: magazine guide: the model's vertices were not found - its y taken as the long axis"); }
+    for (i = 0; i < 3; i++) cen[i] = c0[i];
+    return axis;
+}
+
+void pc_vr_mag_guide(void)
+{
+    float c[3], a, cen[3], mtx[16], yaw, pitch;
+    NJS_ARGB col;
+    NJS_CNK_MODEL* md;
+    int axis;
+    unsigned int c3df = _nj_control_3d_flag_;
+    if (!vr_on() || !plp || !vr_mag_guide(c, &a, &yaw, &pitch)) return;
+    if (!sys->efm[7].objP || !(md = sys->efm[7].objP[0].model) || !md->vlist) return;
+    if (!pc_vr_weapon_frame(mtx)) return;
+    axis = mag_axis(md, cen);
+    /* the light breathes in its colour (added to what is behind it), not in its alpha: the alpha did not reach the picture */
+    col.a = 0.75f; col.r = a; col.g = a * 140.0f / 255.0f; col.b = a * 26.0f / 255.0f;   /* the ammo guide's orange, 0xFF8C1A, at a (0.15 .. 0.6) */
+    njTextureFilterMode(1);
+    {
+        NJS_TEXNAME* tnp = sys->ef_tlist.textures;
+        sys->ef_tlist.textures = &tnp[7];
+        njSetTexture(&sys->ef_tlist);
+        njSetTextureNum(0);
+        njPushMatrix(cam.mtx);   /* as the weapon's own nodes are drawn (MdlPut.c): the view, then the object's matrix */
+        njTranslate(mtx, c[0], c[1], c[2]);   /* its middle at the guide's */
+        njRotateXYZ(mtx, 0, 0, (Angle)(int)(yaw * (65536.0f / 360.0f)));     /* turned about its own long axis (the weapon's z) */
+        njRotateXYZ(mtx, 0, (Angle)(int)(pitch * (65536.0f / 360.0f)), 0);   /* tipped forward or back (about the weapon's y) */
+        if (axis == 0) njRotateXYZ(mtx, 0, 16384, 0);   /* the long axis along the weapon's z (the pistols' magazine is upright there) */
+        else if (axis == 1) njRotateXYZ(mtx, 16384, 0, 0);
+        njScale(mtx, 1.15f, 1.15f, 1.15f);   /* 15 % larger than the magazine (the owner) */
+        njTranslate(mtx, -cen[0], -cen[1], -cen[2]);
+        njMultiMatrix(NULL, mtx);
+        njSetConstantMaterial(&col);
+        njControl3D(c3df | 0x10);   /* constant material */
+        njColorBlendingMode(0, 8);   /* source alpha, added to what is there */
+        njColorBlendingMode(1, 10);
+        g_native_tag = 2;     /* the gun's hand: the renderer moves it with the weapon, at every headset image */
+        g_native_notex = 1;   /* a light: the shape only, no texture */
+        njCnkEasyDrawModel(md);
+        g_native_notex = 0;
+        g_native_tag = 0;
+        njControl3D(c3df);
+        njColorBlendingMode(0, 8);
+        njColorBlendingMode(1, 6);   /* the game's usual */
+        njPopMatrixEx();
+        sys->ef_tlist.textures = tnp;
+    }
+}
+
+/* ---------------------------------------------------------------- the pistol slide's zone to take it
+   The left grip takes the slide anywhere on its own piece (the one that glows orange while it has to be pulled), from its front end to its back end, and also from above: the zone reaches 4 cm
+   over it, so the left hand comes down on the slide and does not hit the right controller. vr_glue.c asks pc_slide_zone once per frame with the left hand's place.
+
+   How the zone is known, with nothing read from the model's vertices (their layout is not known to us):
+   * where the slide is: the slide's node (the weapon object's node 2) has a matrix N. The game's own (owP[2]) is used when it lies where a slide can (near the weapon's origin - it is not filled for every
+     weapon object); else N is worked out from the object's tree as the game draws it: the hand's matrix and the object's offsets (pc_vr_weapon_frame), then each node's position, turn and scale.
+   * how big it is: every model carries its centre and radius. The slide is long and thin, so the radius is a little more than half its length: that is the zone's half length along the slide's own x
+     axis (the one it moves on: its position x goes 0 .. -0.5 in a shot). A radius outside 5 .. 20 cm is not a slide's: the old point is then used.
+   * its section: the thickness of a slide is about 2 cm either side of its middle; the zone takes 1.5 cm more all round.
+   * above it: the hand is tried 0, 1 .. 4 cm lower along the world's up (the game's y), so the zone reaches 4 cm higher than the box.
+   Units: a game unit is 10 cm (vr_scale 100), as the slide's travel (0.5 unit = 5 cm) and everything in the weapon's frame.
+   The left hand has two points: the controller's, and where the hand holds things (the left hand node's frame at the place the magazine is held: what the owner sees touch the slide - the controller
+   itself is about 12 cm to the side of it). Either in the zone takes the slide.
+   Return: a mask, bit 0 the controller's point in the zone, bit 1 the holding point; 0 out; -1 the zone is not known (and why is in recvx.log, once). along[i]: point i along the slide's own x axis, in game
+   units, the pull is measured on it (the slide goes to -x when pulled: a hand that goes back along the barrel makes it smaller). */
+int vr_mat_invert(float out[16], const float in[16]);   /* vr_math.c */
+uint64_t SDL_GetTicks(void);   /* SDL3 (this file does not include SDL) */
+void njRotateX(NJS_MATRIX* m, Angle ang);
+void njRotateY(NJS_MATRIX* m, Angle ang);
+void njRotateZ(NJS_MATRIX* m, Angle ang);
+
+#define SLIDE_R_MIN 0.5f           /* a slide's radius: 5 .. 20 cm */
+#define SLIDE_R_MAX 2.0f
+#define SLIDE_HALF_SECTION 0.20f   /* half its thickness about its middle: 2 cm */
+#define SLIDE_MARGIN 0.15f         /* 1.5 cm all round */
+#define SLIDE_ABOVE_CM 4           /* and 4 cm above */
+
+/* the world matrix of `target` in the tree under `o`, parent matrix `parent` (as njCnkEasyDrawObject builds it) */
+static int tree_world(NJS_CNK_OBJECT* o, NJS_CNK_OBJECT* target, const float* parent, float out[16])
+{
+    for (; o; o = o->sibling) {
+        float t[16];
+        unsigned int f = o->evalflags;
+        memcpy(t, parent, sizeof t);
+        if (!(f & 0x1)) njTranslate((NJS_MATRIX*)t, o->pos[0], o->pos[1], o->pos[2]);
+        if (!(f & 0x2)) {
+            if (f & 0x20) { njRotateY((NJS_MATRIX*)t, o->ang[1]); njRotateX((NJS_MATRIX*)t, o->ang[0]); njRotateZ((NJS_MATRIX*)t, o->ang[2]); }
+            else { njRotateZ((NJS_MATRIX*)t, o->ang[2]); njRotateY((NJS_MATRIX*)t, o->ang[1]); njRotateX((NJS_MATRIX*)t, o->ang[0]); }
+        }
+        if (!(f & 0x4)) njScale((NJS_MATRIX*)t, o->scl[0], o->scl[1], o->scl[2]);
+        if (o == target) { memcpy(out, t, sizeof t); return 1; }
+        if (!(f & 0x10) && o->child && tree_world(o->child, target, t, out)) return 1;
+    }
+    return 0;
+}
+
+/* p (row vector, w = 1) through the matrix m (translation in 12 .. 14) */
+static void mat_point(const float* m, const float p[3], float out[3])
+{
+    for (int k = 0; k < 3; k++) out[k] = m[k] * p[0] + m[4 + k] * p[1] + m[8 + k] * p[2] + m[12 + k];
+}
+
+/* the reason the zone is not known, in recvx.log, the first times */
+static int slide_fail(const char* why, float a, float b)
+{
+    static int told;
+    if (told++ < 6) {
+        char ln[200];
+        snprintf(ln, sizeof ln, "vr: slide zone: not known (%s %.3f %.3f): the old point is used", why, a, b);
+        vr_log_str(ln);
+    }
+    return -1;
+}
+
+int pc_slide_zone(const float P2[2][3], float along[2])
+{
+    O_WRK* op = sys ? (O_WRK*)sys->obwp : NULL;
+    ML_WORK* ml;
+    NJS_CNK_OBJECT* so;
+    NJS_CNK_MODEL* md;
+    float W[16], iW[16], N[16], iN[16], o_w[3], q0[3], xd[3], l, r;
+    int k, t, i, in[2] = { 0, 0 }, src = 0;
+    if (!pc_vr_weapon_frame(W)) return slide_fail("no weapon frame", 0, 0);
+    W[3] = W[7] = W[11] = 0.0f; W[15] = 1.0f;   /* (a proper 4x4 to invert) */
+    if (!vr_mat_invert(iW, W)) return slide_fail("weapon frame not invertible", 0, 0);
+    if (!op || !(ml = op->mlwP) || !ml->objP || !ml->owP || ml->obj_num < 3) return slide_fail("no weapon object with a slide node", 0, 0);
+
+    /* the slide's piece: its node, or the first node under it with a model */
+    so = &ml->objP[2];
+    for (; so && !so->model; so = so->child) ;
+    if (!so || !(md = so->model)) return slide_fail("node 2 has no model", 0, 0);
+    r = md->r;
+    if (!(r >= SLIDE_R_MIN && r <= SLIDE_R_MAX)) return slide_fail("radius out of a slide's range", r, 0);
+
+    /* its matrix: the game's when it lies where a slide can, else from the tree */
+    memcpy(N, ml->owP[2].mtx, sizeof N);
+    N[3] = N[7] = N[11] = 0.0f; N[15] = 1.0f;
+    o_w[0] = N[12]; o_w[1] = N[13]; o_w[2] = N[14];
+    mat_point(iW, o_w, q0);
+    if (q0[0] * q0[0] + q0[1] * q0[1] + q0[2] * q0[2] < 25.0f) src = 1;   /* (within 50 cm of the weapon's origin) */
+    if (!src) {
+        if (!tree_world(ml->objP, &ml->objP[2], W, N)) return slide_fail("slide node not in the tree", 0, 0);
+        N[3] = N[7] = N[11] = 0.0f; N[15] = 1.0f;
+        o_w[0] = N[12]; o_w[1] = N[13]; o_w[2] = N[14];
+        mat_point(iW, o_w, q0);
+        if (!(q0[0] * q0[0] + q0[1] * q0[1] + q0[2] * q0[2] < 25.0f)) return slide_fail("slide node far from the weapon", q0[0], q0[1]);
+        src = 2;
+    }
+    if (!vr_mat_invert(iN, N)) return slide_fail("slide matrix not invertible", 0, 0);
+
+    /* the slide's own x axis in the world, and the hand along it */
+    xd[0] = N[0]; xd[1] = N[1]; xd[2] = N[2];
+    l = sqrtf(xd[0] * xd[0] + xd[1] * xd[1] + xd[2] * xd[2]);
+    if (!(l > 1e-6f)) return slide_fail("slide axis empty", 0, 0);
+    for (k = 0; k < 3; k++) xd[k] /= l;
+
+    /* the zone: the box round the model's centre in the slide's own axes, each point tried 0 .. 4 cm lower in the world */
+    for (i = 0; i < 2; i++) {
+        const float* P = P2[i];
+        along[i] = P[0] * xd[0] + P[1] * xd[1] + P[2] * xd[2];
+        for (t = 0; t <= SLIDE_ABOVE_CM && !in[i]; t++) {
+            float ph[3] = { P[0], P[1] - 0.1f * t, P[2] }, pl[3];   /* 0.1 unit = 1 cm; the game's y is up */
+            mat_point(iN, ph, pl);
+            in[i] = fabsf(pl[0] - md->center.x) <= r + SLIDE_MARGIN &&
+                    fabsf(pl[1] - md->center.y) <= SLIDE_HALF_SECTION + SLIDE_MARGIN &&
+                    fabsf(pl[2] - md->center.z) <= SLIDE_HALF_SECTION + SLIDE_MARGIN;
+        }
+    }
+
+    {   /* what it is, every 3 s and when the hand goes in or out of it */
+        static int was = -1;
+        static uint64_t last;
+        uint64_t now = SDL_GetTicks();
+        if (now - last > 3000 || (in[0] | in[1] << 1) != was) {
+            float pl[3], pg[3];
+            char ln[360];
+            mat_point(iN, P2[0], pl);
+            mat_point(iN, P2[1], pg);
+            last = now; was = in[0] | in[1] << 1;
+            snprintf(ln, sizeof ln, "vr: slide zone (matrix %s): radius %.2f centre %.2f %.2f %.2f; the controller in the slide's axes %.2f %.2f %.2f (%s), the holding point %.2f %.2f %.2f (%s)",
+                     src == 1 ? "the game's" : "from the tree", r, md->center.x, md->center.y, md->center.z, pl[0], pl[1], pl[2], in[0] ? "IN" : "out", pg[0], pg[1], pg[2], in[1] ? "IN" : "out");
+            vr_log_str(ln);
+        }
+    }
+    return in[0] | in[1] << 1;
 }

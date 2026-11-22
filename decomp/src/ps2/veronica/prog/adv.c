@@ -2028,6 +2028,15 @@ int CheckButton(int Level, int Flag, int MaxFlag)
                 ap->AppMode = 1;
                 
                 ap->FromTitle = 0;
+#ifdef TARGET_PC
+                if (pc_difficulty_select())   /* setting: the PAL/JP difficulty menu (level 1, modes 11..13), still in the US code (Piccio23) */
+                {
+                    ap->NextMode = 11;
+                    ap->Mode = 10;
+                    CallSystemSe(0, 3);
+                    break;
+                }
+#endif
                 
                 ap->LastLevel = Level;
                 
@@ -2067,9 +2076,6 @@ int CheckButton(int Level, int Flag, int MaxFlag)
                 ap->NextMode = 30;
                 ap->Mode = 10;
                 CallSystemSe(0, 3);
-                break;
-            case 5:   /* vr145: EXIT - to the desktop, on the second press (lobby_glue.c) */
-                pc_title_exit();
                 break;
 #endif
             }

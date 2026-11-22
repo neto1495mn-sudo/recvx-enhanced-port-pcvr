@@ -589,6 +589,9 @@ void RankingTextureInit()
             datp += dt; 
             
             sys->mes_sp = (unsigned int*)(datp + 4);
+#ifdef TARGET_PC
+            sys->mes_sp = pc_lang_sys_mes(sys->mes_sp);   /* a language's messages whole (pc/glue/lang_glue.c) */
+#endif
             
             rk->mode_00 = 2;
         }

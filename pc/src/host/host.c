@@ -43,7 +43,9 @@ int pc_cfg_no_ink_ribbon(void) { return g_config.no_ink_ribbon; }   /* in co-op 
 extern int tps_cam_active;
 int pc_model_cull(void) { return g_config.model_cull && !tps_cam_active; }
 int pc_frame_blend(void) { return g_config.frame_blend < 0 ? !g_config.interpolate : g_config.frame_blend; }
+int pc_head_blowoff_on(void) { return g_config.head_blowoff; }
 int pc_battle_unlocked(void) { return g_config.battle_unlocked; }
+int pc_difficulty_select(void) { return g_config.difficulty_select; }
 int pc_skip_intro(void) { return g_config.skip_intro; }
 int pc_skip_intro_press_start(void)
 {
@@ -96,18 +98,22 @@ float pc_overlay_x(float x)
 #define SHOW_FPS_DEFAULT 0   /* released builds start with the frame-rate counter off on the desktop too */
 #endif
 HostConfig g_config = { .window_w = 1280, .window_h = 960, .vsync = 1, .log_level = 1, .music_volume = 100, .sfx_volume = 100, .interpolate = 1, .frame_blend = 0, .aspect = 2, .show_fps = SHOW_FPS_DEFAULT, .show_ping = 1,
-                       .screen_filter = 1, .cinema_bars = PC_DEF_CINEMA_BARS, .screen_effects = 1, .native_3d = 1, .model_cull = 1, .native_tex = 1, .quick_knife = 1,
-                       .skip_doors = 1, .skip_intro = 1, .battle_unlocked = 1, .contrast = 100, .gamma = 10 };   /* first-start defaults; recvx.ini overrides */
+                       .screen_filter = 1, .cinema_bars = PC_DEF_CINEMA_BARS, .screen_effects = 1, .native_3d = 1, .model_cull = 1, .native_tex = 1, .quick_knife = 1, .head_blowoff = 1,
+                       .skip_doors = 1, .skip_intro = 1, .battle_unlocked = 1, .difficulty_select = 1, .contrast = 100, .gamma = 10 };   /* first-start defaults; recvx.ini overrides */
 SDL_Window* g_window;
 SDL_GLContext g_gl;
 
 void host_log(const char* fmt, ...)
 {
+#ifdef RECVX_LOGS
     va_list ap;
     if (g_config.log_level <= 0) return;
     va_start(ap, fmt);
     vfprintf(stderr, fmt, ap);
     va_end(ap);
+#else
+    (void)fmt;   /* a released build writes no log */
+#endif
 }
 
 void host_fatal(const char* fmt, ...)
@@ -417,6 +423,15 @@ int main(int argc, char** argv)
     parse_args(argc, argv);
     home_dir();
     if (log_path[0]) { extern void log_start(const char*); log_start(log_path); }
+#ifndef RECVX_LOGS
+    else {   /* no log asked for: what the game prints goes nowhere (and is not even formatted to a console) */
+#ifdef _WIN32
+        freopen("NUL", "w", stdout); freopen("NUL", "w", stderr);
+#else
+        freopen("/dev/null", "w", stdout); freopen("/dev/null", "w", stderr);
+#endif
+    }
+#endif
 #ifdef __ANDROID__
     {   /* Android (Quest): test switches without a new APK - env.txt in the app's folder (adb push), one NAME=value a
            line (# comments), set as environment variables before anything reads them (RECVX_VU_CHECK, RECVX_NATIVE3D...) */

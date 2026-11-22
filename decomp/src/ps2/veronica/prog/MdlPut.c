@@ -17,6 +17,7 @@ void (*bhJumpCnkDraw[4])(BH_PWORK* ewP, NJS_CNK_OBJECT* objP, O_WORK* owP, int o
 #ifdef TARGET_PC
 extern int pose_trace_mark;
 void pose_trace(BH_PWORK* p);
+int pc_zombie_head(BH_PWORK* ep, int hide);   /* pc/glue/enemyopt_glue.c */
 #endif
 void bhPutModel(BH_PWORK* ewP) 
 {
@@ -27,6 +28,15 @@ void bhPutModel(BH_PWORK* ewP)
     unsigned int c3df; 
     
 #ifdef TARGET_PC
+    static int pc_headless;
+    if (!pc_headless && pc_zombie_head(ewP, 1))   /* a zombie whose head was blown off: drawn without it */
+    {
+        pc_headless = 1;
+        bhPutModel(ewP);
+        pc_headless = 0;
+        pc_zombie_head(ewP, 0);
+        return;
+    }
     if (pose_trace_mark)
     {
         pose_trace(ewP);   /* test aid RECVX_POSE_TRACE (pc/glue/pose_trace.c) */

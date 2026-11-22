@@ -457,6 +457,7 @@ static uint32_t palette_hash(uint64_t tex0, uint64_t texa)
 
 /* the image from the definition (replayed into scratch GS memory at its own address), the
    palette from the current CLUT buffer */
+int pc_tex_id_kept(uint32_t id);   /* glue/texture_glue.c: its look stays the disc's (the port cuts words from it) */
 static GLuint decode(const Def* d, uint64_t tex0, uint64_t texa, int* w, int* h, int* hd)
 {
     uint32_t tw = (tex0 >> 26) & 0xF, th = (tex0 >> 30) & 0xF;
@@ -474,7 +475,7 @@ static GLuint decode(const Def* d, uint64_t tex0, uint64_t texa, int* w, int* h,
     /* vr194: only when the draw starts at the upload's own address - one starting inside it (the equipped weapon's
        box: tbp 14336 in the inventory icons' upload at 13312) got the whole upload's HD image at its own
        coordinates, a different picture of it (a gold Luger for any weapon) */
-    if (trep_active() && (uint32_t)(tex0 & 0x3FFF) == d->tbp) {   /* an HD pack's image for it (texreplace.c); sampled with the original size's coordinates */
+    if (trep_active() && !pc_tex_id_kept(d->id) && (uint32_t)(tex0 & 0x3FFF) == d->tbp) {   /* an HD pack's image for it (texreplace.c); sampled with the original size's coordinates */
         GLuint r = trep_lookup((tex0 & ~0x3FFFull) | d->tbp, texa);
         if (r) { gs_mem_scratch_end(); free(px); *w = (int)W; *h = (int)H; *hd = 1; return r; }
     }
@@ -484,7 +485,7 @@ static GLuint decode(const Def* d, uint64_t tex0, uint64_t texa, int* w, int* h,
     glBindTexture(GL_TEXTURE_2D, t);
     glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, (GLsizei)W, (GLsizei)H, 0, GL_RGBA, GL_UNSIGNED_BYTE, px);
-    if (trep_active()) { extern void trep_pending_native(unsigned int gl_tex); trep_pending_native(t); }   /* vr157: replaced once its HD file is read */
+    if (trep_active() && !pc_tex_id_kept(d->id)) { extern void trep_pending_native(unsigned int gl_tex); trep_pending_native(t); }   /* vr157: replaced once its HD file is read */
     {   /* RECVX_DUMP_TEX=dir: also the native decodes */
         static const char* dd; static int chk, ndump;
         if (!chk++) dd = getenv("RECVX_DUMP_TEX");

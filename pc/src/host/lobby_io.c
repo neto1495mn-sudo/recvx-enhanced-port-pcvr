@@ -69,6 +69,32 @@ static void scripted(void)
     }
 }
 
+/* a folder and what is in it removed (the IMPORT screen: imported models, languages); 1 when it is gone */
+static SDL_EnumerationResult SDLCALL rm_entry(void* ud, const char* dir, const char* name)
+{
+    char p[1400];
+    SDL_PathInfo pi;
+    (void)ud;
+    SDL_snprintf(p, sizeof(p), "%s%s", dir, name);
+    if (SDL_GetPathInfo(p, &pi) && pi.type == SDL_PATHTYPE_DIRECTORY) SDL_EnumerateDirectory(p, rm_entry, NULL);
+    SDL_RemovePath(p);
+    return SDL_ENUM_CONTINUE;
+}
+int lobby_rm_tree(const char* path)
+{
+    SDL_EnumerateDirectory(path, rm_entry, NULL);
+    SDL_RemovePath(path);
+    return !SDL_GetPathInfo(path, NULL);
+}
+
+/* the file dialog's answer (SDL may call it on another thread) */
+static void SDLCALL file_picked(void* ud, const char* const* files, int filter)
+{
+    (void)ud; (void)filter;
+    if (files && files[0]) SDL_snprintf(g_lobby_io.file, sizeof(g_lobby_io.file), "%s", files[0]);
+    __atomic_store_n(&g_lobby_io.file_req, files && files[0] ? 3 : 4, __ATOMIC_RELEASE);
+}
+
 void lobby_io_frame(void* window)
 {
     static int started;
@@ -80,6 +106,11 @@ void lobby_io_frame(void* window)
     if (g_lobby_io.clip_req) {
         SDL_SetClipboardText(g_lobby_io.clip);
         g_lobby_io.clip_req = 0;
+    }
+    if (__atomic_load_n(&g_lobby_io.file_req, __ATOMIC_ACQUIRE) == 1) {   /* a disc image (the IMPORT screen) */
+        static const SDL_DialogFileFilter filters[] = { { "PS2 disc image (*.iso)", "iso" }, { "All files", "*" } };
+        g_lobby_io.file_req = 2;
+        SDL_ShowOpenFileDialog(file_picked, NULL, (SDL_Window*)window, filters, 2, g_lobby_io.file[0] ? g_lobby_io.file : NULL, false);
     }
     scripted();
 }

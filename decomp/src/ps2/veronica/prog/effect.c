@@ -759,6 +759,9 @@ void bhControlEffect()
     int i;        
     int* entp;    
     
+#ifdef TARGET_PC
+    pc_hit_react_fx(1);   /* the effects linked to a flinching zombie's part follow it (tps_glue.c) */
+#endif
     if (((sys->sp_flg & 0x8)) || ((sys->ef_flg & 0x1))) 
     {
         entp = &sys->ef_poln;
@@ -870,6 +873,9 @@ void bhControlEffect()
             }
         } 
     }
+#ifdef TARGET_PC
+    pc_hit_react_fx(0);
+#endif
 }
 
 // 100% matching!
@@ -877,6 +883,9 @@ void bhDrawEffect()
 {
     int i;
 
+#ifdef TARGET_PC
+    pc_hit_react_fx(1);
+#endif
     njSetMatrix(NULL, cam.mtx);
     
     njControl3D(0x100);
@@ -976,6 +985,9 @@ void bhDrawEffect()
     {
         bhDrawThunder(sys->rom_no, sys);
     }
+#ifdef TARGET_PC
+    pc_hit_react_fx(0);
+#endif
 }
 
 // 99.84% matching

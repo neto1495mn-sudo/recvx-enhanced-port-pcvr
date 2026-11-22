@@ -79,7 +79,7 @@ public class RecvxActivity extends SDLActivity {
     protected String[] getArguments() {
         java.io.File dir = getExternalFilesDir(null);
         String save = dir != null ? dir.getAbsolutePath() : getFilesDir().getAbsolutePath();
-        return new String[] { "--save-dir", save, "--log=" + save + "/recvx.log", "--vr" };
+        return new String[] { "--save-dir", save, "--vr" };
     }
 
     /* ---- the "all files" permission (the launcher's own file browser reads Download and the like) ---- */
@@ -125,7 +125,7 @@ public class RecvxActivity extends SDLActivity {
         return false;
     }
 
-    /* looks at GitHub's releases for one with an .apk, newer than cur ("1.5.0"); one HTTPS request, nothing about the player sent */
+    /* looks at GitHub's releases for one with an .apk, newer than cur ("1.5.1"); one HTTPS request, nothing about the player sent */
     public static void updateCheck(final String cur) {
         if (updState == 1 || updState == 4) return;
         updState = 1;

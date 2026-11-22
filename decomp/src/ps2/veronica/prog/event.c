@@ -545,6 +545,16 @@ unsigned int bhCk()
     v3 = *(unsigned short*)bhScePtr;
     
     v2 = v0[(v3 & 0x3FF) >> 5];
+#ifdef TARGET_PC   /* port setting "Battle Game unlocked": the Battle Game's character select (RM_5500, the only script
+                      that reads ssd_flg) sees every character as unlocked (0x4 Claire, 0x8 Chris, 0x10 Steve, 0x20 Claire's
+                      other costume, 0x40 Wesker); sys->ssd_flg keeps the real progress, which bhSet and ranking.c still write.
+                      Without a cleared game (ssd_flg 0x1) the title lists BATTLE GAME only through the setting, which may have
+                      been turned off since: the characters stay then too */
+    if ((v0 == (int*)&sys->ssd_flg) && (((v3 & 0x3FF) >> 5) == 0) && (pc_battle_unlocked() != 0 || !(sys->ssd_flg & 0x1)))
+    {
+        v2 |= 0x7C;
+    }
+#endif
     
     bhScePtr += 2;
     
