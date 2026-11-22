@@ -151,7 +151,6 @@ static GLint u_vr_on, u_vr_src, u_vr_dst, u_vr_m0, u_vr_m1, u_vr_m2, u_vr_m3, u_
 /* VR re-projection of the draws being replayed for an eye (gs_present_vr); off otherwise */
 static struct { int on; float src[4], dst[4], m[16], zab[2], zs, hud[3], pm[16]; int pl; } vr_u;   /* pm, pl: the panel held at the head as it is now (g_vr_panel_live) */
 volatile int g_vr_panel_live;   /* vr_glue.c: the weapon wheel is open - its 2D panel follows the head of every image, not the head of the game frame */
-extern int g_vr_sr;        /* xr.c: ini vr_sr - the super resolution: here the sharpening upscale in present_fs, there the compositor's hint */
 int g_vr_aa = 1;           /* ini vr_aa: anti-aliasing (FXAA) of the picture as it is drawn onto the eye images (present_fs) */
 int g_vr_hud_dist = 200;   /* ini vr_hud_dist: the panel of the game's texts and 2D, cm in front of the head */
 int g_vr_hud_y = 0;        /* ini vr_hud_y: the panel moved up (+) or down (-), cm */
@@ -174,7 +173,7 @@ static void vr_stat_vertex_p(const GlVertex* o, char path)
 static void vr_stat_vertex(const GlVertex* o) { vr_stat_vertex_p(o, 'N'); }
 static GLint u_rt_size, u_rt_margin, u_tme, u_tfx, u_tcc, u_fst, u_texsize, u_fge, u_fogcol, u_ate, u_atst, u_aref,
              u_tex, u_tex_alpha_scale, u_texofs, u_premul, u_zscale, u_clamp_mode, u_clamp_vals, u_afail_pass, u_rt16, u_dbg;
-static GLint up_tex, up_rect, up_pic, up_aa, up_sr;
+static GLint up_tex, up_rect, up_pic, up_aa;
 
 static const char* vs_src =
     "#version 330 core\n"
@@ -305,50 +304,12 @@ static const char* present_vs =
    values, so the image is the same as without it. gs_picture is the same on the CPU. */
 static const char* present_fs =
     "#version 330 core\n"
-    "in vec2 v_uv; uniform sampler2D u_tex; uniform vec4 u_pic; uniform float u_aa; uniform float u_sr; out vec4 o;\n"
+    "in vec2 v_uv; uniform sampler2D u_tex; uniform vec4 u_pic; uniform float u_aa; out vec4 o;\n"
     "vec3 fx(vec2 uv){ return clamp(texture(u_tex, uv).rgb, 0.0, 1.0); }\n"
-    /* Snapdragon Game Super Resolution 1 (sgsr1_shader_mobile.frag, operation mode RGBA: the green channel is the luma), copied as it is from
-       https://github.com/SnapdragonGameStudios/snapdragon-gsr - Copyright (c) 2025, Qualcomm Innovation Center, Inc. All rights reserved. SPDX-License-Identifier: BSD-3-Clause.
-       Redistribution and use in source and binary forms, with or without modification, are permitted provided that the conditions of the BSD 3-Clause licence are met
-       (THIRD_PARTY_NOTICES.md has the licence text). Here it gives the luma change (deltaY) that the edge-aware 12-tap Lanczos-like filter wants at this pixel; the caller adds it. */
-    "float fastLanczos2(float x){ float wA = x - 4.0; float wB = x * wA - wA; wA *= wA; return wB * wA; }\n"
-    "vec2 weightY(float dx, float dy, float c, float std){ float x = ((dx * dx) + (dy * dy)) * 0.55 + clamp(abs(c) * std, 0.0, 1.0); float w = fastLanczos2(x); return vec2(w, w * c); }\n"
-    "float sgsrDelta(vec2 uv, float lumaC){\n"
-    "  vec2 sz = vec2(textureSize(u_tex, 0)); vec4 vp = vec4(1.0 / sz, sz);\n"
-    "  vec2 imgCoord = uv * vp.zw + vec2(-0.5, 0.5); vec2 imgPixel = floor(imgCoord); vec2 coord = imgPixel * vp.xy; vec2 pl = imgCoord - imgPixel;\n"
-    "  vec4 left = textureGather(u_tex, coord, 1);\n"
-    "  float edgeVote = abs(left.z - left.y) + abs(lumaC - left.y) + abs(lumaC - left.z);\n"
-    "  if (edgeVote <= 8.0 / 255.0) return 0.0;\n"
-    "  coord.x += vp.x;\n"
-    "  vec4 right = textureGather(u_tex, coord + vec2(vp.x, 0.0), 1);\n"
-    "  vec4 upDown; upDown.xy = textureGather(u_tex, coord + vec2(0.0, -vp.y), 1).wz; upDown.zw = textureGather(u_tex, coord + vec2(0.0, vp.y), 1).yx;\n"
-    "  float mean = (left.y + left.z + right.x + right.w) * 0.25;\n"
-    "  left -= vec4(mean); right -= vec4(mean); upDown -= vec4(mean);\n"
-    "  float cw = lumaC - mean;\n"
-    "  float sum = abs(left.x) + abs(left.y) + abs(left.z) + abs(left.w) + abs(right.x) + abs(right.y) + abs(right.z) + abs(right.w) + abs(upDown.x) + abs(upDown.y) + abs(upDown.z) + abs(upDown.w);\n"
-    "  float std = 2.181818 / sum;\n"
-    "  vec2 aWY = weightY(pl.x, pl.y + 1.0, upDown.x, std);\n"
-    "  aWY += weightY(pl.x - 1.0, pl.y + 1.0, upDown.y, std);\n"
-    "  aWY += weightY(pl.x - 1.0, pl.y - 2.0, upDown.z, std);\n"
-    "  aWY += weightY(pl.x, pl.y - 2.0, upDown.w, std);\n"
-    "  aWY += weightY(pl.x + 1.0, pl.y - 1.0, left.x, std);\n"
-    "  aWY += weightY(pl.x, pl.y - 1.0, left.y, std);\n"
-    "  aWY += weightY(pl.x, pl.y, left.z, std);\n"
-    "  aWY += weightY(pl.x + 1.0, pl.y, left.w, std);\n"
-    "  aWY += weightY(pl.x - 1.0, pl.y - 1.0, right.x, std);\n"
-    "  aWY += weightY(pl.x - 2.0, pl.y - 1.0, right.y, std);\n"
-    "  aWY += weightY(pl.x - 2.0, pl.y, right.z, std);\n"
-    "  aWY += weightY(pl.x - 1.0, pl.y, right.w, std);\n"
-    "  float finalY = aWY.y / aWY.x;\n"
-    "  float maxY = max(max(left.y, left.z), max(right.x, right.w)), minY = min(min(left.y, left.z), min(right.x, right.w));\n"
-    "  finalY = clamp(2.0 * finalY, minY, maxY);\n"
-    "  return clamp(finalY - cw, -23.0 / 255.0, 23.0 / 255.0);\n"
-    "}\n"
     "void main(){\n"
     "  vec3 c, m = fx(v_uv);\n"
-    /* The eye images only (draw_area_to; u_aa, u_sr 0 for every other use), in this same pass: the drawn target is stretched to the eye, and meanwhile
-       - u_aa: FXAA (Lottes' short form): the game's 3D is drawn into it without any anti-aliasing; find the edges by the luma of the four corners, blur along them;
-       - u_sr: Snapdragon Game Super Resolution 1 (above): its luma delta is added to the colour, which is then edge-aware sharpened as the upscale of the target. */
+    /* The eye images only (draw_area_to; u_aa 0 for every other use), in this same pass: the drawn target is stretched to the eye, and meanwhile
+       - u_aa: FXAA (Lottes' short form): the game's 3D is drawn into it without any anti-aliasing; find the edges by the luma of the four corners, blur along them. */
     "  c = m;\n"
     "  if (u_aa > 0.0) {\n"
     "    vec2 px = 1.0 / vec2(textureSize(u_tex, 0));\n"
@@ -364,7 +325,6 @@ static const char* present_fs =
     "    float lb = dot(b, L);\n"
     "    c = (lb < lmin || lb > lmax) ? a : b;\n"
     "  }\n"
-    "  if (u_sr > 0.0) c = clamp(c + vec3(sgsrDelta(v_uv, m.g)), 0.0, 1.0);\n"
     "  if (u_pic.w != 0.0) c = clamp((pow(c, vec3(u_pic.z)) - 0.5) * u_pic.y + 0.5 + u_pic.x, 0.0, 1.0);\n"
     "  o = vec4(c, 1.0);\n"
     "}\n";
@@ -425,7 +385,6 @@ void gs_renderer_init(void)
     up_rect = glGetUniformLocation(present_prog, "u_rect");
     up_pic = glGetUniformLocation(present_prog, "u_pic");
     up_aa = glGetUniformLocation(present_prog, "u_aa");
-    up_sr = glGetUniformLocation(present_prog, "u_sr");
 
     glGenVertexArrays(1, &vao);
     glGenVertexArrays(1, &svao);
@@ -1894,7 +1853,7 @@ static void draw_display(GLuint tex, int rt_vw, int rt_vh)
             int on = picture(&b, &k, &ig);
             glUniform4f(up_pic, b, k, ig, on ? 1.0f : 0.0f);
         }
-        glUniform1f(up_aa, 0.0f); glUniform1f(up_sr, 0.0f);   /* (draw_area_to turns the anti-aliasing and the super resolution on for the eye images only) */
+        glUniform1f(up_aa, 0.0f);   /* (draw_area_to turns the anti-aliasing on for the eye images only) */
         {
             float x0 = g_margin_x && dw > 640.0f ? 0.0f : (float)g_margin_x;
             glUniform4f(up_rect, x0 / rt_vw, 0.0f, (x0 + dw) / rt_vw, dh / rt_vh);
@@ -3113,7 +3072,6 @@ static void draw_area_to(GLuint tex, int rt_vw, int rt_vh, int w, int h)
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glUniform1i(up_tex, 0);
     glUniform1f(up_aa, g_vr_aa ? 1.0f : 0.0f);
-    glUniform1f(up_sr, g_vr_sr ? 1.0f : 0.0f);
     glUniform4f(up_rect, x0 / rt_vw, 0.0f, (x0 + dw) / rt_vw, 480.0f / rt_vh);
     glBindVertexArray(present_vao);
     glDrawArrays(0x0005 /* GL_TRIANGLE_STRIP */, 0, 4);

@@ -16,6 +16,9 @@
 #include <stdlib.h>
 #include <string.h>
 
+int adx_disc_read(uint32_t lsn, uint32_t off, void* dst, uint32_t n);   /* (audio/adx.c) */
+#define disc_read adx_disc_read
+
 void host_log(const char* fmt, ...);
 extern const unsigned char FontSz[126];
 extern unsigned int fstbl[24], fsheader[24];
@@ -29,7 +32,8 @@ int g_lang, g_subtitles;
 
 typedef struct Term { int tab, idx; char* s; } Term;
 typedef struct LangInfo {
-    int ok, subs, nw, fpics, nterm;
+    int ok, subs, nw, fpics, nterm, ver;   /* ver: lang.txt's "# recvx language" (1: item messages cut, lang_old_import) */
+    int voices;                      /* its folder has a sound of its own (voice_file) */
     int pageend[6], npageend;        /* the playing manual's hidden pages per stage of the story (PlayPageCheck) */
     char dir[1200];
     unsigned char w[256], ox[256];   /* widths; shifts + 32 (offsets|: Japanese; 0 none) */
@@ -112,13 +116,14 @@ void lang_scan(void)
             FILE* f;
             if (x->ok) continue;
             import_source_dir(s, base, sizeof(base));
-            snprintf(x->dir, sizeof(x->dir), "%s/%.3s", base, lang_codes[l]);
+            snprintf(x->dir, sizeof(x->dir), "%s/%.5s", base, lang_codes[l]);
             snprintf(p, sizeof(p), "%s/lang.txt", x->dir);
             if (!(f = pc_fopen(p, "r"))) continue;
             while (fgets(line, sizeof(line), f)) {
                 char* c = strpbrk(line, "\r\n");
                 if (c) *c = 0;
-                if (!strncmp(line, "widths|", 7)) {
+                if (!strncmp(line, "# recvx language ", 17)) x->ver = atoi(line + 17);
+                else if (!strncmp(line, "widths|", 7)) {
                     x->nw = parse_list(line + 7, v, 256);
                     for (int i = 0; i < x->nw; i++) x->w[i] = (unsigned char)(v[i] > 28 ? 28 : v[i]);
                 } else if (!strncmp(line, "offsets|", 8)) {
@@ -132,17 +137,27 @@ void lang_scan(void)
                 else exe_line(x, line);
             }
             fclose(f);
-            x->ok = (x->nw >= 108 || l == LANG_JA) && nf == 24 && nh == 24;   /* (the Japanese font: one width, below) */
+            x->ok = (x->nw >= 108 || lang_cjk(l)) && nf == 24 && nh == 24;   /* (the Japanese and Korean fonts: one width, below) */
             if (!x->ok) host_log("lang: %s is incomplete: not offered\n", p);
+            snprintf(p, sizeof(p), "%s/ADV.AFS/3", x->dir);
+            if ((f = pc_fopen(p, "rb"))) { x->voices = 1; fclose(f); }
         }
     }
     /* ponytail: the old lists' texts stay allocated (the game may still show one); a few KB per import or delete */
     memcpy(info, fresh, sizeof(info));   /* (the menus read it; the game thread takes a language at a game's start) */
-    for (int l = 1; l < LANG_COUNT; l++) if (info[l].ok) host_log("lang: %s installed (%s)\n", lang_names[l], info[l].dir);
+    for (int l = 1; l < LANG_COUNT; l++)
+        if (info[l].ok) host_log("lang: %s installed (%s)%s\n", lang_names[l], info[l].dir, lang_old_import(l) ? "; an older import: import it again" : "");
 }
 
 int lang_installed(int l) { return l >= 0 && l < LANG_COUNT && info[l].ok; }
+/* (the Russian system messages were copied whole; version 3 added the Russian and Brazilian Portuguese opening's text
+   crawl, the Japanese movies: lang.c crawl, movies) */
+int lang_old_import(int l)
+{
+    return l > 0 && lang_installed(l) && ((l != LANG_RU && info[l].ver < 2) || ((l == LANG_RU || l == LANG_PT || l == LANG_JA) && info[l].ver < 3));
+}
 int lang_has_subtitles(int l) { return lang_installed(l) && info[l].subs; }
+int lang_has_voices(int l) { return lang_installed(l) && info[l].voices; }
 int lang_sub(void)
 {
     int l = g_subtitles == 1 ? g_lang : g_subtitles - 2;
@@ -150,7 +165,7 @@ int lang_sub(void)
 }
 const char* lang_dir(int l) { return l > 0 && lang_installed(l) ? info[l].dir : NULL; }
 int lang_picture(int adv) { return adv >= 0 && adv < 64 ? adv_lang[adv] : LANG_EN; }
-int lang_eu_picture(int adv) { int l = lang_picture(adv); return l == LANG_FR || l == LANG_DE || l == LANG_ES; }
+int lang_eu_picture(int adv) { int l = lang_picture(adv); return l == LANG_FR || l == LANG_DE || l == LANG_ES || l == LANG_TR || l == LANG_AR || l == LANG_IT; }
 static int data_lang(void) { return lang_installed(g_lang) ? g_lang : LANG_EN; }
 
 /* ---------------------------------------------------------------- the executable's texts */
@@ -193,6 +208,9 @@ const unsigned short* pc_lang_mes(int which, const unsigned short* us)
 {
     return which >= 0 && which < LM_COUNT && info[font_lang].mes[which] ? info[font_lang].mes[which] : us;
 }
+/* the Arabic game over question is laid out for the European executable's Spanish place (bhMainGameOver: x 184, the US
+   264; its choice cursor at the US 248 / 328) */
+float pc_lang_mes_x(int which, float us) { return which == LM_RETRY && font_lang == LANG_AR && info[font_lang].mes[which] ? 184.0f : us; }
 
 /* ---------------------------------------------------------------- files */
 static int strcasecmp_(const char* a, const char* b)
@@ -222,8 +240,51 @@ void pc_lang_file_opened(const char* name, int src)
     }
 }
 
+/* the language's picture files (docs/LANGUAGES.md "Pictures"): textures that show the disc's picture (a re-encode, no
+   writing changed) are read from the disc, so an HD pack's replacements apply (and the item pictures' palette bank
+   stays as the game expects it: the Turkish patch redrew both item sheets with a palette each, one showed with the
+   other's colours). With Translated Pictures off the archives' pictures are the disc's files (pc_lang_file_dir) and
+   in SYSTEM.AFS/1 and /2 every texture but the fonts is the disc's. */
+int g_lang_pictures = 0;   /* (off by default: the English pictures, which an HD pack replaces) */
+static int picture_file(const char* name)
+{
+    return !strncmp(name, "ADV.AFS/", 8) || !strncmp(name, "MRY.AFS/", 8) || !strncmp(name, "ITEM1.AFS/", 10) || !strncmp(name, "ITEM2.AFS/", 10);
+}
+int pc_lang_disc_parts(const char* name, FILE* f, uint32_t size, uint32_t lsn, uint32_t dsize, PcPart* out, int max)
+{
+    static char logged[32];
+    int sys1 = !strcasecmp_(name, "SYSTEM.AFS/1"), sys2 = !strcasecmp_(name, "SYSTEM.AFS/2"), n = 0;
+    uint64_t keep = sys1 ? (lang_cjk(data_lang()) ? 0xF : 1) : sys2 ? 2 : 0;   /* the fonts (the computer's: /2's texture 1) */
+    unsigned char *l, *d;
+    if (!picture_file(name) && !sys1 && !sys2) return 0;
+    if (size > (16u << 20) || dsize > (16u << 20)) return 0;
+    l = malloc(size);
+    d = malloc(dsize);
+    if (l && d && !fseek(f, 0, SEEK_SET) && fread(l, 1, size, f) == size && adx_disc_read(lsn, 0, d, dsize))
+        n = pc_lang_parts(l, size, d, dsize, keep, !g_lang_pictures && (sys1 || sys2), out, max);
+    free(l);
+    free(d);
+    if (n && strcmp(logged, name)) host_log("lang: %s: %d picture%s from the disc\n", name, n, n == 1 ? "" : "s");
+    if (n) snprintf(logged, sizeof(logged), "%s", name);
+    return n;
+}
+
+/* files that are pictures as a whole: a room (the opening's text crawl, RM_0000.RDX: lang.c crawl), a movie (MOVIE/) */
+static int picture_whole(const char* name)
+{
+    size_t n = strlen(name);
+    return !strncmp(name, "MOVIE/", 6) || (n > 4 && !strcasecmp_(name + n - 4, ".RDX"));
+}
+/* a language's sound (docs/LANGUAGES.md "Voices"): the title call, ADV.AFS/3 (adv.c TitleCall), the one sound a
+   language's disc changes (Japanese and Korean: the Japanese release's, Italian: the patch's); Translated Title Call plays it */
+int g_lang_voices = 1;   /* (on by default: only the title call differs on any disc) */
+static int voice_file(const char* name) { return !strcmp(name, "ADV.AFS/3"); }
 /* the language of a file the game is about to read: its folder (NULL: the disc's) */
-const char* pc_lang_file_dir(void) { return lang_dir(data_lang()); }
+const char* pc_lang_file_dir(const char* name)
+{
+    if (voice_file(name)) return g_lang_voices ? lang_dir(data_lang()) : NULL;
+    return !g_lang_pictures && (picture_file(name) || picture_whole(name)) ? NULL : lang_dir(data_lang());
+}
 
 /* ---------------------------------------------------------------- textures of our own
    A TIM2 in memory as one texture of a list of ours: drawn as a loaded texture is (Ps2TexLoad takes its TIM2 from
@@ -261,18 +322,6 @@ static int tim_chunks(unsigned char* d, uint32_t n, unsigned char** tims, int ma
         o += 32 + sz;
     }
     return k;
-}
-
-/* bytes [off, off + n) of the disc file at sector lsn */
-static int disc_read(uint32_t lsn, uint32_t off, void* dst, uint32_t n)
-{
-    unsigned char sec[2048];
-    for (uint32_t k; n; dst = (char*)dst + k, off += k, n -= k) {
-        k = 2048 - off % 2048 < n ? 2048 - off % 2048 : n;
-        if (!cdvd_read_sectors(lsn + off / 2048, 1, sec)) return 0;
-        memcpy(dst, sec + off % 2048, k);
-    }
-    return 1;
 }
 
 /* ---------------------------------------------------------------- the font */
@@ -326,6 +375,17 @@ typedef struct { int lang, n; NJS_TEXNAME name[4]; NJS_TEXMEMLIST mem[4]; NJS_TE
 static XFont xf[2] = { { -1 }, { -1 } };
 static int xf_last;   /* the one used last (a third language replaces the other) */
 
+int cdvd_find_file(const char* path, uint32_t* lsn, uint32_t* size);
+/* the US font (English: the disc's SYSTEM.AFS/1, past the mods and language folders) into DMA slot `slot`; its size */
+static long us_font(int slot, unsigned char** b)
+{
+    uint32_t lsn, size, h[6];
+    if (!cdvd_find_file("\\SYSTEM.AFS;1", &lsn, &size) || !disc_read(lsn, 0, h, sizeof(h)) || memcmp(h, "AFS", 3) || h[1] < 2 ||
+        h[5] < 64 || h[5] > (16u << 20) || h[4] > size || h[5] > size - h[4] || !(*b = ps2_dma_alloc(slot, h[5])) || !disc_read(lsn, h[4], *b, h[5]))
+        return 0;
+    return (long)h[5];
+}
+
 static XFont* other_font(int l)
 {
     char p[1300];
@@ -339,9 +399,10 @@ static XFont* other_font(int l)
     x = &xf[xf_last ^= 1];
     memset(x, 0, sizeof(*x));
     x->lang = l;
-    if (!lang_dir(l)) return NULL;
-    snprintf(p, sizeof(p), "%s/SYSTEM.AFS/1", lang_dir(l));
-    if ((f = pc_fopen(p, "rb"))) {
+    snprintf(p, sizeof(p), "%s/SYSTEM.AFS/1", l == LANG_EN ? "(disc)" : lang_dir(l) ? lang_dir(l) : "");
+    if (l == LANG_EN) n = us_font(xf_last ? DMA_FONT2 : DMA_FONT, &b);   /* (the Latin letters of Arabic texts) */
+    else if (!lang_dir(l)) return NULL;
+    else if ((f = pc_fopen(p, "rb"))) {
         if (fseek(f, 0, SEEK_END) || (n = ftell(f)) < 64 || n > (16 << 20) || fseek(f, 0, SEEK_SET) ||
             !(b = ps2_dma_alloc(xf_last ? DMA_FONT2 : DMA_FONT, (uint32_t)n)) || fread(b, 1, n, f) != (size_t)n) n = 0;
         fclose(f);
@@ -352,7 +413,7 @@ static XFont* other_font(int l)
         for (int i = 0; ef_info[i].flg != (unsigned)-1 && dp < b + n; i++)
             if (ef_info[i].flg & 1) { dp += sz; if (dp + 4 > b + n) break; sz = pc_rd32(dp); dp += 4; }
         dp = (unsigned char*)(((uintptr_t)dp + 31) & ~(uintptr_t)31);
-        if (dp < b + n) x->n = tim_chunks(dp, (uint32_t)(b + n - dp), tims, l == LANG_JA ? 4 : 1);
+        if (dp < b + n) x->n = tim_chunks(dp, (uint32_t)(b + n - dp), tims, lang_cjk(l) ? 4 : 1);
         if (x->n) font_colours(dp, (uint32_t)(b + n - dp), tims, x->n);
     }
     if (!x->n) { host_log("lang: the font of %s cannot be read (%s)\n", lang_names[l], p); return NULL; }
@@ -379,22 +440,28 @@ static int text_font(void)
     return l == font_lang || l == LANG_EN || !other_font(l) ? font_lang : l;
 }
 int lang_font(void) { return text_font(); }
+int lang_rtl_text(void) { return data_lang() == LANG_AR; }
 
 /* a glyph's advance in language l's font */
 static float width_of(int l, int code)
 {
-    if (l == LANG_JA) return code < LANG_JA_BASE && code < info[l].nw ? info[l].w[code] : code == 0 ? 14 : lang_cell(l, code) >= 0 ? 28 : 0;
+    if (l == LANG_AR) {   /* its own cells (codes from LANG_AR_BASE, the digits and signs below), else the US font's */
+        int c = lang_cell(l, code);
+        return c >= 0 ? (c < info[l].nw ? info[l].w[c] : 0) : code < 108 ? FontSz[code] : 0;
+    }
+    if (l == LANG_KO && code > 0 && code < LANG_JA_BASE && lang_cell(l, code) < 0) return FontSz[code];   /* (no look-alike: the US font's) */
+    if (lang_cjk(l)) return code < LANG_JA_BASE && code < info[l].nw ? info[l].w[code] : code == 0 ? 14 : lang_cell(l, code) >= 0 ? 28 : 0;
     if (l == LANG_EN) return code < 108 ? FontSz[code] : 0;
     return code < info[l].nw ? info[l].w[code] : 0;
 }
-static float space_of(int l) { return l == LANG_JA ? 28 : 14; }
+static float space_of(int l) { return lang_cjk(l) ? 28 : 14; }
 
 /* a code of another language's font (lang.h LANG_OTHER): its language, *code its own code; -1 none */
 static int other_of(int* code)
 {
-    int l = *code >= LANG_OTHER_BASE && *code < 0xFE00 ? (*code - LANG_OTHER_BASE) >> 12 : LANG_COUNT;
+    int l = *code >= LANG_OTHER_BASE && *code < 0xFE00 ? (*code - LANG_OTHER_BASE) >> 11 : LANG_COUNT;
     if (l >= LANG_COUNT) return -1;
-    *code &= 0xFFF;
+    *code &= 0x7FF;
     return l;
 }
 
@@ -413,8 +480,15 @@ float pc_glyph_w(int code)
     return code >= 0 && code < 126 ? FontSz[code] : 0;
 }
 
-/* a glyph's shift left of its place (the Japanese look-alikes: proportional) */
-static float shift_of(int l, int code) { return l == LANG_JA && code < LANG_JA_BASE && code < info[l].nw && info[l].ox[code] ? info[l].ox[code] - 32.0f : 0; }
+/* a glyph's shift left of its place (the Japanese look-alikes: proportional; the Arabic font's cells: their ink is at
+   about 10..27 of the 28, drawn 16 apart, so they are drawn 10 to the left: next to the US font's letters (ink 0..14)
+   neither overlapping nor apart, among themselves joined as before) */
+#define AR_SHIFT 10.0f
+static float shift_of(int l, int code)
+{
+    if (l == LANG_AR) return lang_cell(l, code) >= 0 ? -AR_SHIFT : 0;
+    return lang_cjk(l) && code < LANG_JA_BASE && code < info[l].nw && info[l].ox[code] ? info[l].ox[code] - 32.0f : 0;
+}
 
 int pc_font_glyph(int code, void** texlist, float* dx)
 {
@@ -424,13 +498,37 @@ int pc_font_glyph(int code, void** texlist, float* dx)
         if (!x) return -1;
         *texlist = &x->list;
     } else l = font_lang;
+    if ((l == LANG_AR || l == LANG_KO) && code < LANG_AR_BASE && lang_cell(l, code) < 0) {   /* the Arabic font has no Latin letters, the Korean no / + ...: the US font's */
+        XFont* x = other_font(LANG_EN);
+        if (!x) return -1;
+        *texlist = &x->list;
+        *dx = 0;
+        return code;
+    }
     *dx = shift_of(l, code);
     return lang_cell(l, code);
 }
 
+/* the language whose font has the script of the UTF-8 letter at s: Arabic (U+0600..U+06FF, the presentation forms
+   U+FB50..U+FEFF), Hangul syllables (U+AC00..U+D7A3), Cyrillic (U+0400..U+047F), kana and kanji (U+3040..U+30FF,
+   U+4E00..U+9FFF); -1 another */
+static int script_at(const char* s)
+{
+    unsigned char a = (unsigned char)s[0], b = (unsigned char)s[1];
+    if ((a >= 0xD8 && a <= 0xDB) || (a == 0xEF && b >= 0xAD && b <= 0xBB)) return LANG_AR;
+    if ((a == 0xEA && b >= 0xB0) || a == 0xEB || a == 0xEC || (a == 0xED && b < 0x9F)) return LANG_KO;
+    if (a == 0xD0 || a == 0xD1) return LANG_RU;
+    if ((a == 0xE3 && b >= 0x81 && b <= 0x83) || (a >= 0xE4 && a <= 0xE9)) return LANG_JA;
+    return -1;
+}
+
 int pc_glyph_next(const char** s)
 {
-    int l = text_font(), c = lang_glyph(l, s);
+    int l = text_font(), c, w = **s ? script_at(*s) : -1;
+    if (w >= 0 && w != l && !lang_has_char(l, *s) && lang_installed(w) && (font_lang == w || other_font(w)))
+        l = w;   /* (a word in another language's letters, in its font: العربية, 한국어, Русский, 日本語 as setting values) */
+    c = lang_glyph(l, s);
+    if (l == LANG_AR && font_lang != LANG_AR && c < LANG_AR_BASE) return c;   /* (Latin letters, digits: the loaded font's) */
     return l != font_lang && c > 0 ? LANG_OTHER(l, c) : c;
 }
 
@@ -442,6 +540,7 @@ void pc_glyphs_utf8(const unsigned short* g, char* out, int n)
         if (c == 0xFF01 || c == 0xFF00) u = ' ';
         else if (c >= 0xFE00) continue;
         else u = lang_char(font_lang, (int)c);
+        if (!u) continue;   /* (nothing: Brazilian Portuguese's blank after Ç, its accents over capitals) */
         if (u < 0x80) out[k++] = (char)u;
         else if (u < 0x800) { out[k++] = (char)(0xC0 | u >> 6); out[k++] = (char)(0x80 | (u & 0x3F)); }
         else { out[k++] = (char)(0xE0 | u >> 12); out[k++] = (char)(0x80 | (u >> 6 & 0x3F)); out[k++] = (char)(0x80 | (u & 0x3F)); }
@@ -485,9 +584,12 @@ int lang_us_plates(int adv)
     return 1;
 }
 
-/* ---------------------------------------------------------------- file pages as pictures (Japanese)
+/* ---------------------------------------------------------------- file pages as pictures (Japanese, Korean)
    ITEM1.AFS / ITEM2.AFS (sys->itm_partid) entry fpics + fsheader[file] + page: a 512 x 512 picture of the page's
-   text, as the Japanese release shows them; its first line where the text's first line is (64). */
+   text, as the Japanese release shows them; its first line where the text's first line is (64). The language's own
+   (the Korean patch redrew them: its folder), else the disc's (the US disc has the Japanese ones), whatever
+   Translated Pictures says (they are the files' text). */
+const char* adx_afs_name(int ptid);   /* (audio/adx.c) */
 static struct { int entry, part; NJS_TEXNAME name; NJS_TEXMEMLIST mem; NJS_TEXLIST list; } fpage = { -1, -1 };
 
 int pc_lang_file_page(float x, float y, int file, int page)
@@ -503,16 +605,26 @@ int pc_lang_file_page(float x, float y, int file, int page)
         fpage.entry = entry;
         fpage.part = (int)sys->itm_partid;
         fpage.list.nbTexture = 0;
-        if (adx_afs_locate((int)sys->itm_partid, entry, &lsn, &size) && size > 64 && size < (2u << 20)) {
-            unsigned char* d = ps2_dma_alloc(DMA_FPAGE, size);
+        char p[1300];
+        FILE* f = NULL;
+        long n = 0;
+        if (adx_afs_name((int)sys->itm_partid)) {
+            snprintf(p, sizeof(p), "%s/%s/%d", li->dir, adx_afs_name((int)sys->itm_partid), entry);
+            for (char* c = p + strlen(li->dir); *c; c++) if (*c >= 'a' && *c <= 'z') *c -= 32;   /* (upper-case names, as adx.c) */
+            if ((f = pc_fopen(p, "rb")) && (fseek(f, 0, SEEK_END) || (n = ftell(f)) <= 64 || n >= (2 << 20) || fseek(f, 0, SEEK_SET))) n = 0;
+        }
+        if (n || (adx_afs_locate((int)sys->itm_partid, entry, &lsn, &size) && size > 64 && size < (2u << 20))) {
+            unsigned char* d = ps2_dma_alloc(DMA_FPAGE, n ? (uint32_t)n : size);
+            if (n) size = (uint32_t)n;
             if (d) {
-                if (disc_read(lsn, 0, d, size) && tim_chunks(d, size, tims, 1) == 1) {
+                if ((n ? fread(d, 1, size, f) == size : disc_read(lsn, 0, d, size)) && tim_chunks(d, size, tims, 1) == 1) {
                     tex_set(&fpage.name, &fpage.mem, tims[0]);
                     fpage.list.textures = &fpage.name;
                     fpage.list.nbTexture = 1;
                 }
             }
         }
+        if (f) fclose(f);
         if (!fpage.list.nbTexture) host_log("lang: the file page picture %d cannot be read\n", entry);
     }
     if (fpage.list.nbTexture) {
@@ -576,15 +688,12 @@ static const unsigned char* room_block(int l, int idx, uint32_t* size)
     return d + o;
 }
 
-/* message i of a table (count first, then offsets) of `size` bytes (0: trusted, the game's own); NULL if bad */
+/* message i of a table (count first, then offsets) of `size` bytes (0: trusted, the game's own); NULL if it is not
+   whole in its place (pc_parse.h: an older import's item messages) */
 static const unsigned short* mes_at(const unsigned char* t, uint32_t size, uint32_t i, uint32_t* len)
 {
-    uint32_t o = pc_rd32(t + 4 + 4 * i), k = 0;
-    if (size && (o & 1 || o >= size)) return NULL;
-    while ((!size || o + 2 * k + 1 < size) && pc_rd16(t + o + 2 * k) != 0xFFFF) k++;
-    if (size && o + 2 * k + 1 >= size) return NULL;
-    *len = k + 1;
-    return (const unsigned short*)(t + o);
+    *len = size ? pc_mes_at(t, size, i) : pc_mes_len(t + pc_rd32(t + 4 + 4 * i), 1u << 16);
+    return *len ? (const unsigned short*)(t + pc_rd32(t + 4 + 4 * i)) : NULL;
 }
 /* a message shows something: a glyph or an item name (0xFF02's operand is a wait, not a glyph) */
 static int shows(const unsigned short* t)
@@ -626,6 +735,7 @@ static unsigned int* build(unsigned int* us, int idx)
             const unsigned short* u = mes_at((const unsigned char*)us, 0, i, &ul);
             const unsigned short* t = NULL;
             int conv = 0;
+            if (!u) return us;   /* (the room's own table unreadable: kept as it is) */
             if (shows(u)) t = lb && i < ln ? mes_at(lb, size, i, &ll) : NULL;
             else if (sb && i < sn) { t = mes_at(sb, ssize, i, &ll); conv = other; }
             if (!t || !shows(t)) { t = u; ll = ul; conv = 0; }
@@ -666,11 +776,81 @@ unsigned int* pc_lang_room_mes(unsigned int* mesp)
     return build(mesp, idx);
 }
 
+/* message i of room file `room` (RM_7090.RDX) in the game's language, *len u16 with its end; NULL: English, or the
+   language has none that shows something there (extras_glue.c: the blue herb planter's texts in a room without them) */
+const unsigned short* pc_lang_room_text(const char* room, uint32_t i, uint32_t* len)
+{
+    int l = data_lang(), idx;
+    uint32_t size = 0, n = 0;
+    const unsigned char* b;
+    const unsigned short* t;
+    if (l == LANG_EN) return NULL;
+    for (idx = 0; idx < rdx_image_data_max && strcmp(rdx_files[idx], room); idx++) {}
+    if (idx == rdx_image_data_max) return NULL;
+    b = room_block(l, idx, &size);
+    if (!(b = table_of(b, size, &n)) || i >= n || !(t = mes_at(b, size, i, len))) return NULL;
+    return shows(t) ? t : NULL;
+}
+
 /* every frame: Subtitles changed in this room */
 void lang_frame(void)
 {
     if (built_room >= 0 && built_sub != lang_sub() && rom->mesp == built_out) rom->mesp = build(built_us, built_room);   /* (also from or to the US table) */
 }
 
-/* (no per-texture HD exception in this version: an HD pack may still replace a language picture) */
-void pc_tex_keep_original(int texno) { (void)texno; }
+/* ---------------------------------------------------------------- system messages
+   The table the game read (system.c, bup_00.c, ranking.c: SYSMES.ALD's second one, its size right before it). A
+   language's message that is not whole in its place (an import before lang.txt version 2 cut the item messages at
+   0xFF03 0xFFFF, the current item's name: "Take the ...?" ran on into "You've taken" and "There's no space", with no
+   choice to answer) or that the language lacks is the US one, read from the disc. */
+int cdvd_find_file(const char* path, uint32_t* lsn, uint32_t* size);
+static unsigned char* us_sys(uint32_t* size)   /* the disc's system messages (malloc'd), NULL if unreadable */
+{
+    uint32_t lsn, n, ni;
+    unsigned char* d;
+    if (!cdvd_find_file("\\SYSMES.ALD;1", &lsn, &n) || n < 12 || n > (1u << 20) || !(d = malloc(n))) return NULL;
+    if (disc_read(lsn, 0, d, n) && (ni = pc_rd32(d)) < n - 8 && (*size = pc_rd32(d + 4 + ni)) <= n - 8 - ni) {
+        memmove(d, d + 8 + ni, *size);
+        return d;
+    }
+    free(d);
+    return NULL;
+}
+
+static const unsigned char* sys_at(const unsigned char* t, uint32_t size, uint32_t i, uint32_t* len)
+{
+    return (*len = pc_mes_at(t, size, i)) ? t + pc_rd32(t + 4 + 4 * i) : NULL;
+}
+
+unsigned int* pc_lang_sys_mes(unsigned int* sp)
+{
+    static unsigned char* fixed[2];   /* (and the one before: a message may still show) */
+    static int k;
+    static const unsigned short none = 0xFFFF;
+    const unsigned char* t = (const unsigned char*)sp;
+    unsigned char* us;
+    uint32_t size = sp[-1], n = 0, nu, us_size, at, bad = 0, len;
+    if (mes_lang == LANG_EN) return sp;
+    if (size >= 4 && size < (1u << 20) && pc_range_ok(4, 4ull * pc_rd32(t), size)) n = pc_rd32(t);
+    for (uint32_t i = 0; i < n; i++) bad += !pc_mes_at(t, size, i);
+    if (!(us = us_sys(&us_size))) return sp;   /* (nothing to fall back on) */
+    nu = pc_range_ok(4, 4ull * pc_rd32(us), us_size) ? pc_rd32(us) : 0;
+    if (n < nu) { bad += nu - n; n = nu; }
+    if (!bad) { free(us); return sp; }
+    for (int pass = 0; pass < 2; pass++) {   /* its size, then the table */
+        at = 4 + 4 * n;
+        for (uint32_t i = 0; i < n; i++) {
+            const unsigned char* m = sys_at(t, size, i, &len);
+            if (!m && !(m = sys_at(us, us_size, i, &len))) { m = (const unsigned char*)&none; len = 1; }
+            if (pass) { memcpy(fixed[k] + 4 + 4 * i, &at, 4); memcpy(fixed[k] + at, m, 2 * len); }
+            at += 2 * len;
+        }
+        if (!pass) { free(fixed[k]); if (!(fixed[k] = malloc(at))) { free(us); return sp; } }
+    }
+    memcpy(fixed[k], &n, 4);
+    free(us);
+    host_log("lang: %u system messages of %s are not whole (an older import): the English ones; import the language again\n", bad, lang_names[mes_lang]);
+    t = fixed[k];
+    k ^= 1;
+    return (unsigned int*)t;
+}

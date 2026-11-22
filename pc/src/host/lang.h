@@ -3,30 +3,41 @@
    reads that folder's files instead of the disc's (audio/adx.c), takes its room messages (room.c bhSetRoom),
    its glyph widths (message.c bhGetFontSize) and its file pages (fileview.c tables). Our own texts: tr(). */
 #pragma once
+#include <stdint.h>
+#include <stdio.h>
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-enum { LANG_EN, LANG_FR, LANG_DE, LANG_ES, LANG_JA, LANG_RU, LANG_COUNT };
-extern const char* const lang_codes[LANG_COUNT];   /* en fr de es ja ru (folder names, ini language) */
-extern const char* const lang_names[LANG_COUNT];   /* in the language itself (UTF-8) */
+enum { LANG_EN, LANG_FR, LANG_DE, LANG_ES, LANG_JA, LANG_RU, LANG_TR, LANG_PT, LANG_AR, LANG_KO, LANG_IT, LANG_COUNT };
+extern const char* const lang_codes[LANG_COUNT];   /* en fr de es ja ru tr pt-BR ar ko it (folder names, ini language) */
+extern const char* const lang_names[LANG_COUNT];   /* in the language itself (UTF-8; Arabic in display order: lang_shape) */
 
 /* Glyph codes. The Japanese font's cell c is code LANG_JA_BASE + c (the importer moves the Japanese text up);
    the codes below are the US font's, drawn with the Japanese font's look-alikes (digits, times: the US engine
    writes them). A letter in another language's font than the loaded one (a subtitle in another language than the
    game's; our texts right after the Language setting changed) is LANG_OTHER(language, its code), drawn with that
-   language's font; LANG_OTHER(l, LANG_OTHER_SPACE) is its space (0xFF01). */
+   language's font; LANG_OTHER(l, LANG_OTHER_SPACE) is its space (0xFF01). The Korean font is the Japanese one with
+   about 740 cells redrawn as Hangul (the fan translation's): the same codes (LANG_JA_BASE + cell, look-alikes below);
+   a US code without a look-alike there (/, +, ...) is drawn from the US font. */
 #define LANG_JA_BASE 108
+#define lang_cjk(l) ((l) == LANG_JA || (l) == LANG_KO)   /* the Japanese font's layout: 4 textures, cells 28 wide */
+/* The Arabic font's cell c is code LANG_AR_BASE + c as well (the importer moves the Arabic text up the same way); the
+   codes below it are the US font's, drawn from the US font (its Latin letters: the Arabic font has none) or, for the
+   digits and signs the Arabic font has in the same cells, from the Arabic font */
+#define LANG_AR_BASE LANG_JA_BASE
 #define LANG_OTHER_BASE 0x8000
-#define LANG_OTHER(l, c) (LANG_OTHER_BASE + ((l) << 12) + (c))
-#define LANG_OTHER_SPACE 0xFFF
+#define LANG_OTHER(l, c) (LANG_OTHER_BASE + ((l) << 11) + (c))   /* (11 languages below 0xD800, at most 15 below 0xF800: clear of the control codes from 0xFE00) */
+#define LANG_OTHER_SPACE 0x7FF
 
 /* the setting (ini language, LANG_*; English when the language is not installed) and Subtitles (ini subtitles:
    0 Off, 1 the game language's (older ini files), 2 + LANG_* that language's) */
 extern int g_lang, g_subtitles;
 void lang_scan(void);                 /* which languages are installed (at start, after an import or a delete) */
 int  lang_installed(int l);           /* its folder is complete (English: always) */
+int  lang_old_import(int l);          /* an older import (lang.txt version 1: the item messages cut; 2: no text crawl, movies): import again */
 int  lang_has_subtitles(int l);       /* its rooms have cutscene subtitles */
+int  lang_has_voices(int l);          /* its folder has a sound of its own (the title call: Translated Title Call) */
 int  lang_sub(void);                  /* the subtitles' language (installed, with subtitles), -1 none */
 const char* lang_dir(int l);          /* its folder, NULL for English */
 int  lang_font(void);                 /* the language of the font our texts are drawn in (pc_glyph_next) */
@@ -39,6 +50,11 @@ int  lang_us_plates(int adv);
 /* our texts in the language of the setting (the English text when there is none); tr_init sorts the table (start) */
 const char* tr(const char* en);
 void tr_init(void);
+/* Translate Overlay Windows (ini translate_overlay; 0, the default: the ImGui windows F1, F2, F3, F6, F9 in English).
+   tr_overlay(1) before the overlay's frame, tr_overlay(0) after: on this thread tr() keeps English unless the
+   setting is on; the game's own menus, drawn on the game thread, stay in the language */
+extern int g_tr_overlay;
+void tr_overlay(int on);
 /* UTF-8 text in the game font: the next glyph code of *s (advances it; -1 at the end; 0 a space). Letters use the
    codes of the text language's font (lang_font(): the European accents, Cyrillic, kana and kanji; LANG_OTHER while
    the game's loaded font is still another language's), else the plain letter or '?'. */
@@ -50,22 +66,42 @@ int  lang_glyph(int l, const char** s);
 int  lang_cell(int l, int code);
 unsigned lang_char(int l, int code);
 void lang_missing(int l, const char* s, char* out, int n);
+int  lang_has_char(int l, const char* s);   /* the UTF-8 character at s has a code in language l's font (not a plain stand-in) */
+/* Arabic (glyphs.c, pure): the UTF-8 text s in display order, as the game draws it left to right: letters joined
+   (their initial / medial / final / isolated presentation forms, lam-alef ligatures), each line reversed, runs of
+   Latin letters, digits and printf placeholders kept left to right, brackets mirrored; a text without Arabic letters
+   unchanged. Into out (n bytes); returns out. lang_rtl: s is such a display-order text (wrap it from its right end) */
+char* lang_shape(const char* s, char* out, int n);
+int  lang_rtl(const char* s);
+int  lang_rtl_text(void);             /* our texts are right to left (Arabic): pieces joined in code go in reverse */
+/* the byte where the last line of s[0, len) that is at most w wide starts (at a space; 0: all of it fits), for wrapping
+   a display-order text from its right end; width(s, n, ud) measures n bytes */
+int  lang_rtl_cut(const char* s, int len, float w, float (*width)(const char* s, int n, void* ud), void* ud);
 /* the game's text (u16 glyph codes, 0xFFFF end) as UTF-8 for the overlay, with the loaded font's letters */
 void pc_glyphs_utf8(const unsigned short* g, char* out, int n);
 
 /* game thread hooks (decomp, TARGET_PC; audio/adx.c; libgraph.c) */
 enum { LF_DISC, LF_LANG, LF_MODS, LF_BIORAND };     /* where a file the game opens comes from */
-const char* pc_lang_file_dir(void);                 /* the folder of the language's files (NULL: none) */
+const char* pc_lang_file_dir(const char* name);     /* the folder of the language's version of the file (NULL: none) */
 void pc_lang_file_opened(const char* name, int src); /* a file the game opens (by name or "ARCHIVE.AFS/n"), from LF_* */
+/* the language's file f (size bytes) of a disc entry (dsize bytes at sector lsn): the parts read from the disc instead
+   (pc_parse.h pc_lang_parts: its pictures without the language's writing; with Translated Pictures off, SYSTEM.AFS/1
+   and /2 but the fonts), at most max; their count */
+struct PcPart;
+int pc_lang_disc_parts(const char* name, FILE* f, uint32_t size, uint32_t lsn, uint32_t dsize, struct PcPart* out, int max);
+extern int g_lang_pictures;                         /* Translated Pictures (ini translated_pictures): 0 the disc's pictures */
+extern int g_lang_voices;                           /* Translated Title Call (ini translated_voices): 0 the disc's sounds */
 float pc_font_width(unsigned short code);           /* the language font's width, < 0: the game's own */
 float pc_font_space(void);                          /* the advance of a space (0xFF01) at scale 1: 14, Japanese 28 */
 int  pc_font_glyph(int code, void** texlist, float* dx);   /* bhDispFont: the cell to draw (-1 none); *texlist another font's; *dx left shift */
 const unsigned short* pc_lang_mes(int which, const unsigned short* us);   /* the executable's short texts (LM_*) */
+float pc_lang_mes_x(int which, float us);           /* ... the x the language's executable draws one at (us: the US x) */
 enum { LM_DEMO, LM_PRESS, LM_PAUSE, LM_RETRY, LM_COUNT };
 int  pc_lang_file_page(float x, float y, int file, int page);   /* fileview.c: a file page drawn as the language's picture */
 int  pc_lang_page_end(int us);                      /* fileview.c PlayPageCheck: the manual's hidden pages (US 0 1 2 4 6 7) */
 int  lang_eu_picture(int adv);                      /* the ADV.AFS picture is the European one (its title layout) */
 unsigned int* pc_lang_room_mes(unsigned int* mesp);  /* bhSetRoom: the room's message table in the language */
+unsigned int* pc_lang_sys_mes(unsigned int* sp);     /* SYSMES.ALD read: its system messages, the US one where one is not whole */
 void lang_frame(void);                              /* every frame: Subtitles changed in a room */
 
 #ifdef __cplusplus

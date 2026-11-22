@@ -14,7 +14,7 @@
 #include "../src/host/tps.h"
 
 TpsConfig g_tps = { .fov = 75, .aim_fov = 65, .dist = 140, .aim_dist = 100, .height = 165, .shoulder = 35,
-                    .sens_x = 100, .sens_y = 100, .aim_sens = 70, .crosshair = 1, .atmos = 1, .key = 62 /* F5 */ };
+                    .sens_x = 100, .sens_y = 100, .aim_sens = 70, .crosshair = 1, .hit_react = 1, .atmos = 1, .key = 62 /* F5 */ };
 int tps_on;            /* hooks active (changes only at the frame hand-off) */
 int tps_cam_active;    /* our camera is the view of the current frame */
 
@@ -379,8 +379,10 @@ static void atmos_lights(int cut_changed)
 }
 
 /* game.c bhMainSequence, after bhControlLight (before drawing) */
+void tps_react_tick(void);
 void tps_atmos(void)
 {
+    tps_react_tick();
     int cut, smooth_on;
     if (atmos_trace < 0) atmos_trace = getenv("RECVX_ATMOS_TRACE") != NULL;
     if (!sys || !rom || !plp) return;
@@ -880,4 +882,204 @@ void tps_frame(void)
     mouse_moved = mouse_dx != 0 || mouse_dy != 0;
     if (tps_on && !on) deactivate();
     tps_on = on;
+}
+
+/* ---------------------------------------------------------------- "Locational Hit Reactions" (from upstream 0.7.5; docs/THIRDPERSON.md there)
+   The game has one hit motion for a zombie wherever a shot lands. A gun hit on its head, an arm or a leg (the
+   joint bhCheckGunAtari damaged; in VR vr_part_damage calls react_hit with it) also flinches that part: the
+   part's nodes are turned about its joints while the zombie is drawn (eneset.c bhDrawEnemy -> pc_hit_react) and
+   put back after the draw, so the motion, hits, damage, stun, AI and timings stay the game's. The head snaps back
+   along the shot, the arm is knocked back along it and out (the forearm further), the leg's knee buckles (thigh
+   forward, shin back). Up in 2 ticks, eased out by REACT_T: the time of the game's own jolt of the spine on a hit
+   while walking (en01.c bhEne01_SetMtn rot_tbl, 8 ticks). The torso keeps the game's reaction alone; a zombie
+   lying or crawling (its head not above its chest) none. Setting "Locational Hit Reactions" (g_tps.hit_react).
+   Not here: the co-op message for the partner (no co-op on the headset). */
+#define REACT_T 10
+#define REACT_SLOTS 128
+static unsigned react_ticks;   /* game frames (tps_atmos counts them) */
+enum { RG_TORSO, RG_HEAD, RG_ARM_R, RG_ARM_L, RG_LEG_R, RG_LEG_L, RG_N };
+static const signed char rg_chain[RG_N][3] = { { -1 }, { 10, 11, -1 }, { 12, 13, 14 }, { 15, 16, 17 }, { 2, 3, 4 }, { 5, 6, 7 } };   /* the joints turned, the bone's end */
+static const float rg_amp[RG_N][2] = { { 0 }, { 0.3f, 0.4f }, { 0.8f, 0.6f }, { 0.8f, 0.6f }, { 0.35f, -0.9f }, { 0.35f, -0.9f } };   /* radians per joint */
+static struct { unsigned t0; unsigned char rg; float d[3]; } react[REACT_SLOTS];   /* t0: game frames at the hit + 1 (0: none); d: shot direction */
+
+static int zombie_region(int j)
+{
+    return j == 10 || j == 11 ? RG_HEAD : j >= 12 && j <= 14 ? RG_ARM_R : j >= 15 && j <= 17 ? RG_ARM_L : j >= 2 && j <= 4 ? RG_LEG_R :
+           j >= 5 && j <= 7 ? RG_LEG_L : RG_TORSO;
+}
+
+/* the flinch of region rg along d (|d| > 0) starts on enemy slot i */
+static void react_start(int i, int rg, const float* d)
+{
+    float l = sqrtf(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+    if (i < 0 || i >= REACT_SLOTS || rg <= RG_TORSO || rg >= RG_N || !(l > 1e-6f)) return;
+    react[i].t0 = react_ticks + 1;
+    react[i].rg = rg;
+    for (int k = 0; k < 3; k++) react[i].d[k] = d[k] / l;
+}
+
+/* vr_glue.c vr_part_damage: a gun hit on joint jnt of enemy pp (the zombie; the player's shot along d) */
+static unsigned char blood_hit[REACT_SLOTS];   /* per enemy slot: its last gun hit was ours (VR), as weapon + 1: its blood goes to the hit */
+void tps_react_hit(BH_PWORK* pp, int jnt)
+{
+    int i = (int)(pp - ene), rg;
+    float d[3] = { pp->dvx, pp->dvy, pp->dvz };
+    if (i >= 0 && i < REACT_SLOTS) blood_hit[i] = pp->wpnr_no + 1;
+    if (!g_tps.hit_react || pp->id != 1 || !tps_cam_active) return;
+    rg = zombie_region(jnt);
+    if (rg == RG_TORSO) return;
+    react_start(i, rg, d);
+}
+
+typedef struct { float u[3], c[3], a; uint64_t nodes; } Turn;
+
+static void subtree(const ML_WORK* m, const NJS_CNK_OBJECT* o, uint64_t* s, int top)
+{
+    int k = (int)(o - m->objP);
+    if (k < 0 || k >= (int)m->obj_num || k >= 64) return;
+    *s |= 1ull << k;
+    if (o->child) subtree(m, o->child, s, 0);
+    if (!top && o->sibling) subtree(m, o->sibling, s, 0);
+}
+
+/* point p turned as turn() turns an origin */
+static void turn_point(float* p, const Turn* t)
+{
+    float m[16] = { 0 };
+    memcpy(&m[12], p, 12);
+    turn(m, t->u, t->c, t->a);
+    memcpy(p, &m[12], 12);
+}
+
+/* the turns of zombie z's flinch this tick (0: none), from its pose as the game left it */
+static int react_turns(BH_PWORK* z, Turn* t)
+{
+    int i = (int)(z - ene), n = 0, k, j;
+    unsigned age;
+    const signed char* ch;
+    const O_WORK* ow;
+    float w, p[3][3], f[3], a[3];
+    if (i < 0 || i >= REACT_SLOTS || !react[i].t0 || z->id != 1) return 0;
+    age = react_ticks - (react[i].t0 - 1);
+    if (age >= REACT_T || !(z->flg & 0x1)) { react[i].t0 = 0; return 0; }
+    if (!z->mlwP || !z->mlwP->owP || !z->mlwP->objP || z->mlwP->obj_num < 18) return 0;
+    ow = z->mlwP->owP;
+    if (ow[11].mtx[13] - ow[9].mtx[13] < 1.0f) return 0;   /* lying, crawling */
+    if (react[i].rg == RG_HEAD && z->exp0 && *(int*)(z->exp0 + 0x78) == -1) return 0;   /* its head burst (en01.c) */
+    w = (REACT_T - (int)age) / (float)(REACT_T - 2);
+    w = age < 2 ? (age + 1) / 3.0f : w * w * (3 - 2 * w);
+    ch = rg_chain[react[i].rg];
+    f[0] = sinf(z->ay * (3.14159265f / 32768)); f[1] = 0; f[2] = cosf(z->ay * (3.14159265f / 32768));   /* its facing */
+    for (k = 0; k < 3; k++)
+        for (j = 0; j < 3; j++) p[k][j] = ch[k] >= 0 ? ow[(int)ch[k]].mtx[12 + j] : 2 * p[1][j] - p[0][j];   /* the head: on along the neck */
+    if (react[i].rg == RG_ARM_R || react[i].rg == RG_ARM_L) {   /* an arm: back along the shot and out to its side */
+        float o[3] = { p[0][0] - ow[9].mtx[12], 0, p[0][2] - ow[9].mtx[14] }, l = sqrtf(o[0] * o[0] + o[2] * o[2]);
+        for (j = 0; j < 3; j++) a[j] = react[i].d[j] + (l > 1e-4f ? 0.8f * o[j] / l : 0);
+    } else
+        memcpy(a, react[i].rg >= RG_LEG_R ? f : react[i].d, sizeof(a));
+    for (k = 0; k < 2; k++) {   /* joint k turns its bone (k -> k + 1) towards a (the shot; an arm also out; a leg's knee forward) */
+        Turn* q = &t[n];
+        const float* d = a;
+        float v[3] = { p[k + 1][0] - p[k][0], p[k + 1][1] - p[k][1], p[k + 1][2] - p[k][2] }, l;
+        q->u[0] = v[1] * d[2] - v[2] * d[1]; q->u[1] = v[2] * d[0] - v[0] * d[2]; q->u[2] = v[0] * d[1] - v[1] * d[0];
+        l = sqrtf(q->u[0] * q->u[0] + q->u[1] * q->u[1] + q->u[2] * q->u[2]);
+        if (!(l > 1e-4f)) continue;   /* the bone along the shot */
+        for (j = 0; j < 3; j++) q->u[j] /= l, q->c[j] = p[k][j];
+        q->a = rg_amp[react[i].rg][k] * w;
+        q->nodes = 0;
+        subtree(z->mlwP, &z->mlwP->objP[(int)ch[k]], &q->nodes, 1);
+        for (j = k + 1; j < 3; j++) turn_point(p[j], q);
+        n++;
+    }
+    return n;
+}
+
+static float react_save[64][16];
+static ML_WORK* react_m;
+
+/* model m's node matrices to s (back: 1 = from s), each O_WORK's mtx */
+static void node_mtx(ML_WORK* m, float (*s)[16], int back)
+{
+    for (int j = 0; j < (int)m->obj_num && j < 64; j++)
+        if (back) memcpy(m->owP[j].mtx, s[j], sizeof(s[j])); else memcpy(s[j], m->owP[j].mtx, sizeof(s[j]));
+}
+
+/* effect.c bhControlEffect and bhDrawEffect: 1 = every flinching zombie's turns put on its nodes, so the effects linked to
+   them (the blood at the hit, effect.c's and the particles' njCalcPoint on owP) go with the part as drawn; 0 = put back */
+#define REACT_FX 8   /* zombies flinching at once whose effects follow; more keep theirs where the game has them */
+void pc_hit_react_fx(int on)
+{
+    static float save[REACT_FX][64][16];
+    static ML_WORK* sm[REACT_FX];
+    static int n;
+    int i, k, j;
+    if (!on) {
+        while (n > 0) { n--; node_mtx(sm[n], save[n], 1); }
+        return;
+    }
+    if (n || !tps_on || !g_tps.hit_react || !tps_cam_active || !sys) return;
+    for (i = 0; i < (int)sys->ewk_n && i < REACT_SLOTS && n < REACT_FX; i++) {
+        Turn t[2];
+        ML_WORK* m = ene[i].mlwP;
+        int c;
+        if (!react[i].t0 || !m || !m->owP || !(c = react_turns(&ene[i], t))) continue;
+        node_mtx(m, save[n], 0);
+        sm[n++] = m;
+        for (k = 0; k < c; k++)
+            for (j = 0; j < (int)m->obj_num && j < 64; j++)
+                if (t[k].nodes >> j & 1) turn(m->owP[j].mtx, t[k].u, t[k].c, t[k].a);
+    }
+}
+
+/* eneset.c bhDrawEnemy, around drawing ep: 1 = its flinch (or its zombie's, a part linked to a node that flinches:
+   caps, the upper body) put on for the draw (1 returned: put it back after), 0 = put back */
+int pc_hit_react(BH_PWORK* ep, int on)
+{
+    Turn t[2];
+    BH_PWORK* z = ep;
+    ML_WORK* m = ep->mlwP;
+    int n, k, j;
+    if (!on) {
+        if (react_m) node_mtx(react_m, react_save, 1);
+        react_m = NULL;
+        return 0;
+    }
+    if (!tps_on || !g_tps.hit_react || !tps_cam_active || !m || !m->owP || ep < ene || ep >= ene + REACT_SLOTS) return 0;
+    if (!(n = react_turns(z, t)) && (ep->flg & 0x80)) {   /* a part on its zombie's node */
+        z = (BH_PWORK*)ep->lkwkp;
+        if (z < ene || z >= ene + REACT_SLOTS || ep->lkono < 0 || ep->lkono >= 64) return 0;
+        n = react_turns(z, t);
+    }
+    if (!n) return 0;
+    node_mtx(m, react_save, 0);
+    react_m = m;
+    for (k = 0; k < n; k++)
+        for (j = 0; j < (int)m->obj_num && j < 64; j++)
+            if (z == ep ? t[k].nodes >> j & 1 : t[k].nodes >> ep->lkono & 1) turn(m->owP[j].mtx, t[k].u, t[k].c, t[k].a);
+    return 1;
+}
+
+/* tps_atmos (once per game frame) */
+void tps_react_tick(void) { react_ticks++; }
+
+/* zonzon.c bhEne_SetBlood, en01.c bhEne01_SetBlood (from upstream 0.7.5): a hit's blood goes where the shot hit, on the joint it
+   hit (the game: a spot on that part from the enemy's blood table, a zombie's head and neck on its chest). ofs: the hit point
+   (dp, where the shot met the body) in that joint's frame, as the game places the sniper rifle's. -1: the game's place */
+int pc_blood_at_hit(BH_PWORK* pp, float* ofs)
+{
+    int j = pp->djnt_no, i = (int)(pp - ene);
+    const float* m;
+    float v[3], c[3], d;
+    if (i < 0 || i >= REACT_SLOTS || !blood_hit[i] || blood_hit[i] != pp->wpnr_no + 1) return -1;
+    if (!pp->mlwP || !pp->mlwP->owP || j <= 0 || j >= (int)pp->mlwP->obj_num) return -1;
+    m = pp->mlwP->owP[j].mtx;
+    v[0] = pp->dpx - m[12]; v[1] = pp->dpy - m[13]; v[2] = pp->dpz - m[14];
+    if (v[0] * v[0] + v[1] * v[1] + v[2] * v[2] > 10.0f * 10.0f) return -1;   /* not its own point: the game's place */
+    /* v = x m0 + y m4 + z m8 (the rows: the joint's axes), solved by Cramer's rule */
+    c[0] = m[5] * m[10] - m[6] * m[9]; c[1] = m[6] * m[8] - m[4] * m[10]; c[2] = m[4] * m[9] - m[5] * m[8];   /* m4 x m8 */
+    if (!(fabsf(d = m[0] * c[0] + m[1] * c[1] + m[2] * c[2]) > 1e-8f)) return -1;
+    ofs[0] = (v[0] * c[0] + v[1] * c[1] + v[2] * c[2]) / d;
+    ofs[1] = (m[0] * (v[1] * m[10] - v[2] * m[9]) + m[1] * (v[2] * m[8] - v[0] * m[10]) + m[2] * (v[0] * m[9] - v[1] * m[8])) / d;   /* m0 . (v x m8) */
+    ofs[2] = (m[0] * (m[5] * v[2] - m[6] * v[1]) + m[1] * (m[6] * v[0] - m[4] * v[2]) + m[2] * (m[4] * v[1] - m[5] * v[0])) / d;   /* m0 . (m4 x v) */
+    return j;
 }

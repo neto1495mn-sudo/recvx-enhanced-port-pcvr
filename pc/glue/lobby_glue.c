@@ -49,9 +49,14 @@ extern const char PlyFlip[23];
 
 enum { BTN_START = 0x800, BTN_UP = 0x1000, BTN_RIGHT = 0x2000, BTN_DOWN = 0x4000, BTN_LEFT = 0x8000 };   /* Pad[] bits */
 #define TITLE_MP 4                      /* ModeCommandId of the MULTIPLAYER row */
-#define TITLE_EXIT 5                    /* vr145: ... of the EXIT row (SAIR, to the desktop) */
 void pc_quit_desktop(void);             /* settings.c */
-static int exit_armed;                  /* vr145: EXIT pressed once - the second press quits */
+int  pc_import_menu(void);              /* import_menu.c: the IMPORT screen, once per frame; 1 back to the EXTRA submenu (the title menu) */
+void pc_import_menu_close(void);
+int  afs_read(int part, int file, void* buf, int cap);   /* actor_glue.c */
+void pc_ui_dialog_place(const char* l1, const char* l2, float sc2, int lines, float extra, float* y0, float* y1);   /* below */
+void pc_ui_dialog(float y0, float y1, float z, const char* l1, const char* l2, float sc2, unsigned int col2, int lines,
+                  const char* b0, const char* b1, int sel, int glyphs);
+int  pc_ui_dialog_hit(float y1, const char* b0, const char* b1, int glyphs, float x, float y);
 
 /* ---------------------------------------------------------------- text */
 #define PRI_TEXT -1.0f
@@ -135,8 +140,9 @@ static void arrow(float x, float y, int dir, unsigned int argb)
 /* ---------------------------------------------------------------- title menu */
 /* The MULTIPLAYER row in the plates' own lettering: each letter cut from a plate of the title
    texture (texture 1: LOAD GAME at v 64, OPTION 128, SOUND MUSEUM 192, EASY 288, NORMAL 320;
-   u = the letter's left edge, w its width, measured from the texture). */
-static const struct { short u, v, w; } mp_letters[] = {
+   u = the letter's left edge, w its width, measured from the texture's alpha with a pixel each side). */
+typedef struct { short u, v, w; } Letter;
+static const Letter mp_letters[] = {
     { 312, 64, 25 },  /* M of GAME */
     { 174, 192, 23 }, /* U of SOUND */
     { 160, 64, 20 },  /* L of LOAD */
@@ -149,188 +155,127 @@ static const struct { short u, v, w; } mp_letters[] = {
     { 339, 64, 20 },  /* E of GAME */
     { 67, 320, 23 },  /* R of NORMAL */
 };
-
-/* vr151: the Brazilian translation's plate texture (the same rows, other words: CARREGAR PARTIDA 64, NOVA PARTIDA 96,
-   OPÇÕES 128, MUSEU DE SOM 192, MUITO FÁCIL 256, NORMAL 320, STEVE 352; measured from the disc). It has no Y: the top
-   half of STEVE's V over the bottom half of MUITO's I (bu/bv/bw). */
-typedef struct { short u, v, w, bu, bv, bw; } PlateLetter;
-static const PlateLetter mp_letters_br[] = {
-    { 144, 192, 24 }, /* M of MUSEU */
-    { 171, 192, 21 }, /* U of MUSEU */
-    { 141, 320, 19 }, /* L of NORMAL */
-    { 88, 352, 19 },  /* T of STEVE */
-    { 50, 256, 10 },  /* I of MUITO */
-    { 225, 128, 19 }, /* P of OPÇÕES */
-    { 141, 320, 19 }, /* L */
-    { 117, 320, 22 }, /* A of NORMAL */
-    { 131, 352, 22, 50, 256, 10 }, /* Y: V of STEVE over I of MUITO */
-    { 110, 352, 18 }, /* E of STEVE */
-    { 68, 320, 21 },  /* R of NORMAL */
+/* EXTRA: E X T R A of EXTREAM (v 384, the PAL/JP battle game's plates, unused in the US menu) */
+static const Letter ex_letters[] = { { 46, 384, 18 }, { 65, 384, 21 }, { 86, 384, 19 }, { 105, 384, 22 }, { 147, 384, 22 } };
+/* IMPORT (--dev): I of OPTION, M of GAME, P O of OPTION, R of NORMAL, T of OPTION */
+static const Letter im_letters[] = {
+    { 268, 128, 12 }, { 312, 64, 25 }, { 224, 128, 21 }, { 201, 128, 22 }, { 67, 320, 23 }, { 246, 128, 21 },
 };
-static const PlateLetter exit_letters_br[] = {
-    { 69, 352, 16 },  /* S of STEVE */
-    { 117, 320, 22 }, /* A of NORMAL */
-    { 50, 256, 10 },  /* I of MUITO */
-    { 68, 320, 21 },  /* R of NORMAL */
-};
-static const PlateLetter exit_letters_us[] = {
-    { 130, 192, 20 }, /* S of SOUND (its place estimated from the U next to it) */
-    { 286, 64, 24 },  /* A of GAME */
-    { 268, 128, 12 }, /* I of OPTION */
-    { 67, 320, 23 },  /* R of NORMAL */
+/* EXIT: E X of EXTREAM, I of OPTION, T of EXTREAM */
+static const Letter xt_letters[] = { { 46, 384, 18 }, { 65, 384, 21 }, { 268, 128, 12 }, { 86, 384, 19 } };
+enum { W_MP, W_EX, W_IM, W_XT };
+static const struct { const Letter* l; int n; } plate_words[] = {
+    { mp_letters, 11 }, { ex_letters, 5 }, { im_letters, 6 }, { xt_letters, 4 },
 };
 
-/* which plate texture the title has: seen on the disc when it opens (font_glue.c plates_from_iso) */
-extern int g_plates_br;
-static int plates_lang = -1;            /* -1 not logged yet, 0 the US texture (aikatore's letters), 1 Brazilian */
-static void plates_check(void)
+/* (every language's picture: our words in English, from the US plates; the pictures are all the same size) */
+static void plate_word(int word, float cx, float y, unsigned int col, unsigned int shadow, float scale)
 {
-    if (plates_lang >= 0) return;
-    plates_lang = g_plates_br != 0;
-    host_log("title: plate texture %s\n", plates_lang ? "Brazilian - its own letters" : "US - aikatore's letters");
-}
-
-static void plate_word(const PlateLetter* L, int n, float x, float y, unsigned int col, unsigned int shadow, float scale)
-{
+    const Letter* l = plate_words[word].l;
+    int i, n = plate_words[word].n, tex = lang_us_plates(2) ? 0 : 1;
+    float w = 0, x, z = word == W_XT ? 0.49f : 0.5f;   /* (EXIT's E X T are EXTRA's: a look of their own for Smooth Menus) */
     QUAD q;
-    int tex = lang_us_plates(2) ? 0 : 1;   /* (every language's picture: our words from the US plates) */
-    for (int i = 0; i < n; i++) {
-        if (L[i].bw) {   /* two halves: the top of one letter over the bottom of another, centred */
-            SetQuadPos(x, y, L[i].w * scale, 18.0f * scale, &q);   /* vr153: the V down to 18 (it was cut at 16) */
-            SetQuadUv2(L[i].u, L[i].v, L[i].w, 18.0f, 1, &q);
-            AdvEasyDrawTextureS(tex, col, &q, 0.5f, 1, shadow);
-            SetQuadPos(x + (L[i].w - L[i].bw) * scale / 2, y + 17.0f * scale, L[i].bw * scale, 16.0f * scale, &q);   /* (one row over) */
-            SetQuadUv2(L[i].bu, L[i].bv + 17, L[i].bw, 16.0f, 1, &q);
-            AdvEasyDrawTextureS(tex, col, &q, 0.5f, 1, shadow);
-        } else {
-            SetQuadPos(x, y, L[i].w * scale, 33.0f * scale, &q);
-            SetQuadUv2(L[i].u, L[i].v, L[i].w, 33.0f, 1, &q);
-            AdvEasyDrawTextureS(tex, col, &q, 0.5f, 1, shadow);
-        }
-        x += (L[i].w + 1) * scale;
+    for (i = 0; i < n; i++) w += (l[i].w + 1) * scale;
+    x = cx - w / 2;
+    for (i = 0; i < n; i++) {
+        SetQuadPos(x, y, l[i].w * scale, 33.0f * scale, &q);
+        SetQuadUv2(l[i].u, l[i].v, l[i].w, 33.0f, 1, &q);
+        AdvEasyDrawTextureS(tex, col, &q, z, 1, shadow);
+        x += (l[i].w + 1) * scale;
     }
     if (!tex) AdvEasySetTextureList(0);   /* the title's textures again */
 }
-static float plate_w(const PlateLetter* L, int n, float scale) { float w = 0; for (int i = 0; i < n; i++) w += (L[i].w + 1) * scale; return w; }
-
-static void exit_word(float x1, float y, unsigned int col, unsigned int shadow, float scale)
-{
-    const PlateLetter* L = plates_lang == 1 ? exit_letters_br : exit_letters_us;
-    plates_check();
-    plate_word(L, 4, x1 - plate_w(L, 4, scale), y, col, shadow, scale);
-}
-
-static void mp_word(float cx, float y, unsigned int col, unsigned int shadow, float scale)
-{
-    float w = 0, x;
-    int i;
-    QUAD q;
-    plates_check();
-    if (plates_lang == 1) {   /* vr151 */
-        int n = (int)(sizeof(mp_letters_br) / sizeof(mp_letters_br[0]));
-        plate_word(mp_letters_br, n, cx - plate_w(mp_letters_br, n, scale) / 2, y, col, shadow, scale);
-        return;
-    }
-    for (i = 0; i < (int)(sizeof(mp_letters) / sizeof(mp_letters[0])); i++) w += (mp_letters[i].w + 1) * scale;
-    x = cx - w / 2;
-    for (i = 0; i < (int)(sizeof(mp_letters) / sizeof(mp_letters[0])); i++) {
-        SetQuadPos(x, y, mp_letters[i].w * scale, 33.0f * scale, &q);
-        SetQuadUv2(mp_letters[i].u, mp_letters[i].v, mp_letters[i].w, 33.0f, 1, &q);
-        AdvEasyDrawTextureS(1, col, &q, 0.5f, 1, shadow);
-        x += (mp_letters[i].w + 1) * scale;
-    }
-}
+static void mp_word(float cx, float y, unsigned int col, unsigned int shadow, float scale) { plate_word(W_MP, cx, y, col, shadow, scale); }
+void pc_title_word_import(float cx, float y, unsigned int col, unsigned int shadow) { plate_word(W_IM, cx, y, col, shadow, 1.0f); }   /* import_menu.c */
 
 /* the rows between the logo (to y 235) and the copyright (from y 396): 4 rows as the game's
-   own 4-row layout but 16 higher, 5 rows closer together */
-static float title_row_y(int i, int n) { return n >= 5 ? 234.0f + 30.0f * i : 256.0f + 32.0f * i; }
+   own 4-row layout but 16 higher, 5 rows closer together, 6 closer still and smaller (the letters 7/8 high) */
+static float title_row_y(int i, int n) { return n >= 6 ? 234.0f + 26.0f * i : n == 5 ? 234.0f + 30.0f * i : 256.0f + 32.0f * i; }
+static float title_row_h(int n) { return n >= 6 ? 26.0f : n == 5 ? 30.0f : 32.0f; }
+static float title_row_sc(int n) { return n >= 6 ? 0.875f : 1.0f; }
 
-int pc_battle_unlocked(void);   /* host.c: the GAMEPLAY setting */
+/* The title menu: LOAD GAME, NEW GAME, OPTION, EXTRA, MULTIPLAYER, EXIT. EXIT (TITLE_EXIT) asks first (quit_menu). EXTRA (ModeCommandId TITLE_EXTRA, which CheckButton
+   does nothing for) opens a submenu in level 0 itself, laid out as the difficulty screen: the word EXTRA where MODE
+   SELECT is, its rows below: BIORAND (--dev), BATTLE GAME (unlocked, or the setting), IMPORT (--dev). Without any
+   EXTRA is not there (the menu as the game's, with MULTIPLAYER). pc_title_mouse runs the submenu before CheckButton
+   reads the pad and takes the keys it used (its own cursor: CheckButton moves Cursor[0] off row 0 while there is no
+   save); the switch fades the menu out and in again (mode 10, then 8: ex.pending applied on mode 8's first frame). */
+#define TITLE_EXTRA 5
+#define TITLE_EXIT 6
+enum { XR_BIORAND, XR_BATTLE, XR_IMPORT };
+static struct {
+    int on, pending, cur, n, main_row;  /* the submenu is shown; becomes shown (1) / hidden (0) at mode 8, -1 none; its
+                                           cursor and rows; EXTRA's row in the menu (-1 none) */
+    int row[3];
+} ex = { .pending = -1, .main_row = -1 };
+static float ex_row_y(int i) { return 304.0f + 32.0f * i; }   /* DisplayNewGamePlate's rows; EXTRA at 272 as MODE SELECT */
+
+static int im_screen;                   /* ... the IMPORT screen (import_menu.c) */
+static int qt_screen;                   /* ... EXIT's question (quit_menu) */
+static struct { int sel, going; } qt;   /* EXIT's question: the answer chosen (0 YES, 1 NO); YES given */
 
 void pc_title_menu_init(void)
 {
     ADV_WORK* ap = &AdvWork;
-    int n;
-    if (pc_battle_unlocked() && !ap->ExtraFlag) {   /* setting: BATTLE GAME as after a cleared game; the system data's clear flag (ssd_flg 1) stays as it is */
-        ap->ExtraFlag = 1;
-        ap->CursorMax[0] = 4;
-        ap->ModeCommandId[0] = 0; ap->ModeCommandId[1] = 1; ap->ModeCommandId[2] = 3; ap->ModeCommandId[3] = 2;
+    int n = 0, i;
+    if (pc_battle_unlocked()) ap->ExtraFlag = 1;   /* setting: BATTLE GAME as after a cleared game; the system data's clear flag (ssd_flg 1) stays as it is (its characters: event.c bhCk) */
+    ex.n = 0;
+    if (ap->ExtraFlag) ex.row[ex.n++] = XR_BATTLE;
+    ex.row[ex.n++] = XR_IMPORT;
+    ap->ModeCommandId[n++] = 0;
+    ap->ModeCommandId[n++] = 1;
+    ap->ModeCommandId[n++] = 2;
+    ex.main_row = -1;
+    if (ex.n) { ex.main_row = n; ap->ModeCommandId[n++] = TITLE_EXTRA; }
+    ap->ModeCommandId[n++] = TITLE_MP;
+    ap->ModeCommandId[n++] = TITLE_EXIT;
+    for (i = 0; i < n; i++) ap->CursorFlag[0][i] = 1;
+    ap->CursorMax[0] = n;
+    ex.on = 0;
+    ex.pending = -1;
+    ex.cur = 0;
+    if (ap->FromTitle == 2) ap->Cursor[0] = 2;   /* back from OPTION */
+    if (ap->FromTitle == 3 && ex.main_row >= 0) {   /* back from BATTLE GAME: into EXTRA, on its row */
+        ex.on = 1;
+        ap->Cursor[0] = ex.main_row;
+        for (i = 0; i < ex.n; i++) if (ex.row[i] == XR_BATTLE) ex.cur = i;
     }
-    n = ap->CursorMax[0];
-    ap->ModeCommandId[n] = TITLE_MP;
-    ap->CursorFlag[0][n] = 1;
-    ap->ModeCommandId[n + 1] = TITLE_EXIT;   /* vr145: SAIR, small at the right under MULTIPLAYER (not a row of its own) */
-    ap->CursorFlag[0][n + 1] = 1;
-    ap->CursorMax[0] = n + 2;
-    exit_armed = 0;
 }
 
-/* vr153: SAIR's "press again" line in letters of our own (5x7 blocks as rectangles, no texture) */
-static const struct { char c; unsigned char row[7]; } block_font[] = {
-    { 'A', { 14, 17, 17, 31, 17, 17, 17 } }, { 'D', { 30, 17, 17, 17, 17, 17, 30 } }, { 'E', { 31, 16, 16, 30, 16, 16, 31 } },
-    { 'I', { 14, 4, 4, 4, 4, 4, 14 } },      { 'L', { 16, 16, 16, 16, 16, 16, 31 } }, { 'M', { 17, 27, 21, 21, 17, 17, 17 } },
-    { 'N', { 17, 25, 21, 19, 17, 17, 17 } }, { 'O', { 14, 17, 17, 17, 17, 17, 14 } }, { 'P', { 30, 17, 17, 30, 16, 16, 16 } },
-    { 'R', { 30, 17, 17, 30, 20, 18, 17 } }, { 'S', { 15, 16, 16, 14, 1, 1, 30 } },    { 'T', { 31, 4, 4, 4, 4, 4, 4 } },
-    { 'U', { 17, 17, 17, 17, 17, 17, 14 } }, { 'V', { 17, 17, 17, 17, 17, 10, 4 } },  { 'Y', { 17, 17, 10, 4, 4, 4, 4 } },
-    { '?', { 14, 17, 1, 2, 4, 0, 4 } },
-};
-static float block_w(const char* s, float px) { return (float)strlen(s) * 6.0f * px - px; }
-static void block_text(float x, float y, const char* s, float px, unsigned int argb)
-{
-    unsigned int shadow = (argb & 0xFF000000) >> 1 & 0xFF000000;
-    for (int pass = 0; pass < 2; pass++)
-        for (const char* p = s; *p; p++) {
-            float cx = x + (float)(p - s) * 6.0f * px + (pass ? 0.0f : px * 0.6f), cy = y + (pass ? 0.0f : px * 0.6f);
-            for (int k = 0; k < (int)(sizeof(block_font) / sizeof(block_font[0])); k++) {
-                if (block_font[k].c != *p) continue;
-                for (int r = 0; r < 7; r++)
-                    for (int c = 0; c < 5; c++)
-                        if (block_font[k].row[r] & (16 >> c))
-                            rect(cx + c * px, cy + r * px, cx + (c + 1) * px, cy + (r + 1) * px, pass ? argb : shadow, Z_FRONT);
-                break;
-            }
-        }
-}
-/* vr145: adv.c, SAIR confirmed - the first press asks (it blinks red), the second quits */
-void pc_title_exit(void)
-{
-    if (!exit_armed) { exit_armed = 1; CallSystemSe(0, 3); host_log("title: exit asked\n"); return; }
-    host_log("title: exit to the desktop\n");
-    CallSystemSe(0, 3);
-    pc_quit_desktop();
-}
+void pc_tex_keep_original(int texno);
 
-void pc_title_font_leave(void) {}   /* (vr146-149's title font is gone; adv.c still calls it) */
+/* DisplayNewGamePlate's hook: the game draws the difficulty screen itself (0) */
+int pc_newgame_plates(int cursor, float fade, int flag) { (void)cursor; (void)fade; (void)flag; return 0; }
 
-/* DisplayGameModePlate with the MULTIPLAYER row (the game's 3 or 4 rows moved up to make room) */
+/* DisplayGameModePlate with our rows (the game's 3 or 4 rows moved up to make room), or the EXTRA submenu */
 void pc_title_plates(int cursor, int n, float fade, int flag)
 {
-    static const float vdef[2][4] = { { 64.0f, 96.0f, 128.0f, 224.0f }, { 64.0f, 96.0f, 224.0f, 128.0f } };
+    static const float v[4] = { 64.0f, 96.0f, 128.0f, 224.0f };   /* ModeCommandId 0..3: LOAD GAME, NEW GAME, OPTION, BATTLE GAME */
     ADV_WORK* ap = &AdvWork;
-    int i, extra = ap->ExtraFlag != 0;
+    int i;
+    pc_tex_keep_original(1);   /* our words are cut from it: no HD replacement (texture_glue.c) */
+    if (ex.on) {
+        plate_word(W_EX, 320.0f, 272.0f, ((unsigned int)fade << 24) | 0xFFFFFF, fade, 1.0f);   /* as MODE SELECT */
+        n = ex.n;
+    }
     for (i = 0; i < n; i++) {
         unsigned int alpha = fade, col = 0x7F7F7F;
-        float y = title_row_y(i < n - 1 ? i : n - 2, n - 1);   /* vr150: SAIR is not a row of its own */
-        if (i == cursor) { alpha += (unsigned int)ap->FlushCount2; col = ap->FontBaseColor; }
+        int id = ex.on ? -1 - ex.row[i] : ap->ModeCommandId[i];
+        float y = ex.on ? ex_row_y(i) : title_row_y(i, n), sc = ex.on ? 1.0f : title_row_sc(n);
+        if (i == (ex.on ? ex.cur : cursor)) { alpha += (unsigned int)ap->FlushCount2; col = ap->FontBaseColor; }
         alpha <<= 24;
         if (flag == 0) alpha = 0xFF000000;
-        if (ap->ModeCommandId[i] == TITLE_MP) mp_word(320.0f, y, alpha | col, fade, 1.0f);
-        else if (ap->ModeCommandId[i] == TITLE_EXIT) {
-            exit_word(560.0f, y + 24.0f, alpha | (exit_armed && i == cursor ? 0x7F2010 : col), fade, 0.6f);
-            if (exit_armed && i == cursor) {   /* vr153: say so (the red alone was not seen) */
-                static const char* const m = "APERTE DE NOVO PARA SAIR";
-                njColorBlendingMode(0, 8); njColorBlendingMode(1, 6);
-                block_text(500.0f - block_w(m, 1.6f), y + 32.0f, m, 1.6f, (alpha & 0xFF000000) | 0xFF6040);
-            }
-        }
+        if (id == TITLE_MP) mp_word(320.0f, y, alpha | col, fade, sc);
+        else if (id == TITLE_EXTRA) plate_word(W_EX, 320.0f, y, alpha | col, fade, sc);
+        else if (id == TITLE_EXIT) plate_word(W_XT, 320.0f, y, alpha | col, fade, sc);
+        else if (id == -1 - XR_IMPORT) plate_word(W_IM, 320.0f, y, alpha | col, fade, 1.0f);
         else {
             QUAD q;
-            SetQuadPos(64.0f, y, 513.0f, 33.0f, &q);
-            SetQuadUv2(0, vdef[extra][i < 4 ? i : 3], 513.0f, 33.0f, 1, &q);
+            SetQuadPos(320.0f - 256.0f * sc, y, 513.0f * sc, 33.0f * sc, &q);   /* (x 64 at full size) */
+            SetQuadUv2(0, v[id == -1 - XR_BATTLE ? 3 : id & 3], 513.0f, 33.0f, 1, &q);
             AdvEasyDrawTextureS(1, alpha | col, &q, 0.5f, 1, fade);
         }
     }
-    if (ap->ModeCommandId[cursor] != TITLE_EXIT) exit_armed = 0;   /* vr145: moved away - asked again */
     FlushPlate();
     DisplayTitleBg();
 }
@@ -338,8 +283,10 @@ void pc_title_plates(int cursor, int n, float fade, int flag)
 /* ---------------------------------------------------------------- mouse */
 static MouseTake mt;                    /* the pointer (game 2D px) and what it did */
 
+/* Adv_BioCvTitle, every frame before its mode's work */
 void pc_title_mouse_active(int on)
 {
+    if (ex.pending >= 0 && AdvWork.Mode == 8) { ex.on = ex.pending; ex.pending = -1; }   /* EXTRA in or out, as the menu fades in */
     g_menu_mouse.active = on;
 }
 
@@ -356,21 +303,72 @@ void menu_mouse_take(MouseTake* t)
     if (!menu_mouse_on()) t->left = t->right = t->wheel = t->moved = 0;
 }
 
+/* the menu fades out, then in again with (1) or without (0) the EXTRA submenu */
+static void ex_switch(int on)
+{
+    ADV_WORK* ap = &AdvWork;
+    ex.pending = on;
+    if (!on) ap->Cursor[0] = ex.main_row;
+    ap->NextMode = 8;
+    ap->Mode = 10;
+}
+
+/* mode 30 instead of the lobby: a screen of ours (br_screen, im_screen), as CheckButton opens MULTIPLAYER's */
+static void to_screen(int* screen)
+{
+    ADV_WORK* ap = &AdvWork;
+    ap->LastLevel = 0;
+    ap->NextMode = 30;
+    ap->Mode = 10;
+    *screen = 1;
+}
+
+/* the EXTRA submenu (level 0 while ex.on): up/down (wrapping, as the difficulty screen), hover, confirm or a click, cancel
+   or a right click back to the menu; the keys it reads are taken from the pad so CheckButton does nothing with them */
+static void extra_input(void)
+{
+    ADV_WORK* ap = &AdvWork;
+    unsigned int ok = BTN_START | AdvGetOkButton(), cancel = AdvGetCancelButton();
+    unsigned int press = Pad[ap->PortId].press, rept = Pad[ap->PortId].Rept;
+    int hit = -1, i;
+    for (i = 0; i < ex.n; i++)
+        if (mt.x >= 140 && mt.x < 500 && mt.y >= ex_row_y(i) && mt.y < ex_row_y(i) + 32) hit = i;
+    Pad[ap->PortId].press &= ~(ok | cancel | BTN_UP | BTN_DOWN);
+    Pad[ap->PortId].Rept &= ~(BTN_UP | BTN_DOWN);
+    if (hit >= 0 && (mt.moved || mt.left) && hit != ex.cur) { ex.cur = hit; CallSystemSe(0, 2); }
+    if ((mt.left && hit >= 0) || (press & ok)) {
+        switch (ex.row[ex.cur]) {
+        case XR_IMPORT: to_screen(&im_screen); CallSystemSe(0, 3); break;
+        default:   /* BATTLE GAME, as CheckButton's ModeCommandId 3 */
+            ap->AppMode = 1;
+            ap->FromTitle = 3;
+            ap->LastLevel = 0;
+            sys->gm_mode = 3;
+            TitleCall(ap->PortId, 6);
+            break;
+        }
+    } else if (mt.right || (press & cancel)) { ex_switch(0); CallSystemSe(0, 0); }
+    else if ((rept & (BTN_UP | BTN_DOWN)) && ex.n > 1) {
+        ex.cur = (ex.cur + ((rept & BTN_UP) ? ex.n - 1 : 1)) % ex.n;
+        CallSystemSe(0, 2);
+    }
+}
+
 /* CheckButton (before it reads the pad): hovering a row moves the cursor to it, a click on it
-   confirms (as Start), a right click cancels. Level 0 the game modes, 1 the difficulty, 2 the
-   extra games. */
+   confirms (as Start), a right click cancels. Level 0 the game modes (or EXTRA's), 1 the difficulty,
+   2 the extra games (not reached in the US menu). */
 void pc_title_mouse(int level, int flag)
 {
     ADV_WORK* ap = &AdvWork;
     int hit = -1, i, n = ap->CursorMax[level];
     menu_mouse_take(&mt);
+    if (level == 0 && ex.on) { extra_input(); return; }
     for (i = 0; i < n; i++) {
         float x0, y0, w;
-        if (level == 0 && AdvWork.ModeCommandId[i] == TITLE_EXIT) { x0 = 500; w = 60; y0 = title_row_y(n - 2, n - 1) + 24; }   /* vr150 */
-        else if (level == 0) { x0 = 140; w = 360; y0 = title_row_y(i, n - 1); }
+        if (level == 0) { x0 = 140; w = 360; y0 = title_row_y(i, n); }
         else if (level == 1) { x0 = 224; w = 193; y0 = 304.0f + 32.0f * i; }   /* DisplayNewGamePlate, DisplayExtraGamePlate */
         else { x0 = 64.0f + 256.0f * i; w = 256; y0 = 352; }
-        if (mt.x >= x0 && mt.x < x0 + w && mt.y >= y0 && mt.y < y0 + (level == 0 && n - 1 >= 5 ? 30 : 32)) hit = i;
+        if (mt.x >= x0 && mt.x < x0 + w && mt.y >= y0 && mt.y < y0 + (level == 0 ? title_row_h(n) : 32)) hit = i;
     }
     if (hit >= 0 && (!ap->CursorFlag[level][hit] || (level == 0 && hit == 0 && !flag))) hit = -1;   /* not selectable now */
     if (hit >= 0 && (mt.moved || mt.left) && hit != ap->Cursor[level]) {
@@ -379,7 +377,46 @@ void pc_title_mouse(int level, int flag)
     }
     if (mt.left && hit >= 0) Pad[ap->PortId].press |= BTN_START;
     else if (mt.right) Pad[ap->PortId].press |= AdvGetCancelButton();
+    if (level == 0 && ap->ModeCommandId[(int)ap->Cursor[0]] >= TITLE_EXTRA && (Pad[ap->PortId].press & (BTN_START | AdvGetOkButton()))) {
+        Pad[ap->PortId].press &= ~(BTN_START | AdvGetOkButton());
+        if (ap->ModeCommandId[(int)ap->Cursor[0]] == TITLE_EXIT) { qt.sel = 1; to_screen(&qt_screen); }   /* EXIT: its question */
+        else { ex.cur = 0; ex_switch(1); }   /* EXTRA: its submenu */
+        CallSystemSe(0, 3);
+    }
 }
+
+/* EXIT's question (mode 30, as the update dialog): the title picture darkened under RETURN TO TITLE's box
+   (options_glue.c pc_ui_dialog), NO preselected; left/right (or hover) choose, confirm or a click answers, cancel or
+   a right click is NO. YES closes the game as the window's close button does (host.c host_quit: recvx.ini written if
+   a setting is still to be saved, co-op's goodbye to a partner). 1 back to the menu. */
+#define QT_TEXT "Quit the game?"
+static int quit_menu(void)
+{
+    ADV_WORK* ap = &AdvWork;
+    unsigned int press = Pad[ap->PortId].press, rept = Pad[ap->PortId].Rept;
+    float y0, y1;
+    int hit, r = 0;
+    pc_ui_dialog_place(QT_TEXT, NULL, 0.55f, 0, 0, &y0, &y1);
+    menu_mouse_take(&mt);
+    if (press || rept || mt.left || mt.right || mt.moved) StopAdvScreenSaver(0);
+    hit = pc_ui_dialog_hit(y1, "YES", "NO", 0, mt.x, mt.y);
+    if (qt.going) ;   /* (the window closes) */
+    else if (hit >= 0 && (mt.moved || mt.left) && hit != qt.sel) { qt.sel = hit; CallSystemSe(0, 2); }
+    else if (rept & (BTN_LEFT | BTN_RIGHT)) { qt.sel ^= 1; CallSystemSe(0, 2); }
+    else if ((mt.left && hit >= 0) || (press & (BTN_START | AdvGetOkButton()))) {
+        CallSystemSe(0, qt.sel ? 0 : 3);
+        if (qt.sel) r = 1;
+        else { qt.going = 1; host_log("title: EXIT, the game closes\n"); pc_quit_desktop(); }
+    } else if (mt.right || (press & AdvGetCancelButton())) { CallSystemSe(0, 0); r = 1; }
+    AdvEasySetTextureList(0);
+    AdvDwawOnePictureEx(0, 0xFFFFFFFF);   /* the title picture, darkened, as the lobby */
+    rect(0, 0, 640, 480, 0xB0000000, Z_DIM);
+    pc_ui_dialog(y0, y1, 0.303f, QT_TEXT, NULL, 0.55f, 0, 0, "YES", "NO", qt.sel, 0);
+    AdvEasySetTextureList(0);   /* the title's texture list again (the font set its own) */
+    return r;
+}
+
+void pc_title_font_leave(void) {}   /* (adv.c still calls it) */
 
 /* ---------------------------------------------------------------- previews */
 /* Two models: ours (slot 0) and the partner's (slot 1), each a player part file loaded with
@@ -718,6 +755,20 @@ static void font_release(void)
         sys->ss_flg &= ~0x40;
     }
     font_state = 0;
+}
+
+/* The game's font for the title's own screens (IMPORT, EXIT's question): the font file read at once and kept, as the
+   lobby has it; released when the title ends (lobby_close). */
+static void title_font(void)
+{
+    static int have;   /* font_file holds the font: 1; -1 it cannot be read */
+    if (!(sys->ss_flg & 0x40) && !font_state) {
+        if (!have) have = afs_read(sys->sys_partid, 1, font_file, sizeof(font_file)) ? 1 : -1;
+        if (have < 0) return;
+        bhSetFontTexture(font_file);
+        font_state = 2;
+    }
+    font_ok = (sys->ss_flg & 0x40) != 0;
 }
 
 /* ---------------------------------------------------------------- the lobby */
@@ -1379,7 +1430,7 @@ static void lobby_open(void)
 static void lobby_close(int keep)
 {
     int k;
-    if (!lb.open) return;
+    if (!lb.open) { font_release(); return; }   /* the title's */
     if (!keep && (session_on() || g_coop.request)) {
         g_coop.request = COOP_REQ_STOP;
         host_log("lobby: left, the session closes\n");
@@ -1393,13 +1444,28 @@ static void lobby_close(int keep)
     host_log("lobby: closed\n");
 }
 
-void pc_lobby_close(void) { lobby_close(0); }
+void pc_lobby_close(void)
+{
+    if (im_screen) pc_import_menu_close();
+    im_screen = qt_screen = 0;
+    lobby_close(0);
+}
 
 /* Adv_BioCvTitle mode 30, once per frame */
 int pc_lobby(void)
 {
     int r;
     char note[64];
+    if (qt_screen) {   /* EXIT's question: 1 back to the menu */
+        title_font();
+        if ((r = quit_menu())) qt_screen = 0;
+        return r;
+    }
+    if (im_screen) {   /* the IMPORT screen (import_menu.c): 1 back to the menu */
+        title_font();
+        if ((r = pc_import_menu())) im_screen = 0;
+        return r;
+    }
     if (!lb.open) lobby_open();
     if (session_on()) lb.role = !g_coop.host;   /* F3 may host or join meanwhile */
     font_ok = font_ready();
@@ -1547,3 +1613,81 @@ int pc_ui_text_wrap(float x, float y, float w, const char* s, float sc, unsigned
 }
 void pc_ui_rect(float x0, float y0, float x1, float y1, unsigned int argb, float z) { rect(x0, y0, x1, y1, argb, z); }
 void pc_ui_arrow(float x, float y, int dir, unsigned int argb) { arrow(x, y, dir, argb); }
+
+/* ---------------------------------------------------------------- the question box (from upstream's options_glue.c)
+   The IMPORT screen's questions, messages and progress: a dark box in the option screen's window frame, DLG_X0..DLG_X1 and
+   y0..y1; the question (l1) in white, the detail under it (l2: centred lines, at most `lines`) in col2; the answers on a
+   row 48 above the bottom, b0 left of the middle and b1 right of it (b1 NULL: b0 alone, centred), the chosen one (sel)
+   pulsing, the other dim. Every answer in the font. z: the box, its frame just in front (z + 0.01). */
+#define DLG_X0 112.0f
+#define DLG_X1 528.0f
+#define DLG_BTN_SC 0.95f
+static float dlg_btn_w(const char* b) { return text_w(tr(b), DLG_BTN_SC); }
+static float dlg_btn_x(int i, const char* b0, const char* b1)
+{
+    if (!b1) return 320 - dlg_btn_w(b0) / 2;
+    return i ? 320 + 56 : 320 - 56 - dlg_btn_w(b0);
+}
+
+/* the answer at game pixel (x, y) of a box ending at y1: 0 b0, 1 b1, -1 none */
+int pc_ui_dialog_hit(float y1, const char* b0, const char* b1, int glyphs, float x, float y)
+{
+    int hit = -1;
+    (void)glyphs;
+    if (y >= y1 - 52 && y < y1 - 12)
+        for (int i = 0; i < (b1 ? 2 : 1); i++) {
+            float bx = dlg_btn_x(i, b0, b1);
+            if (x >= bx - 12 && x < bx + dlg_btn_w(i ? b1 : b0) + 12) hit = i;
+        }
+    return hit;
+}
+
+/* l2: the words that fit in w per line, each line centred; the lines (draw 0: only counted) */
+static int text_wrap_c(int draw, float y, float w, const char* s, float sc, unsigned int argb, int max_lines)
+{
+    char line[160];
+    int n;
+    for (n = 0; *s && n < max_lines; n++) {
+        int len = 0, fit = 0;
+        while (s[len] && len < (int)sizeof(line) - 1) {
+            memcpy(line, s, len + 1); line[len + 1] = 0;
+            if (text_w(line, sc) > w) break;
+            len++;
+            if (!s[len] || s[len] == ' ') fit = len;
+        }
+        if (!s[len]) fit = len;
+        if (!fit) fit = len ? len : 1;
+        memcpy(line, s, fit); line[fit] = 0;
+        if (draw) text(320 - text_w(line, sc) / 2, y + n * 28 * sc * 1.05f, line, sc, argb);
+        s += fit;
+        while (*s == ' ') s++;
+    }
+    return n;
+}
+
+/* a box for these texts, centred on the screen: l1, l2's lines (at most `lines`), `extra` (a bar) and the answers */
+void pc_ui_dialog_place(const char* l1, const char* l2, float sc2, int lines, float extra, float* y0, float* y1)
+{
+    int n = l2 ? text_wrap_c(0, 0, DLG_X1 - DLG_X0 - 40, tr(l2), sc2, 0, lines) : 0;
+    float h = (l1 ? 54 : 22) + n * 28 * sc2 * 1.05f + extra + 64;
+    *y0 = (float)(int)(240 - h / 2);
+    *y1 = *y0 + (float)(int)(h + 0.5f);
+}
+
+void pc_ui_dialog(float y0, float y1, float z, const char* l1, const char* l2, float sc2, unsigned int col2, int lines,
+                  const char* b0, const char* b1, int sel, int glyphs)
+{
+    NJS_POINT3 tl = { DLG_X0, y0, z + 0.01f }, br = { DLG_X1, y1, z + 0.01f };
+    (void)glyphs;
+    font_ok = (sys->ss_flg & 0x40) != 0;
+    rect(DLG_X0, y0, DLG_X1, y1, 0xE0000000, z);
+    AdvEasyDrawWindow(&tl, &br, 0xFFAFAFAF, 0x3F5F5F5F);
+    for (int i = 0; i < (b1 ? 2 : 1); i++) {
+        const char* b = i ? b1 : b0;
+        unsigned int col = i == sel ? (((unsigned int)AdvWork.FlushCount2 + 255) << 24 | 0xFFFFFF) : 0x7FAFAFAF;
+        if (b[0]) text(dlg_btn_x(i, b0, b1), y1 - 44, tr(b), DLG_BTN_SC, col);
+    }
+    if (l1) { l1 = tr(l1); text(320 - text_w(l1, 0.7f) / 2, y0 + 22, l1, 0.7f, 0xFFFFFFFF); }
+    if (l2) text_wrap_c(1, l1 ? y0 + 54 : y0 + 22, DLG_X1 - DLG_X0 - 40, tr(l2), sc2, col2, lines);
+    AdvEasySetTextureList(0);   /* the screen's textures again (the font set its own) */
+}

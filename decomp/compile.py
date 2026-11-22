@@ -1,0 +1,694 @@
+from __future__ import annotations
+import os
+import subprocess
+import json
+import argparse
+import sys
+import shutil
+from pathlib import Path
+
+import splat.scripts.split as split
+from splat.segtypes.linker_entry import LinkerEntry
+from splat.util.symbols import Symbol
+
+from dataclasses import dataclass
+from concurrent.futures import ThreadPoolExecutor
+import threading
+
+ROOT_DIR = Path(__file__).parent
+LOG_FILE = ROOT_DIR / "elf/report.txt"
+ELF_FILE = ROOT_DIR / "elf/main.elf"
+VERBOSE_PRINT = False
+
+YAML_FILE = Path("config/SLUS_201.84.yaml")
+SECTION_DICT = {
+    ".text" : ",\"ax\",@progbits,unique,",
+    ".data" : ",\"wa\",@progbits,unique,",
+    ".rodata" : ",\"a\",@progbits,unique,",
+    ".bss" : ",\"wa\",@nobits,unique,",
+}
+
+IS_LINUX = sys.platform.startswith("linux")
+COMPILE_ENV = os.environ | {"MWCIncludes": "", "MWLibraries": "", "MWLibraryFiles": ""}
+if "TMPDIR" not in COMPILE_ENV and "temp" in os.environ:
+    COMPILE_ENV["TMPDIR"] = os.environ["temp"]
+
+ASSEMBLER_CANDIDATES = [
+    "mips-linux-gnu-as",
+    "mipsel-linux-gnu-as",
+    "mips64-linux-gnu-as",
+]
+print_lock = threading.Lock()
+log_lock = threading.Lock()
+
+@dataclass
+class Compiler:
+    name: str
+    is_assembler: bool
+    program: Path
+    flags: list[str]
+    includes: list[str]
+    defines: list[str]
+
+    def get_sdata_flag(self, value: int) -> str:
+        if self.name == "mwcc":
+            return f"-sdatathreshold={value}"
+        else:
+            return f"-G{value}"
+
+    def compile(self, src: Path, obj: Path, extra_flags: list[str] = list()) -> bool:
+        """Compiles the given source file with an optional extra flag list."""
+        env = dict()
+        compile_command = [str(self.program)]
+        compile_command += self.flags
+        compile_command += extra_flags
+        if self.is_assembler:
+            compile_command += ["-o", obj.as_posix(), src.as_posix()]
+        elif self.name == "mwcc":
+            compile_command += ["-c", src.as_posix(), "-o", obj.parent.as_posix()]
+            compile_command.append('-MD')
+        elif self.name == "gcc":
+            # Have to delete the old .d file or GCC appends to it...
+            obj.with_suffix(".d").unlink(missing_ok=True)
+            env["SUNPRO_DEPENDENCIES"] = obj.with_suffix(".d").as_posix()
+            compile_command += ["-c", src.as_posix(), "-o", obj.as_posix()]
+        else:
+            compile_command += ["-c", src.as_posix(), "-o", obj.as_posix()]
+        compile_command += [f'-I{inc}' for inc in self.includes]
+        compile_command += [f'-D{d}' for d in self.defines]
+
+        success = run_command(compile_command, env)
+        if success:
+            return success
+        else:
+            obj.unlink(missing_ok=True)
+            obj.with_suffix(".d").unlink(missing_ok=True)
+            return False
+
+
+@dataclass
+class CompileUnit:
+    src_path: Path
+    obj_path: Path
+    compiler: Compiler
+    sdata_size: int | None = None
+    rebuilt: bool = False
+
+    def _parse_depfile(self, dfile: Path) -> list[Path]:
+        text = dfile.read_text()
+
+        # normalize CRLF
+        text = text.replace("\r\n", "\n")
+        text = text.replace("\r", "\n")
+
+        # remove escapes, might want to change this eventually
+        text = text.replace("\\\n", "\n")
+        text = text.replace("\\ ", " ")
+
+        deps = text.split(":", 1)[1].strip()
+
+        if IS_LINUX:
+            l = []
+            for x in deps.split("\n"):
+                x = x.strip()
+                if x[:3] == "Z:\\":
+                    x = x[2:]
+                l.append(Path(x.replace("\\", "/")))
+            return l
+        else:
+            return [ Path(x.strip()) for x in deps.split("\n") ]
+
+    def needs_rebuild(self) -> bool:
+        obj = self.obj_path
+        if not obj.exists():
+            return True
+        
+        # For asm files we don't need dep files
+        if self.compiler.is_assembler:
+            return self.src_path.stat().st_mtime > obj.stat().st_mtime
+
+        dfile = obj.with_suffix(".d")
+        if not dfile.exists():
+            return True
+
+        obj_time = obj.stat().st_mtime
+
+        deps = self._parse_depfile(dfile)
+
+        for dep in deps:
+            if not dep.exists():
+                return True
+
+            if dep.stat().st_mtime > obj_time:
+                return True
+
+        return False
+
+    def compile(self, force: bool = False):
+        """Compiles this CompileUnit."""
+        
+        extra_flags = list()
+        if self.sdata_size is not None:
+            extra_flags.append(self.compiler.get_sdata_flag(self.sdata_size))
+        
+        if self.needs_rebuild():
+            self.rebuilt = True
+            return self.compiler.compile(self.src_path, self.obj_path, extra_flags)
+        
+        # Didn't need rebuild, assume it's good
+        self.rebuilt = False
+        return True
+
+
+def load_json(filename):
+    """Load JSON data from a file."""
+    with open(filename, 'r') as f:
+        return json.load(f)
+
+
+def run_command(command: list[str], extra_env: list[dict] = None) -> bool:
+    """Run a shell command."""
+    if extra_env is None:
+        extra_env = dict()
+
+    if IS_LINUX and command[0].endswith('.exe'):
+        command = ['wibo'] + command
+
+    extra = list()
+    if VERBOSE_PRINT:
+        msg = ""
+        for cmd in command:
+            if cmd.startswith("-L") or cmd.startswith("-I") or cmd.startswith("-D") or cmd.endswith(".c") or cmd.startswith("-lgcc"):
+                msg += f"\n {cmd}"
+            elif cmd.endswith(".lcf"):
+                msg += f"\n {cmd}\n"
+            else:
+                msg += f" {cmd}"
+        log_me(msg)
+    
+    result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=COMPILE_ENV | extra_env)
+    extra.append(result.stdout)
+    extra.append(result.stderr)
+
+    if result.returncode != 0:
+        log_me(f"Error: {result.stderr}", extra)
+        return False  # Return False on failure
+    else:
+        log_me("", extra)
+        return True  # Return True on success
+
+
+def link_objects(linker, objects, linker_script, linker_flags, libraries, library_dirs) -> bool:
+    """Link object files into the final executable."""
+    
+    link_command = [linker]
+    link_command += linker_script
+    link_command += linker_flags
+    link_command += objects
+    link_command += ['-o', ELF_FILE.as_posix()]
+    link_command += [f'-L{lib}' for lib in library_dirs]
+    link_command += libraries
+
+    if not run_command(link_command):
+        return False # Return False if link fails
+    return True
+
+
+def obj_path_for(src_path: Path) -> Path:
+    """Return the object file path inside the build folder."""
+    if "expected" in src_path.parts:
+        dst_path = src_path.with_suffix(".o")
+    else:
+        dst_path = Path("build") / src_path.with_suffix(".o")
+    return dst_path
+
+
+def clean_asm(asm_file: Path, symbols: dict[int, list[Symbol]]):
+    with asm_file.open("r", encoding="utf-8") as f:
+        lines = f.readlines()
+
+    out = ["\n"]
+    skip = False
+    get_pos = False
+    count = 1
+    section = ".text"
+    last_section = 0
+    last_name = ""
+    for line in lines:
+        if line.startswith("/* Automatically generated and unreferenced pad */"):
+            continue
+        
+        if line.startswith("dlabel D_"):
+            continue
+
+        if line.startswith("enddlabel"):
+            continue
+
+        if get_pos and line.startswith("    /* "):
+            s = line.split(" ")
+            if ".space" in line:
+                pos = s[5]
+            else:
+                pos = s[6]
+            sym = symbols[int(pos, base=16)][0]
+            if sym.user_declared:
+                out.append(f".size {last_name}, {sym.given_size}\n")
+            get_pos = False
+
+        if line.startswith("glabel") or line.startswith("dlabel"):
+            get_pos = True
+            last_name = line[7:].split(",")[0].strip()
+            out.append(f".section {section}{SECTION_DICT[section]}{count}\n")
+            last_section = len(out) - 1
+            count += 1
+            skip = False
+
+        if line.startswith("endlabel"):
+            out[last_section] += ".balign 16\n"
+            out.append(line)
+            out.append("\n")
+            skip = True
+        
+        if line.startswith(".balign"):
+            out.append(line)
+            out.append("\n")
+            skip = True
+
+        if line.startswith(".section"):
+            section = line[9:].split(",")[0]
+            count = 1
+            continue
+        
+        if not skip:
+            out.append(line)
+
+    with asm_file.open("w", encoding="utf-8") as f:
+        f.writelines(out)
+
+
+def do_objdiff_setup():
+    """Setup objdiff.json and run splat."""
+    split.main([YAML_FILE], modes="all", verbose=False, use_cache=False, disassemble_all=True, make_full_disasm_for_code=True)
+
+    entries = split.linker_writer.entries
+
+    cfg = {
+        "min_version": "1.0.0",
+        "custom_make": "python",
+        "custom_args": [
+            "compile.py",
+            "--single-file",
+        ],
+        "build_target": True,
+        "watch_patterns": [
+            "*.c",
+            "*.h",
+            "*.json",
+        ],
+        "progress_categories": [
+            {
+                "id": "game",
+                "name": "Main Game"
+            },
+            {
+                "id": "cri",
+                "name": "CRI Middleware (ADX - EE)"
+            },
+            {
+                "id": "tamsoft",
+                "name": "Tamsoft Sound Driver (EE)"
+            }
+        ],
+        "units": [],
+    }
+    
+    build_path = Path("build/src")
+    expected_path = Path("build/expected")
+
+    def add_unit(entry: LinkerEntry) -> None:
+        if entry.segment.type not in ["c", "cpp"]:
+            return
+        
+        unit_src_path = entry.segment.out_path().relative_to("config")
+        if "sce" in unit_src_path.parts:
+            return
+
+        if "cri" in unit_src_path.parts:
+            category = "cri"
+        elif "veronica" in unit_src_path.parts:
+            if unit_src_path.name == "ps2_snddrv.c":
+                category = "tamsoft"
+            else:
+                category = "game"
+        
+        obj_name = entry.segment.name
+        unit_cfg = {
+            "name": obj_name,
+            "target_path": (expected_path / entry.object_path.relative_to(build_path)).as_posix(),
+            "metadata": {
+                "source_path": entry.segment.out_path().as_posix(),
+                "progress_categories": [
+                    category
+                ]
+            },
+        }
+
+        if not unit_src_path.exists():
+            cfg["units"].append(unit_cfg)
+            return
+
+        src_obj_path = entry.object_path
+
+        unit_cfg["base_path"] = src_obj_path.as_posix()
+
+        cfg["units"].append(unit_cfg)
+    
+    for unit in entries:
+        add_unit(unit)
+
+    with open("objdiff.json", "w", encoding="utf-8") as f:
+        json.dump(cfg, f, indent=4)
+
+    print("Fixing asm blobs")
+    # Special cases, thank god is only 3
+    p = Path("build/expected/cri/mwlib/ee/lib/libadxe/adx_dcd3.s")
+    text = p.read_text().replace("lwc1       $f15, %gp_rel(D_00362800)($gp)", "li.s       $f15, 0.6999999881")
+    p.write_text(text)
+    
+    p = Path("build/expected/cri/mwlib/ee/lib/libadxe/adx_amp.s")
+    text = p.read_text().replace("lwc1       $f0, %gp_rel(D_00362804)($gp)", "li.s       $f0, 0.1000000015")
+    p.write_text(text)
+    
+    p = Path("build/expected/sce/ee/gcc/ee/lib/libc/sbrkr.s")
+    text = p.read_text() + "\n/* 01E2CCC4 */ .comm errno,4,4 \n"
+    p.write_text(text)
+
+    # Now that all asm is proper we also need local jlabels
+    p = Path("config/include/macro.inc")
+    text = p.read_text().replace(".macro jlabel label, visibility=global", ".macro jlabel label, visibility=local")
+    p.write_text(text)
+
+    for unit in cfg["units"]:
+        if "veronica" in unit["target_path"]:
+            p = Path(unit["target_path"])
+            clean_asm(p.with_suffix(".s"), split.symbols.all_symbols_dict)
+
+
+def resolve_linux_tools() -> Path:
+    try:
+        subprocess.run(["wibo"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    except FileNotFoundError:
+        print("ERROR: wibo does not appear to be accessible")
+        print("To install it, please download it and put it in your PATH:")
+        print(
+            "  wget https://github.com/AshfordFamily/recvx-decomp/releases/download/dependency/wibo-x86_64 && chmod +x wibo-x86_64 && sudo mv wibo-x86_64 /usr/bin/wibo"
+        )
+        sys.exit(-1)
+    
+    for assembler in ASSEMBLER_CANDIDATES:
+        try:
+            subprocess.run(
+                [assembler, "--version"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            break
+        except FileNotFoundError:
+            pass
+    else:
+        as_list = "\n".join(ASSEMBLER_CANDIDATES)
+        print("ERROR: GNU AS for mips does not appear to be accessible")
+        print("Please download it for you distro and put it in your PATH")
+        print("We tried to search for either of these:")
+        print(f"{as_list}")
+        sys.exit(-1)
+    
+    return Path(assembler)
+
+
+def cfg_get_compilers(config: dict) -> dict[str, Compiler]:
+    compilers: dict[str, Compiler] = dict() 
+    
+    comm_defines = config["defines"]
+    comm_includes = config["common_includes"]
+
+    for compiler in config["compilers"]:
+        name = compiler["name"]
+        if not IS_LINUX:
+            path = Path(compiler["path_win"])
+        else:
+            path = Path(compiler["path_linux"])
+
+        is_assembler = compiler["is_assembler"]
+        fags = compiler["default_flags"]
+        includes = compiler["includes"] + comm_includes
+        if is_assembler:
+            defines = list()
+        else:
+            defines = comm_defines
+        compilers[name] = Compiler(name, is_assembler, path, fags, includes, defines)
+    
+    return compilers
+
+
+def cfg_get_current_objects(config: dict, compilers: dict[str, Compiler]) -> dict[Path, CompileUnit]:
+    override_map = dict()
+    for folder, values in config["source_overrides"].items():
+        fp = Path(folder)
+        compiler = compilers[values["compiler"]]
+        sdata = values["sdata"]["*"]
+        for f in fp.rglob("*"):
+            override_map[f] = {"compiler": compiler, "sdata": sdata}
+        
+        for f, v in values["sdata"].items():
+            if f == "*":
+                continue
+            f = fp / f
+            override_map[f]["sdata"] = v
+
+    compiled_files: dict[Path, CompileUnit] = dict()
+    for file in config["source_files"]:
+        src_path = Path(file)
+        obj_path = obj_path_for(src_path)
+        
+        compiler = compilers["gnu-as"]
+        sdata = None
+        
+        if src_path in override_map:
+            compiler = override_map[src_path]["compiler"]
+            sdata = override_map[src_path]["sdata"]
+        elif src_path.suffix == ".vsm":
+            compiler = compilers["dvp-as"]
+        elif src_path.suffix == ".s":
+            compiler = compilers["gnu-as"]
+        
+        compiled_files[obj_path] = CompileUnit(src_path, obj_path, compiler, sdata)
+    
+    return compiled_files
+
+
+def cfg_get_expected_objects(config: dict, compilers: dict[str, Compiler]) -> dict[Path, CompileUnit]:
+    expected_files: dict[Path, CompileUnit] = dict()
+    exp = Path("build/expected")
+    for file in config["source_files"]:
+        src_path = Path(file)
+        if src_path.is_relative_to("src") and src_path.suffix == ".c":
+            src_path = exp / src_path.with_suffix(".s").relative_to("src")
+            obj_path = obj_path_for(src_path)
+            expected_files[obj_path] = CompileUnit(src_path, obj_path, compilers["gnu-as"])
+    
+    return expected_files
+
+
+def log_me(msg: str, extra: list[str] = list(), both: bool = False):
+    """Dumb log utility, msg is printed to stdout, while extras are """
+    """saved to the log file, use both True save both"""
+
+    with print_lock:
+        if msg:
+            print(msg)
+    
+    with log_lock, LOG_FILE.open('a') as f:
+        if both and msg: 
+            f.write(msg + "\n")
+        if extra:
+            f.write("\n".join(extra))
+        f.flush()
+
+
+def compile_all(objects: list[CompileUnit], parallel: bool = False) -> bool:
+    def compile_shim(obj: CompileUnit):
+        obj.obj_path.parent.mkdir(parents=True, exist_ok=True)
+        msg = f"{obj.compiler.name} {obj.src_path.as_posix()}"
+        if obj.sdata_size is not None:
+            msg += f" using -sdatathreshold={obj.sdata_size}"
+        ok = obj.compile()
+        if not ok:
+            log_me(f"FAILED TO BUILD: {obj.src_path.as_posix()}", both = True)
+            raise RuntimeError(obj.src_path.as_posix())
+
+        if obj.rebuilt:
+            log_me("[COMPILED] " + msg, both = True)
+        else:
+            log_me("[UNCHANGED] " + msg, both = True)
+
+    try:
+        if parallel:
+            with ThreadPoolExecutor(max_workers=8) as pool:
+                list(pool.map(compile_shim, objects))
+        else:
+            for obj in objects:
+                compile_shim(obj)
+        return False
+    except RuntimeError:
+        return True
+
+   
+def resolve_library_paths(config: dict) -> None:
+    # Canonicalize include/library paths
+    libs = []
+    pref = config["include_prefix"]
+    comp = config["include_comp"]
+    for p in config["libraries"]:
+        libs.append(p.format(prefix=pref, compiler=comp))
+    config["libraries"] = libs
+
+    incls = []
+    for p in config["common_includes"]:
+        incls.append(p.format(prefix=pref, compiler=comp))
+    config["common_includes"] = incls
+
+
+def main(args):
+    """Main entry point for the build process."""
+
+    if args.verbose:
+        global VERBOSE_PRINT
+        VERBOSE_PRINT = True
+
+    if args.setup:
+        do_objdiff_setup()
+        
+        # remove unused folders
+        shutil.rmtree("build/expected/data/", ignore_errors=True)
+        shutil.rmtree("config/assets/", ignore_errors=True)
+    
+        # Move function asm so people can make scratches
+        asm_folder = Path("build/expected/asm")
+        if asm_folder.exists():
+            shutil.rmtree("config/asm", ignore_errors=True)
+            shutil.move(asm_folder, "config/asm")
+        return
+
+    raw_cfg: dict = load_json(args.env_file)
+
+    if args.sdk303:
+        print("[CONFIG] Using EE 3.0.3 includes and libraries.")
+
+        overrides = raw_cfg.get("sdk303_overrides", {})
+        if not overrides:
+            print("WARNING: --sdk303 was passed but no 'sdk303_overrides' key found in config.")
+        else:
+            raw_cfg.update(overrides)
+            raw_cfg["defines"].append("SDK_303")
+
+        # Clean the embedded library objects from the list
+        # so the .a files will be used
+        sources = []
+        for s in raw_cfg["source_files"]:
+            if not s.startswith("build/expected/sce"):
+                sources.append(s)
+        raw_cfg["source_files"] = sources
+    else:
+        print("[CONFIG] Using EE 2.0.0 includes and embedded libraries.")
+        # Use the libraries the game shipped with
+        # just need to clean the linker library list
+        raw_cfg["libs"] = []
+
+    resolve_library_paths(raw_cfg)
+
+    compilers = cfg_get_compilers(raw_cfg)
+    current_objects = cfg_get_current_objects(raw_cfg, compilers)
+    expected_objects = cfg_get_expected_objects(raw_cfg, compilers)
+    all_objects = current_objects | expected_objects
+
+    # Perform wibo+assembler checks for linux
+    if IS_LINUX:
+        compilers["gnu-as"].program = resolve_linux_tools()
+    
+    build_failed = False
+    skip_linking = False
+
+    if args.progress:
+        compile_list = all_objects.values()
+    else:
+        compile_list = current_objects.values()
+
+    if args.single_file:
+        obj = all_objects.get(args.single_file, None)
+        if obj is not None:
+            skip_linking = True
+            build_failed = not obj.compile()
+        else:
+            print(f"Don't know how make file {args.single_file.as_posix()}")
+            sys.exit(-2)
+    else:
+        build_failed = compile_all(compile_list)
+
+    if build_failed:
+        print("Compilation fail. See report.txt for more info.")
+        sys.exit(-1)
+        return
+
+    # All built okay so run obdiff to get report.json
+    if args.progress:
+        if IS_LINUX:
+            report_cmd = ["compiler/linux/objdiff-cli"]
+        else:
+            report_cmd = ["compiler/windows/objdiff-cli.exe"]
+        report_cmd.append("report")
+        report_cmd.append("generate")
+        report_cmd.append("-o")
+        report_cmd.append("report.json")
+        report_cmd.append("-f")
+        report_cmd.append("json-pretty")
+        run_command(report_cmd)
+        print("Progress Report saved to report.json")
+        return
+    
+    if skip_linking:
+        return
+    
+    linker = raw_cfg["linker"]
+    linker_script = raw_cfg["linker_script"]
+    linker_flags = raw_cfg["linker_flags"]
+    libraries = raw_cfg["libs"]
+    library_dirs = raw_cfg["libraries"]
+
+    objects = [o.as_posix() for o in current_objects.keys()]
+
+    print(f"[LINK] linking {ELF_FILE.name}...")
+
+    success = link_objects(linker, objects, linker_script, linker_flags, libraries, library_dirs)
+
+    if success:
+        print(f"Build steps have been successfully completed: {ELF_FILE.name} was generated.")
+    else:
+        print("Linkage fail. See report.txt for more info.")
+
+    return
+
+if __name__ == "__main__":
+    # Argument parser setup
+    parser = argparse.ArgumentParser(description="Build automation script.")
+
+    parser.add_argument('--env-file', type=Path, default='compile_config.json', help="Path to the JSON file containing environment variables.")
+    parser.add_argument('--single-file', type=Path, help="For objdiff use.")
+    parser.add_argument('--setup', action="store_true", help="Generates original asm and objdiff project files.")
+    parser.add_argument('--progress', action="store_true", help="Make all the objects needed for progress reporting.")
+    parser.add_argument('--verbose', action="store_true", help="More info for each command.")
+    parser.add_argument('--sdk303', action="store_true", help="Use EE 3.0.3 includes instead of the default ones.")
+
+    args = parser.parse_args()
+
+    main(args)

@@ -566,7 +566,12 @@ static int shell_gun(void)
 /* a pistol that ran empty is loaded with the slide forward: after the magazine goes in, the slide has to be pulled (the left hand takes the slide and pulls it back to the right hand) before the trigger works */
 static int need_rack, rack_wpn, rack_arm, rack_grip_was;
 static float rack_pull_now;   /* the slide pull, 0..1 */
+int pc_slide_zone(const float P2[2][3], float along[2]);   /* mag_glue.c */
+#define SLIDE_GRAB_CM 12.0f   /* the slide is taken by the left grip within this many cm of the learned point (it was 7) */
 static uint64_t slide_rel_ms;   /* when the slide was let go forward */
+/* The pistol's slide: how far it is pulled back before it arms (mm; the owner pulled it 10 cm). It is taken anywhere on the slide's own piece (mag_glue.c pc_slide_zone). */
+int g_vr_sl[3] = { 124, 69, 121 };   /* (the old single point it was taken at: used only when the slide's box is not known) */
+int g_vr_sl_pull = 101;
 static float rack_d0;
 static int rack_gun(void)
 {
@@ -635,16 +640,16 @@ static int mag_held;   /* (the left hand holds ammo taken from the pouch: define
    (settings: Adjust ammo guide): g_vr_gd[item] = its middle in the weapon object's frame (mm - the weapon as the game draws it in the hand, so it follows the gun in either stance) and its turn left to
    right (yaw, degrees). The ammo is in when its middle comes within 7 cm of the guide's. The shapes: the bow gun's arrow (an arrow), the launcher's round (a circle), the magazines and the shotgun's shell
    (a rectangle). */
-int g_vr_gd[40][4] = {   /* by the gun's item id (up to 39): x, y, z (mm), yaw (degrees); as set on the headset: the shotgun (4), the pistol (5), the grenade launcher (6), the bow gun (7) */
-    [4] = { 219, 17, -90, 0 }, [5] = { 77, 2, 55, -42 }, [6] = { 168, 1, -257, 0 }, [7] = { 263, 1, -87, 0 } };
+int g_vr_gd[40][4] = {   /* by the gun's item id (up to 39): x, y, z (mm), yaw (degrees); as set on the headset: item 3, the shotgun (4), the pistol (5), the grenade launcher (6), the bow gun (7), the other pistol (9) */
+    [3] = { 193, 1, -111, 41 }, [4] = { 219, 17, -90, 0 }, [5] = { 76, -3, 32, -86 }, [6] = { 168, 1, -257, 0 }, [7] = { 263, 1, -87, 0 }, [9] = { 60, 0, 10, 0 } };
 static void rc_confirm(void);   /* (the recoil learning, below) */
 int pc_vr_weapon_frame(float m[16]);   /* mag_glue.c: the weapon object's matrix (the hand node, the object's own offset and turn) */
 void config_save(void);
 static float dist3(const float* a, const float* b);
 static int grip_latch;   /* (defined below) */
 static int arr_adj, arr_hold, arr_a_was;
-static float arr_goff[3], arr_yawf;
-void vr_arr_adjust(void) { arr_adj = 1; arr_hold = 0; arr_a_was = 1; arr_yawf = 0.0f; }
+static float arr_goff[3], arr_yawf, arr_pitchf;
+void vr_arr_adjust(void) { arr_adj = 1; arr_hold = 0; arr_a_was = 1; arr_yawf = 0.0f; arr_pitchf = 0.0f; }
 static unsigned* gun_slot_any(void);   /* (below: the gun in hand, endless ammo or not) */
 static int gd_item(void) { unsigned* g = gun_slot_any(); int it = g ? (int)((*g >> 16) & 0xFF) : 0; return it > 0 && it < 40 ? it : 0; }
 static int gd_set(int it) { return it && (g_vr_gd[it][0] || g_vr_gd[it][1] || g_vr_gd[it][2]); }
@@ -670,6 +675,17 @@ static int gd_world(const float l[3], float w[3])
 }
 static int ghost_on, ghost_val, ghost_shape;   /* the guide this frame (the renderer draws it): its two ends (world; one point for a circle), the colour and alpha (bits 24..), the shape, its half width */
 static float ghost_a[3], ghost_b[3], ghost_hw;
+int g_vr_gp[40] = { [5] = 0, [9] = 0 };   /* the pistols' magazine guide: its tip forward or back (degrees); as set on the headset */
+static int mag_guide_on;
+static float mag_guide_c[3], mag_guide_a, mag_guide_yaw, mag_guide_pitch;
+/* the pistols' guide (items 5 and 9): the magazine's own model as a blinking light (mag_glue.c pc_vr_mag_guide); 0 when none this frame */
+int vr_mag_guide(float c[3], float* a, float* yaw, float* pitch)
+{
+    if (!mag_guide_on) return 0;
+    for (int k = 0; k < 3; k++) c[k] = mag_guide_c[k];
+    *a = mag_guide_a; *yaw = mag_guide_yaw; *pitch = mag_guide_pitch;
+    return 1;
+}
 static void guide_draw(int steady)
 {
     int it = gd_item();
@@ -677,6 +693,13 @@ static void guide_draw(int steady)
     float c[3], d[3], l[3], a;
     if (!it || (!gd_set(it) && !arr_adj)) return;   /* (adjusting: shown even when nothing is set yet, at the weapon's origin) */
     for (int k = 0; k < 3; k++) c[k] = g_vr_gd[it][k] / 100.0f;
+    if (it == 5 || it == 9) {   /* the pistols: the magazine's own shape, a light, blinking as the slide's (also while adjusting) */
+        for (int k = 0; k < 3; k++) mag_guide_c[k] = c[k];
+        mag_guide_a = 0.375f + 0.225f * sinf(SDL_GetTicks() * 0.006283f);   /* breathing: 15% to 60% (see-through), a full breath a second, never off */
+        mag_guide_yaw = (float)g_vr_gd[it][3]; mag_guide_pitch = (float)g_vr_gp[it];
+        mag_guide_on = 1;
+        return;
+    }
     gd_dir(it, d);
     a = steady ? 0.55f : 0.30f + 0.20f * sinf(SDL_GetTicks() * 0.0126f);   /* about two blinks a second */
     ghost_val = (int)((unsigned)(a * 127.0f) << 24 | 0xFF8C1Au);
@@ -712,9 +735,20 @@ static void arrow_adjust(void)
     if (!it) { arr_adj = 0; vr_log("vr: ammo guide: no gun in hand\n"); return; }
     if (!plp || !plp->mlwP || plp->mlwP->obj_num <= 13 || !xr_input(&ai) || !pc_vr_weapon_frame(m)) return;
     if (!arr_yawf && g_vr_gd[it][3]) arr_yawf = (float)g_vr_gd[it][3];
+    if (!arr_pitchf && it < 40 && g_vr_gp[it]) arr_pitchf = (float)g_vr_gp[it];
     guide_draw(1);
-    if ((ai.buttons & VRB_A) && !arr_a_was) { arr_adj = 0; arr_hold = 0; config_save(); vr_log("vr: ammo guide of item %d adjusted: %d %d %d mm, yaw %d\n", it, g_vr_gd[it][0], g_vr_gd[it][1], g_vr_gd[it][2], g_vr_gd[it][3]); return; }
+    if ((ai.buttons & VRB_A) && !arr_a_was) { arr_adj = 0; arr_hold = 0; config_save(); vr_log("vr: ammo guide of item %d adjusted: %d %d %d mm, yaw %d, pitch %d\n", it, g_vr_gd[it][0], g_vr_gd[it][1], g_vr_gd[it][2], g_vr_gd[it][3], it < 40 ? g_vr_gp[it] : 0); return; }
     arr_a_was = (ai.buttons & VRB_A) != 0;
+    if (it == 5 || it == 9) {   /* the pistols' magazine light: the right stick turns it left-right (about its own axis) or tips it up-down, one way at a time; a diagonal turns nothing */
+        float ax = fabsf(ai.rx), ay = fabsf(ai.ry);
+        if (ax > 0.6f && ay < 0.35f) arr_yawf += ai.rx * 180.0f * dt;   /* no end: it goes round and round (stored as the same angle between -180 and 180) */
+        else if (ay > 0.6f && ax < 0.35f) arr_pitchf += ai.ry * 180.0f * dt;
+        while (arr_yawf > 180.0f) arr_yawf -= 360.0f;
+        while (arr_yawf < -180.0f) arr_yawf += 360.0f;
+        while (arr_pitchf > 180.0f) arr_pitchf -= 360.0f;
+        while (arr_pitchf < -180.0f) arr_pitchf += 360.0f;
+        g_vr_gp[it] = (int)lroundf(arr_pitchf);
+    } else
     if (fabsf(ai.rx) > 0.15f) arr_yawf += ai.rx * 90.0f * dt;
     if (arr_yawf < -180.0f) arr_yawf = -180.0f;
     if (arr_yawf > 180.0f) arr_yawf = 180.0f;
@@ -2099,17 +2133,7 @@ int vr_part_damage(BH_PWORK* pp, int kno, int d0, int d1)
     if (out < 1) out = 1;
     if (vr_knife_cut) vr_knife_hits += out;
     { static int nlog; if (nlog++ < 300 || g_vr_debug_log) vr_log("vr: hit zombie %d %s x%.2f (%d -> %d), joint %d\n", (int)(pp - ene), names[part], mult, add, out, kno); }
-    if (part == 1 && pp->id == 1 && pp->exp0 && kno >= 0 && kno < 64) {
-        /* vr215: the common zombie (en01.c) - a head shot that kills it is a critical: its head bursts, as the game's own
-           (bhEne01_CheckExpHead: the head's damage count, exp0 + 0x78, above 0; -1 = no head left) */
-        int sum = 0, *hc = (int*)((char*)pp->exp0 + 0x78);
-        for (int i = 0; i < 64; i++) sum += i == kno ? d0 + out : pp->dam[i];
-        if (pp->hp - sum <= 0 && *hc != -1) {
-            if (*hc <= 0) *hc = 1;
-            { extern unsigned char vr_crit_mark[64]; int ix = (int)(pp - ene); if (ix >= 0 && ix < 64) vr_crit_mark[ix] = 1; }   /* vr216 */
-            vr_log("vr: critical - zombie %d killed by a head shot (hp %d, damage %d): its head bursts\n", (int)(pp - ene), pp->hp, sum);
-        }
-    }
+    if (!vr_knife_cut) { extern void tps_react_hit(BH_PWORK* pp, int jnt); tps_react_hit(pp, kno); }   /* the part flinches where the shot hit (tps_glue.c) */
     return d0 + out;
 }
 
@@ -3010,6 +3034,7 @@ void vr_hand(BH_PWORK* p)
     laser_ok[0] = laser_ok[1] = 0;
     box_mode = 0;
     ghost_on = 0;
+    mag_guide_on = 0;
     barrel_ok[0] = barrel_ok[1] = 0;
     if (!vr_on() || !p || !p->mlwP) return;
     {   /* vr86: the last frame was not in the head (the cinema screen: a cut, a door): the hands stay hers, as the game poses them */
@@ -3269,32 +3294,6 @@ void vr_hand(BH_PWORK* p)
             }
             if (!two_on) two_left_logged = 0;
         }
-        {   /* LEARN (env.txt RECVX_SLIDE_LEARN=1, a test aid): the owner puts the left hand on the pistol's slide, grips and pulls it back - where the hand was (ahead of the right hand, up, to the gun's left, in cm) at the grip and at the let go, and how far it was pulled, in the log */
-            static int learn = -1, lheld;
-            static float s0[3], mn, lastp[3];
-            if (learn < 0) learn = getenv("RECVX_SLIDE_LEARN") != NULL;
-            if (learn && side == 1 && barrel_ok[0] && rack_gun()) {
-                const float* h9r = p->mlwP->owP[9].mtx;
-                float f[3], len, lf[3], ll, sc2 = g_vr_scale / 10.0f, c[3];
-                VrInput ri;
-                int grip = xr_input(&ri) && ri.lgrip > 0.5f;
-                for (int k = 0; k < 3; k++) f[k] = muzzle_w[0][k] - h9r[12 + k];
-                len = sqrtf(f[0] * f[0] + f[1] * f[1] + f[2] * f[2]);
-                if (len > 1e-6f) {
-                    float d[3] = { P[0] - h9r[12], P[1] - h9r[13], P[2] - h9r[14] };
-                    for (int k = 0; k < 3; k++) f[k] /= len;
-                    lf[0] = f[2]; lf[1] = 0.0f; lf[2] = -f[0]; ll = sqrtf(lf[0] * lf[0] + lf[2] * lf[2]);
-                    if (ll > 1e-6f) { lf[0] /= ll; lf[2] /= ll; }
-                    c[0] = (d[0] * f[0] + d[1] * f[1] + d[2] * f[2]) / sc2 * 100.0f;     /* ahead */
-                    c[1] = d[1] / sc2 * 100.0f;                                           /* up (the game's y) */
-                    c[2] = (d[0] * lf[0] + d[2] * lf[2]) / sc2 * 100.0f;                  /* to the gun's left (a guess) */
-                    if (grip && !lheld) { lheld = 1; memcpy(s0, c, sizeof c); mn = c[0]; vr_log("slide-learn: GRIP at ahead %.1f up %.1f left %.1f cm (barrel %.2f %.2f %.2f)\n", c[0], c[1], c[2], f[0], f[1], f[2]); }
-                    if (grip) { if (c[0] < mn) mn = c[0]; memcpy(lastp, c, sizeof c); }
-                    if (!grip && lheld) { lheld = 0; vr_log("slide-learn: LET GO at ahead %.1f up %.1f left %.1f cm; pulled back %.1f cm (the lowest ahead %.1f)\n", lastp[0], lastp[1], lastp[2], s0[0] - mn, mn); }
-                }
-            }
-            if (learn) goto skip_snap;
-        }
         if (side == 1 && rack_gun() && !mag_held && barrel_ok[0] && (need_rack || (gun_slot() && (*gun_slot() & 0xFFFF) > 0))) {   /* the slide, as the owner pulled it (the learn log): the left grip taken near 13 cm ahead of the hand node, 6.5 up, 13.5 to the left, then pulled back; the hand stays free, a buzz says the grip is on the slide */
             const float* h9r = p->mlwP->owP[9].mtx;
             float f[3], len, lf[3], ll, sc2 = g_vr_scale / 10.0f;
@@ -3302,7 +3301,8 @@ void vr_hand(BH_PWORK* p)
             for (int k = 0; k < 3; k++) f[k] = muzzle_w[0][k] - h9r[12 + k];
             len = sqrtf(f[0] * f[0] + f[1] * f[1] + f[2] * f[2]);
             if (len > 1e-6f) {
-                float d[3] = { P[0] - h9r[12], P[1] - h9r[13], P[2] - h9r[14] }, c[3], dd, pull;
+                float d[3] = { P[0] - h9r[12], P[1] - h9r[13], P[2] - h9r[14] }, c[3], dd, pull, zl[2] = { 0, 0 }, P2[2][3];
+                int zin;
                 int grip = xr_input(&ri) && ri.lgrip > 0.5f;
                 for (int k = 0; k < 3; k++) f[k] /= len;
                 lf[0] = f[2]; lf[1] = 0.0f; lf[2] = -f[0]; ll = sqrtf(lf[0] * lf[0] + lf[2] * lf[2]);
@@ -3310,8 +3310,15 @@ void vr_hand(BH_PWORK* p)
                 c[0] = (d[0] * f[0] + d[1] * f[1] + d[2] * f[2]) / sc2 * 100.0f;
                 c[1] = d[1] / sc2 * 100.0f;
                 c[2] = (d[0] * lf[0] + d[2] * lf[2]) / sc2 * 100.0f;
-                dd = sqrtf((c[0] - 13.0f) * (c[0] - 13.0f) + (c[1] - 6.5f) * (c[1] - 6.5f) + (c[2] - 13.5f) * (c[2] - 13.5f));
-                if (grip && !rack_arm && !rack_grip_was && dd < 7.0f) {   /* taken on the slide: a buzz */
+                memcpy(P2[0], P, sizeof P2[0]);
+                {   /* where the hand holds things: the left hand node's frame at the place the magazine is held in it */
+                    const float* hn = p->mlwP->owP[13].mtx;
+                    static const float hold[3] = { -0.85f, -0.4f, 0.0f };
+                    for (int k = 0; k < 3; k++) P2[1][k] = hn[k] * hold[0] + hn[4 + k] * hold[1] + hn[8 + k] * hold[2] + hn[12 + k];
+                }
+                zin = pc_slide_zone((const float(*)[3])P2, zl);   /* only to TAKE it: once taken it is held until the grip is let go, and pulled as it always was (the controller along the barrel) */
+                dd = sqrtf((c[0] - g_vr_sl[0] / 10.0f) * (c[0] - g_vr_sl[0] / 10.0f) + (c[1] - g_vr_sl[1] / 10.0f) * (c[1] - g_vr_sl[1] / 10.0f) + (c[2] - g_vr_sl[2] / 10.0f) * (c[2] - g_vr_sl[2] / 10.0f));
+                if (grip && !rack_arm && !rack_grip_was && (zin >= 0 ? zin != 0 : dd < SLIDE_GRAB_CM)) {   /* taken on the slide: a buzz */
                     rack_arm = 1; rack_d0 = c[0];
                     CallPlayerWeaponSeEx((NJS_POINT3*)&h9r[12], 264, 0);
                     if (g_vr_haptics) xr_haptic(1, 0.6f, 70);
@@ -3320,7 +3327,7 @@ void vr_hand(BH_PWORK* p)
                 if (!grip) rack_arm = 0;
                 if (!rack_arm) rack_pull_now = 0;
                 if (rack_arm) {
-                    pull = (rack_d0 - c[0]) / 10.0f;   /* 10 cm back (the owner pulled 9..18) */
+                    pull = (rack_d0 - c[0]) / (g_vr_sl_pull / 10.0f);   /* back along the barrel (cm), of the 10 cm the owner pulled */
                     pull = pull < 0 ? 0 : pull > 1 ? 1 : pull;
                     rack_pull_now = pull;
                     if (pull > 0 && g_vr_haptics) xr_haptic(1, 0.2f + 0.7f * pull, 40);   /* the drag: stronger the further it goes */
@@ -3536,6 +3543,7 @@ void vr_after_draw(void)
 
 static void vr_log(const char* fmt, ...)
 {
+#ifdef RECVX_LOGS
     extern void host_log(const char* fmt, ...);
     char b[512];
     va_list ap;
@@ -3543,6 +3551,9 @@ static void vr_log(const char* fmt, ...)
     vsnprintf(b, sizeof(b), fmt, ap);
     va_end(ap);
     host_log("%s", b);
+#else
+    (void)fmt;   /* a released build writes no log */
+#endif
 }
 
 /* VR diagnosis (ini vr_debug_log = 1), called once per game frame (game.c): the state that decides
@@ -3728,6 +3739,41 @@ void vr_log_str(const char* s) { vr_log("%s", s); }
 
 /* The pistol's slide (the weapon object's node 2, its x runs 0 .. -0.5 in a shot): held open at the back when the gun is empty (nothing in the magazine, none chambered) and until it is pulled, then it
    snaps forward in 120 ms. objitm.c bhDrawObject, before the weapon is put. Returns 1 and the x to put, 0 for the game's own. */
+/* The slide's glow: while the slide has to be pulled (and while its pull is learned) a copy of the slide, a little larger, glows orange and
+   translucent over it - the same piece, the gun itself untouched. objitm.c bhDrawObject asks after the weapon is put: alpha 0..1 or 0 none. */
+int vr_slide_glow(float* a)
+{
+    if (!vr_on() || !rack_gun()) return 0;
+    if (need_rack) { *a = 0.55f * (0.5f + 0.5f * sinf(SDL_GetTicks() * 0.0126f)); return 1; }   /* the ammo guide's rate (about two a second), but out between the blinks: shines and vanishes */
+    return 0;
+}
+extern unsigned int _nj_control_3d_flag_;
+void bhPutModel(BH_PWORK* ewP);   /* MdlPut.c */
+void vr_slide_glow_draw(O_WRK* op, float a)
+{
+    ML_WORK* m = op->mlwP;
+    unsigned int keep[24], c3df = _nj_control_3d_flag_;
+    float s[3];
+    NJS_ARGB col;
+    int n = (int)m->obj_num, k;
+    if (!m || n < 3 || n > 24 || !m->objP) return;
+    { float k = a / 0.55f * 0.6f;   /* a: 0 .. 0.55; the colour breathes (up to 0.6), the alpha stays */
+      col.a = 0.75f; col.r = k; col.g = k * 140.0f / 255.0f; col.b = k * 26.0f / 255.0f; }   /* the ammo guide's orange, 0xFF8C1A */
+    for (k = 0; k < n; k++) { keep[k] = m->objP[k].evalflags; if (k != 2) m->objP[k].evalflags |= 0x8; }   /* only node 2, the slide, is drawn (NJD_EVAL_HIDE) */
+    for (k = 0; k < 3; k++) { s[k] = m->objP[2].scl[k]; m->objP[2].scl[k] = s[k];   /* the slide's own size (the owner) */ }
+    { static uint64_t lg; uint64_t now = SDL_GetTicks(); if (now - lg > 1000) { lg = now; vr_log("vr: slide glow drawn: alpha %.2f, %d nodes\n", a, n); } }
+    njSetConstantMaterial(&col);
+    njControl3D(c3df | 0x10);   /* constant material */
+    njColorBlendingMode(0, 8);   /* source alpha, added to what is there */
+    njColorBlendingMode(1, 10);
+    bhPutModel((BH_PWORK*)op);
+    njControl3D(c3df);
+    njColorBlendingMode(0, 8);
+    njColorBlendingMode(1, 6);   /* the game's usual */
+    for (k = 0; k < 3; k++) m->objP[2].scl[k] = s[k];
+    for (k = 0; k < n; k++) m->objP[k].evalflags = keep[k];
+}
+
 int vr_slide_pos(float* x)
 {
     unsigned* g;

@@ -1,0 +1,1309 @@
+#include "../../../ps2/veronica/prog/ps2_SystemSaveScreen.h"
+#include "../../../ps2/veronica/prog/ps2_SaveScreen.h"
+#include "../../../ps2/veronica/prog/adv.h"
+#include "../../../ps2/veronica/prog/message.h"
+#include "../../../ps2/veronica/prog/padman.h"
+#include "../../../ps2/veronica/prog/ps2_McSaveFile.h"
+#include "../../../ps2/veronica/prog/ps2_MemoryCard..h"
+#include "../../../ps2/veronica/prog/sdfunc.h"
+#include "../../../ps2/veronica/prog/main.h"
+
+// 100% matching!
+SYSSAVE_SCREEN* CreateSysSaveScreen(SYSSAVE_SCREEN* pSysSave, void* vpWorkPtrSys, unsigned short usSaveMesMode, unsigned short usSaveWriteMode)
+{
+    pSysSave->ulState = 0;
+    pSysSave->ulSubState = 0;
+    
+    pSysSave->ulMemCheckCountTimer = 0;
+    
+    pSysSave->ulFileSize = 0;
+    
+    pSysSave->lCardState = 0;
+    
+    pSysSave->usExitFlag = 0;
+    
+    pSysSave->usMesMode = usSaveMesMode;
+    pSysSave->usSaveMode = usSaveWriteMode;
+    
+    pSysSave->usLoopCount = 0;
+    
+    pSysSave->sSelectCur = 0;
+    
+    pSysSave->cMesFlag = 0;
+    
+    pSysSave->pConfigFile = mcCreateConfigInit(&ConfigFile);
+    pSysSave->pSaveFile = mcCreateSaveFileInit(&SaveFile);
+    
+    pSysSave->pMcState = CreateMemoryCard(&McState);
+    
+    pSysSave->pIconInfo = mcCreateIconInit(&IconInfo, cpNameList, 1);
+    
+    pSysSave->pSelectFileInfo = mcSelectFileInfoInit(SelectFileInfo);
+    pSysSave->pSelectFileWindow = mcCreateFileSelectWindow(&SelectFileWindow, pSysSave->pSelectFileInfo, 15);
+    
+    pSysSave->vpReadBuffer = vpWorkPtrSys;
+    
+    CheckMemoryCardChangeConnectTypeAll(pSysSave->pMcState);
+    
+    return pSysSave;
+}
+
+// 99.56% matching
+void DispSysSaveMessageSelect(SYSSAVE_SCREEN* pSysSave)
+{
+    bhFontScaleSet(0.75f, 0.75f, 0.75f);
+
+    switch (pSysSave->cMesFlag)
+    {
+    case 0:
+        AutoSaveLoadEasyDispMessage(-1.0f, 176.0f, SaveLoadMessage, 0);
+        break;
+    case 1:
+        AutoSaveLoadEasyDispMessage(-1.0f, 92.0f, SaveLoadMessage, 30);
+        break;
+    case 2:
+        AutoSaveLoadEasyDispMessage(-1.0f, 84.0f, SaveLoadMessage, 31);
+        break;
+    case 3:
+        AutoSaveLoadEasyDispMessage(-1.0f, 162.0f, SaveLoadMessage, 32);
+        
+        DispUpDownCursol(270.0f, 275.0f, pSysSave->sSelectCur + 2);
+        break;
+    case 4:
+        AutoSaveLoadEasyDispMessage(-1.0f, 176.0f, SaveLoadMessage, 33);
+        break;
+    case 5:
+        AutoSaveLoadEasyDispMessage(-1.0f, 190.0f, SaveLoadMessage, 34);
+        break;
+    case 6:
+        AutoSaveLoadEasyDispMessage(-1.0f, 176.0f, SaveLoadMessage, 35);
+        break;
+    case 7:
+        AutoSaveLoadEasyDispMessage(-1.0f, 162.0f, SaveLoadMessage, 36);
+        
+        DispUpDownCursol(270.0f, 320.0f, pSysSave->sSelectCur + 2);
+        break;
+    case 8:
+        AutoSaveLoadEasyDispMessage(-1.0f, 176.0f, SaveLoadMessage, 37);
+        break;
+    case 9:
+        AutoSaveLoadEasyDispMessage(-1.0f, 204.0f, SaveLoadMessage, 38);
+        break;
+    case 10:
+        AutoSaveLoadEasyDispMessage(-1.0f, 176.0f, SaveLoadMessage, 39);
+        break;
+    case 11:
+        AutoSaveLoadEasyDispMessage(-1.0f, 176.0f, SaveLoadMessage, 40);
+        break;
+    case 12:
+        AutoSaveLoadEasyDispMessage(-1.0f, 204.0f, SaveLoadMessage, 41);
+        break;
+    case 13:
+        AutoSaveLoadEasyDispMessage(-1.0f, 176.0f, SaveLoadMessage, 42);
+        break;
+    case 14:
+        AutoSaveLoadEasyDispMessage(-1.0f, 136.0f, SaveLoadMessage, 43);
+        break;
+    case 15:
+        AutoSaveLoadEasyDispMessage(-1.0f, 176.0f, SaveLoadMessage, 44);
+        
+        DispUpDownCursol(270.0f, 221.0f, pSysSave->sSelectCur + 2);
+        break;
+    }
+
+    bhFontScaleSet(1.0f, 1.0f, 1.0f);
+}
+
+// 100% matching!
+int ExecuteSysSaveScreen(SYSSAVE_SCREEN* pSysSave)
+{
+#ifdef TARGET_PC   /* native saves: the system file written at once, no memory card screens (pc/glue/save_glue.c) */
+    if (pc_syssave_native(pSysSave) != 0)
+    {
+        return pSysSave->usExitFlag;
+    }
+    
+#endif
+    pSysSave->lCardState = ExecuteMemoryCard(pSysSave->pMcState);
+    
+    switch (pSysSave->ulState)
+    {                          
+    case 0:
+        ExecuteStateSysSaveAwarenessCard(pSysSave);
+        break;
+    case 1:
+        ExecuteStateSysSaveErrUnPS2MemCard(pSysSave);
+        break;
+    case 2:
+        ExecuteStateSysSaveErrLostCard(pSysSave);
+        break;
+    case 3:
+        ExecuteStateSysSaveErrPort2(pSysSave);
+        break;
+    case 10:
+        ExecuteStateSysSaveDirCheck(pSysSave);
+        break;
+    case 11:
+        ExecuteStateSysSaveFreeCapacity(pSysSave);
+        break;
+    case 12:
+        ExecuteStateSysSaveErrFreeCapacity(pSysSave);
+        break;
+    case 13:
+        ExecuteStateSysSaveCheckWriteSysData(pSysSave);
+        break;
+    case 14:
+        ExecuteStateSysSaveWriteSysData(pSysSave);
+        break;
+    case 15:
+        ExecuteStateSysSaveSuccessWriteSysData(pSysSave);
+        break;
+    case 16:
+        ExecuteStateSysSaveErrWriteSysData(pSysSave);
+        break;
+    case 17:
+        ExecuteStateSysSaveFileBroken(pSysSave);
+        break;
+    case 18:
+        ExecuteStateSysSaveExitWriteSysData(pSysSave);
+        break;
+    case 20:
+        ExecuteStateWriteRankingData(pSysSave);
+        break;
+    case 30:
+        ExecuteStateSysSave(pSysSave);
+        break;
+    case 31:
+        ExecuteStateSysSaveErrCardWrite(pSysSave);
+        break;
+    case 40:
+        ExecuteStateSysSaveFormat(pSysSave);
+        break;
+    case 41:
+        ExecuteStateSysSaveStartFormat(pSysSave);
+        break;
+    case 42:
+        ExecuteStateSysSaveExitFormat(pSysSave);
+        break;
+    case 43:
+        ExecuteStateSysSaveSuccessFormat(pSysSave);
+        break;
+    case 44:
+        ExecuteStateSysSaveErrFormat(pSysSave);
+        break;
+    case 50:
+        ExecuteStateSysSaveTitleExit();
+        break;
+    }
+    
+    DispSysSaveMessageSelect(pSysSave);
+    
+    return pSysSave->usExitFlag;
+}
+
+// 100% matching!
+void SetStateSysSaveAwarenessCard(SYSSAVE_SCREEN* pSysSave)
+{   
+    pSysSave->ulState = 0;
+    
+    SetMemoryCardCurrentPort(pSysSave->pMcState, 0);
+    
+    RecoveryMemoryCardError((MEMORYCARDSTATE*)pSysSave);
+}
+
+// 100% matching!
+void ExecuteStateSysSaveAwarenessCard(SYSSAVE_SCREEN* pSysSave)
+{
+    int lPort0State;
+    int lPort1State;
+    int lResult;
+	
+    switch (pSysSave->lCardState)
+    {
+    case 100:
+    case 101:
+        lPort0State = GetMemoryCardSelectPortState(pSysSave->pMcState, 0);
+        lPort1State = GetMemoryCardSelectPortState(pSysSave->pMcState, 1);
+        
+        if (lPort0State == 2)
+        {
+            lResult = CheckMemoryCardFormatStatus(pSysSave->pMcState);
+            
+            if (lResult == 1)
+            {
+                SetStateSysSaveFormat(pSysSave);
+            }
+            else if (lResult == 2)
+            {
+                SetStateSysSaveDirCheck(pSysSave);
+            }
+        }
+        else 
+        {
+            if (lPort1State == 2)
+            {
+                SetStateSysSaveErrPort2(pSysSave);
+            }
+            else if (((lPort0State != 2) && (lPort0State != 0)) || ((lPort1State != 2) && (lPort1State != 0))) 
+            {
+                SetStateSysSaveErrUnPS2MemCard(pSysSave);
+            }
+            else 
+            {
+                SetStateSysSaveErrLostCard(pSysSave);
+            }
+        }
+        
+        break;
+    case 102:
+        SetStateSysSaveErrUnPS2MemCard(pSysSave);
+        break;
+    case 103:
+        SetStateSysSaveErrLostCard(pSysSave);
+        break;
+    }
+}
+
+// 100% matching!
+void SetStateSysSaveErrUnPS2MemCard(SYSSAVE_SCREEN* pSysSave)
+{
+    pSysSave->ulState = 1;
+    
+    pSysSave->cMesFlag = 1;
+}
+
+// 100% matching!
+void ExecuteStateSysSaveErrUnPS2MemCard(SYSSAVE_SCREEN* pSysSave)
+{
+	int lPort0State;
+    int lPort1State;
+
+    if ((Pad->press & 0x800))
+    {
+        pSysSave->usExitFlag = 1;
+        
+        SetStateSysSaveTitleExit(pSysSave);
+        return;
+    }
+    
+    switch (pSysSave->lCardState)
+    {
+    case 100:
+    case 101:
+        lPort0State = GetMemoryCardSelectPortState(pSysSave->pMcState, 0);
+        lPort1State = GetMemoryCardSelectPortState(pSysSave->pMcState, 1);
+        
+        if (lPort0State == 2)
+        {
+            SetStateSysSaveAwarenessCard(pSysSave);
+        }
+        else if (lPort1State == 2)
+        {
+            SetStateSysSaveErrPort2(pSysSave);
+        }
+        else if ((lPort0State == 0) && (lPort1State == 0))
+        {
+            SetStateSysSaveErrLostCard(pSysSave);
+        }
+        
+        break;
+    case 103:
+        SetStateSysSaveErrLostCard(pSysSave);
+        break;
+    }
+}
+
+// 100% matching!
+void SetStateSysSaveErrLostCard(SYSSAVE_SCREEN* pSysSave)
+{
+    pSysSave->ulState = 2;
+    
+    pSysSave->cMesFlag = 1;
+}
+
+// 100% matching!
+void ExecuteStateSysSaveErrLostCard(SYSSAVE_SCREEN* pSysSave)
+{
+    int lPort0State;
+    int lPort1State;
+
+    if ((Pad->press & 0x800))
+    {
+        pSysSave->usExitFlag = 1;
+        
+        SetStateSysSaveTitleExit(pSysSave);
+        return;
+    }
+    
+    switch (pSysSave->lCardState)
+    {
+    case 100:
+    case 101:
+        lPort0State = GetMemoryCardSelectPortState(pSysSave->pMcState, 0);
+        lPort1State = GetMemoryCardSelectPortState(pSysSave->pMcState, 1);
+        
+        if (lPort0State == 2)
+        {
+            SetStateSysSaveAwarenessCard(pSysSave);
+        }
+        else if (lPort1State == 2)
+        {
+            SetStateSysSaveErrPort2(pSysSave);
+        }
+        else if (((lPort0State != 2) && (lPort0State != 0)) || ((lPort1State != 2) && (lPort1State != 0))) 
+        {
+            SetStateSysSaveErrUnPS2MemCard(pSysSave);
+        }
+        
+        break;
+    case 102:
+        SetStateSysSaveErrUnPS2MemCard(pSysSave);
+        break;
+    }
+}
+
+// 100% matching!
+void SetStateSysSaveErrPort2(SYSSAVE_SCREEN* pSysSave)
+{
+    pSysSave->ulState = 3;
+    
+    pSysSave->cMesFlag = 1;
+}
+
+// 100% matching!
+void ExecuteStateSysSaveErrPort2(SYSSAVE_SCREEN* pSysSave)
+{
+    if ((Pad->press & 0x800))
+    {
+        pSysSave->usExitFlag = 1;
+        
+        SetStateSysSaveTitleExit(pSysSave);
+    }
+    else if ((pSysSave->lCardState > 100) && (pSysSave->lCardState < 104))
+    {
+        SetStateSysSaveAwarenessCard(pSysSave);
+    }
+}
+
+// 100% matching!
+void SetStateSysSaveDirCheck(SYSSAVE_SCREEN* pSysSave)
+{
+    pSysSave->ulState = 10;
+    pSysSave->ulSubState = 0;
+    
+    SetMemoryCardCurrentPort(pSysSave->pMcState, 0);
+    SetCheckMcFlag(pSysSave->pMcState, 1);
+}
+
+// 100% matching!
+void ExecuteStateSysSaveDirCheck(SYSSAVE_SCREEN* pSysSave)
+{
+    int lResult;
+
+    switch (pSysSave->ulSubState)
+    {
+    case 0:
+        lResult = CheckMemoryCardExistSubDirectory(pSysSave->pMcState);
+        
+        if (lResult == 1)
+        {
+            pSysSave->ulSubState = 1;
+        }
+        else if (lResult < 0)
+        {
+            SetCheckMcFlag(pSysSave->pMcState, 0);
+            
+            RecoveryMemoryCardError(pSysSave->pMcState);
+            
+            pSysSave->ulSubState = 2;
+        }
+        
+        break;
+    case 1:
+        lResult = CheckMemoryCardExistFileList(pSysSave->pMcState, cpNameList, 18);
+        
+        if (lResult < 0)
+        {
+            pSysSave->ulSubState = 3;
+            
+            SetCheckMcFlag(pSysSave->pMcState, 0);
+            
+            RecoveryMemoryCardError(pSysSave->pMcState);
+        }
+        else if (lResult == 1)
+        {
+            if (pSysSave->usSaveMode == 1)
+            {
+                SetStateWriteRankingData(pSysSave);
+            }
+            else
+            {
+                SetStateSysSave(pSysSave);
+            }
+        }
+        
+        break;
+    case 2:
+        lResult = pSysSave->lCardState;
+        
+        if (lResult == 100)
+        {
+            SetStateSysSaveFreeCapacity(pSysSave);
+        }
+        
+        break;
+    case 3:
+        lResult = pSysSave->lCardState;
+        
+        if (lResult == 100)
+        {
+            SetStateSysSaveFileBroken(pSysSave);
+        }
+        
+        break;
+    }
+    
+    lResult = pSysSave->lCardState;
+    
+    if ((lResult > 100) && (lResult < 104))
+    {
+        SetStateSysSaveAwarenessCard(pSysSave);
+    }
+}
+
+// 100% matching!
+void SetStateSysSaveFreeCapacity(SYSSAVE_SCREEN* pSysSave)
+{
+    pSysSave->ulState = 11;
+}
+
+// 100% matching!
+void ExecuteStateSysSaveFreeCapacity(SYSSAVE_SCREEN* pSysSave)
+{
+    int lResult;
+
+    lResult = GetMemoryCardFreeCapacity(pSysSave->pMcState);
+    
+    if (lResult < mcGetFreeCapacitySize())
+    {
+        if (lResult == -1)
+        {
+            SetStateSysSaveAwarenessCard(pSysSave);
+        }
+        
+        if (lResult != -2)
+        {
+            SetStateSysSaveErrFreeCapacity(pSysSave);
+        }
+    }
+    else
+    {
+        SetStateSysSaveCheckWriteSysData(pSysSave);
+    }
+}
+
+// 100% matching!
+void SetStateSysSaveErrFreeCapacity(SYSSAVE_SCREEN* pSysSave)
+{
+    pSysSave->ulState = 12;
+    
+    pSysSave->cMesFlag = 2;
+}
+
+// 100% matching!
+void ExecuteStateSysSaveErrFreeCapacity(SYSSAVE_SCREEN* pSysSave)
+{
+    if ((Pad->press & 0x800))
+    {
+        pSysSave->usExitFlag = 1;
+        
+        SetStateSysSaveTitleExit(pSysSave);
+    }
+    else if ((pSysSave->lCardState > 100) && (pSysSave->lCardState < 104))
+    {
+        SetStateSysSaveAwarenessCard(pSysSave);
+    }
+}
+
+// 100% matching!
+void SetStateSysSaveCheckWriteSysData(SYSSAVE_SCREEN* pSysSave)
+{
+    pSysSave->ulState = 13;
+    
+    pSysSave->cMesFlag = 7;
+    
+    pSysSave->sSelectCur = 1;
+}
+
+// 100% matching!
+void ExecuteStateSysSaveCheckWriteSysData(SYSSAVE_SCREEN* pSysSave)
+{
+    if ((Pad->press & 0x1000))
+    {
+        pSysSave->sSelectCur--;
+        
+        pSysSave->sSelectCur &= 0x1;
+        
+        CallSystemSe(0, 2);
+    }
+    else if ((Pad->press & 0x4000))
+    {
+        pSysSave->sSelectCur++;
+        
+        pSysSave->sSelectCur &= 0x1;
+        
+        CallSystemSe(0, 2);
+    }
+    else if ((Pad->press & GetOkButton()))
+    {
+        if (pSysSave->sSelectCur == 0)
+        {
+            SetStateSysSaveWriteSysData(pSysSave);
+        }
+        else
+        {
+            SetStateSysSaveExitWriteSysData(pSysSave);
+        }
+        
+        CallSystemSe(0, 3);
+    }
+    else if ((Pad->press & GetCancelButton()))
+    {
+        SetStateSysSaveExitWriteSysData(pSysSave);
+        
+        CallSystemSe(0, 0);
+    }
+    else if ((pSysSave->lCardState > 100) && (pSysSave->lCardState < 104))
+    {
+        SetStateSysSaveAwarenessCard(pSysSave);
+    }
+}
+
+// 100% matching!
+void SetStateSysSaveWriteSysData(SYSSAVE_SCREEN* pSysSave)
+{
+    pSysSave->ulState = 14;
+    pSysSave->ulSubState = 0;
+    
+    pSysSave->usLoopCount = 0;
+    
+    pSysSave->cMesFlag = 8;
+    
+    pSysSave->sSelectCur = 1;
+    
+    SetCheckMcFlag(pSysSave->pMcState, 1);
+}
+
+// 100% matching!
+void ExecuteStateSysSaveWriteSysData(SYSSAVE_SCREEN* pSysSave)
+{
+    int lResult;
+
+    switch (pSysSave->ulSubState)
+    {
+    case 0:
+        lResult = CreateMemoryCardSubDirectory(pSysSave->pMcState);
+        
+        if (lResult == -1)
+        {
+            SetCheckMcFlag(pSysSave->pMcState, 0);
+            
+            RecoveryMemoryCardError(pSysSave->pMcState);
+            
+            pSysSave->ulSubState = 8;
+        }
+        else if ((lResult == 1) && (mcNewCreateIcon(pSysSave->pIconInfo, pSysSave->pMcState, cpNameList, 0) == 1))
+        {
+            pSysSave->ulSubState = 1;
+        }
+        
+        break;
+    case 1:
+        lResult = RecoveryMemoryCardWriteEnd(pSysSave->pMcState);
+        
+        if (lResult == 1)
+        {
+            pSysSave->ulSubState = 2;
+        }
+        else if (lResult == -1)
+        {
+            SetCheckMcFlag(pSysSave->pMcState, 0);
+            
+            RecoveryMemoryCardError(pSysSave->pMcState);
+            
+            pSysSave->ulSubState = 8;
+        }
+        
+        break;
+    case 2:
+        pSysSave->ulFileSize = mcReadIconData(pSysSave->vpReadBuffer, cpNameList, 1);
+        
+        if (pSysSave->ulFileSize == 0)
+        {
+            SetCheckMcFlag(pSysSave->pMcState, 0);
+            
+            RecoveryMemoryCardError(pSysSave->pMcState);
+            
+            pSysSave->ulSubState = 8;
+        }
+        else
+        {
+            lResult = mcWriteIconData(pSysSave->pMcState, pSysSave->vpReadBuffer, pSysSave->ulFileSize, cpNameList, 1);
+            
+            if (lResult == 1)
+            {
+                pSysSave->ulSubState = 3;
+            }
+        }
+        
+        break;
+    case 3:
+        lResult = RecoveryMemoryCardWriteEnd(pSysSave->pMcState);
+        
+        if (lResult == -1)
+        {
+            SetCheckMcFlag(pSysSave->pMcState, 0);
+            
+            RecoveryMemoryCardError(pSysSave->pMcState);
+            
+            pSysSave->ulSubState = 8;
+        }
+        else 
+        {
+            if (lResult == 1)
+            {
+                lResult = mcNewCreateConfigFile(pSysSave->pMcState, pSysSave->pConfigFile);
+
+                if (lResult == 1)
+                {
+                    pSysSave->ulSubState = 4;
+                }
+            }
+        }
+        
+        break;
+    case 4:
+        lResult = RecoveryMemoryCardWriteEnd(pSysSave->pMcState);
+        
+        if (lResult == 1)
+        {
+            pSysSave->ulSubState = 5;
+        }
+        else if (lResult == -1)
+        {
+            SetCheckMcFlag(pSysSave->pMcState, 0);
+            
+            RecoveryMemoryCardError(pSysSave->pMcState);
+            
+            pSysSave->ulSubState = 8;
+        }
+        
+        break;
+    case 5:
+        lResult = mcNewCreateSaveFile(pSysSave->pMcState, pSysSave->pSaveFile, cpNameList, pSysSave->usLoopCount);
+        
+        if (lResult != 0)
+        {
+            pSysSave->ulSubState = 6;
+        }
+        
+        break;
+    case 6:
+        lResult = RecoveryMemoryCardWriteEnd(pSysSave->pMcState);
+        
+        if (lResult == 1)
+        {
+            if (++pSysSave->usLoopCount > 14)
+            {
+                pSysSave->ulSubState = 7;
+                
+                pSysSave->usLoopCount = 0;
+                
+                pSysSave->cMesFlag = 20;
+                
+                SetCheckMcFlag(pSysSave->pMcState, 0);
+            }
+            else
+            {
+                pSysSave->ulSubState = 5;
+            }
+        }
+        else if (lResult == -1)
+        {
+            SetCheckMcFlag(pSysSave->pMcState, 0);
+            
+            RecoveryMemoryCardError(pSysSave->pMcState);
+            
+            pSysSave->ulSubState = 8;
+        }
+        
+        break;
+    case 7:
+        if (pSysSave->lCardState == 100)
+        {
+            SetStateSysSaveSuccessWriteSysData(pSysSave);
+        }
+        
+        break;
+    case 8:
+        if (pSysSave->lCardState == 100)
+        {
+            SetStateSysSaveErrWriteSysData(pSysSave);
+        }
+
+        break;
+    }
+}
+
+// 100% matching!
+void SetStateSysSaveSuccessWriteSysData(SYSSAVE_SCREEN* pSysSave)
+{
+    pSysSave->ulState = 15;
+    
+    pSysSave->cMesFlag = 9;
+    
+    pSysSave->ulMemCheckCountTimer = 15;
+    
+    SetCheckMcFlag(pSysSave->pMcState, 0);
+}
+
+// 100% matching!
+void ExecuteStateSysSaveSuccessWriteSysData(SYSSAVE_SCREEN* pSysSave)
+{   
+    if (--pSysSave->ulMemCheckCountTimer == 0)
+    {
+        SetStateSysSaveDirCheck(pSysSave);
+    }
+    else if ((pSysSave->lCardState > 100) && (pSysSave->lCardState < 104))
+    {
+        SetStateSysSaveAwarenessCard(pSysSave);
+    }
+}
+
+// 100% matching!
+void SetStateSysSaveErrWriteSysData(SYSSAVE_SCREEN* pSysSave)
+{
+    pSysSave->ulState = 16;
+    
+    pSysSave->cMesFlag = 10;
+}
+
+// 100% matching!
+void ExecuteStateSysSaveErrWriteSysData(SYSSAVE_SCREEN* pSysSave)
+{
+    if ((Pad->press & 0x800))
+    {
+        pSysSave->usExitFlag = 1;
+        
+        SetStateSysSaveTitleExit(pSysSave);
+    }
+    else if ((pSysSave->lCardState > 100) && (pSysSave->lCardState < 104))
+    {
+        SetStateSysSaveAwarenessCard(pSysSave);
+    }
+}
+
+// 100% matching!
+void SetStateSysSaveFileBroken(SYSSAVE_SCREEN* pSysSave)
+{
+    pSysSave->ulState = 17;
+    
+    pSysSave->cMesFlag = 14;
+}
+
+// 100% matching!
+void ExecuteStateSysSaveFileBroken(SYSSAVE_SCREEN* pSysSave)
+{
+    if ((Pad->press & 0x800))
+    {
+        pSysSave->usExitFlag = 1;
+        
+        SetStateSysSaveTitleExit(pSysSave);
+    }
+    else if ((pSysSave->lCardState > 100) && (pSysSave->lCardState < 104))
+    {
+        SetStateSysSaveAwarenessCard(pSysSave);
+    }
+}
+
+// 100% matching!
+void SetStateSysSaveExitWriteSysData(SYSSAVE_SCREEN* pSysSave)
+{
+    pSysSave->ulState = 18;
+    
+    pSysSave->cMesFlag = 15;
+    
+    pSysSave->sSelectCur = 1;
+}
+
+// 100% matching!
+void ExecuteStateSysSaveExitWriteSysData(SYSSAVE_SCREEN* pSysSave)
+{
+    if ((Pad->press & 0x1000))
+    {
+        pSysSave->sSelectCur--;
+        
+        pSysSave->sSelectCur &= 0x1;
+        
+        CallSystemSe(0, 2);
+    }
+    else if ((Pad->press & 0x4000))
+    {
+        pSysSave->sSelectCur++;
+        
+        pSysSave->sSelectCur &= 0x1;
+        
+        CallSystemSe(0, 2);
+    }
+    else if ((Pad->press & GetOkButton()))
+    {
+        if (pSysSave->sSelectCur == 1) 
+        {
+            SetStateSysSaveAwarenessCard(pSysSave);
+        } 
+        else 
+        {
+            pSysSave->usExitFlag = 1;
+            
+            SetStateSysSaveTitleExit(pSysSave);
+        }
+        
+        CallSystemSe(0, 3);
+    }
+    else if ((Pad->press & GetCancelButton()))
+    {
+        SetStateSysSaveAwarenessCard(pSysSave);
+        
+        CallSystemSe(0, 0);
+    }
+    else if ((pSysSave->lCardState > 100) && (pSysSave->lCardState < 104))
+    {
+        SetStateSysSaveAwarenessCard(pSysSave);
+    }
+}
+
+// 100% matching!
+void SetStateWriteRankingData(SYSSAVE_SCREEN* pSysSave)
+{
+    pSysSave->ulState = 20;
+    pSysSave->ulSubState = 0;
+    
+    SetCheckMcFlag(pSysSave->pMcState, 0);
+    
+    RecoveryMemoryCardError(pSysSave->pMcState);
+}
+
+// 100% matching!
+void ExecuteStateWriteRankingData(SYSSAVE_SCREEN* pSysSave)
+{
+    CONFIGFILE RankingData;
+    CONFIGFILE* pRankingData;
+    int ulSaveResult;
+
+    switch (pSysSave->ulSubState)
+    {
+    case 0:
+        if (mcReadStartConfigFile(pSysSave->pMcState, pSysSave->pConfigFile) == 1)
+        {
+            pSysSave->ulSubState = 1;
+        }
+        
+        break;
+    case 1:
+        ulSaveResult = mcCheckReadStartConfigFile(pSysSave->pMcState, pSysSave->pConfigFile);
+        
+        if (ulSaveResult > 0)
+        {
+            if (pSysSave->usSaveMode != 0)
+            {
+                pRankingData = mcCreateConfigInit(&RankingData);
+                
+                memcpy(pRankingData, pSysSave->pConfigFile, ulSaveResult);
+                
+                SysSaveHikaku(pRankingData);
+            }
+            else
+            {
+                memcpy(sys, pSysSave->pConfigFile, ulSaveResult);
+            }
+            
+            SetStateSysSave(pSysSave);
+        }
+        else if (ulSaveResult < 0)
+        {
+            SetCheckMcFlag(pSysSave->pMcState, 0);
+            
+            RecoveryMemoryCardError(pSysSave->pMcState);
+            
+            pSysSave->ulSubState = 2;
+        }
+        
+        break;
+    case 2:
+        if (pSysSave->lCardState == 100)
+        {
+            SetStateSysSaveFileBroken(pSysSave);
+        }
+        
+        break;
+    }
+}
+
+// 100% matching!
+void SetStateSysSave(SYSSAVE_SCREEN* pSysSave)
+{
+    pSysSave->ulState = 30;
+    pSysSave->ulSubState = 0;
+    
+    pSysSave->cMesFlag = 11;
+    
+    SetCheckMcFlag(pSysSave->pMcState, 1);
+}
+
+// 100% matching!
+void ExecuteStateSysSave(SYSSAVE_SCREEN* pSysSave)
+{
+    int ulSaveResult;
+
+    switch (pSysSave->ulSubState)
+    {
+    case 0:
+        if (mcWriteStartConfigFile(pSysSave->pMcState, pSysSave->pConfigFile) == 1)
+        {
+            pSysSave->ulSubState = 1;
+        }
+        
+        break;
+    case 1:
+        ulSaveResult = mcCheckWriteStartConfigFile(pSysSave->pMcState);
+        
+        if (ulSaveResult == 1)
+        {
+            SetCheckMcFlag(pSysSave->pMcState, 0);
+            
+            pSysSave->usExitFlag = 2;
+            
+            SetStateSysSaveTitleExit(pSysSave);
+        }
+        else if (ulSaveResult < 0)
+        {
+            SetCheckMcFlag(pSysSave->pMcState, 0);
+            
+            RecoveryMemoryCardError(pSysSave->pMcState);
+            
+            pSysSave->ulSubState = 2;
+        }
+        
+        break;
+    case 2:
+        if (pSysSave->lCardState == 100)
+        {
+            SetStateSysSaveErrCardWrite(pSysSave);
+        }
+        
+        break;
+    }
+}
+
+// 100% matching!
+void SetStateSysSaveErrCardWrite(SYSSAVE_SCREEN* pSysSave)
+{
+    pSysSave->ulState = 31;
+    
+    pSysSave->cMesFlag = 13;
+    
+    SetCheckMcFlag(pSysSave->pMcState, 0);
+}
+
+// 100% matching!
+void ExecuteStateSysSaveErrCardWrite(SYSSAVE_SCREEN* pSysSave)
+{
+    if ((Pad->press & 0x800))
+    {
+        pSysSave->usExitFlag = 1;
+        
+        SetStateSysSaveTitleExit(pSysSave);
+    }
+    else if ((pSysSave->lCardState > 100) && (pSysSave->lCardState < 104))
+    {
+        SetStateSysSaveAwarenessCard(pSysSave);
+    }
+}
+
+// 100% matching!
+void SetStateSysSaveFormat(SYSSAVE_SCREEN* pSysSave)
+{
+    pSysSave->ulState = 40;
+    
+    pSysSave->cMesFlag = 3;
+    
+    pSysSave->sSelectCur = 1;
+}
+
+// 100% matching!
+void ExecuteStateSysSaveFormat(SYSSAVE_SCREEN* pSysSave)
+{
+    if ((Pad->press & 0x1000))
+    {
+        pSysSave->sSelectCur--;
+        
+        pSysSave->sSelectCur &= 0x1;
+        
+        CallSystemSe(0, 2);
+    }
+    else if ((Pad->press & 0x4000))
+    {
+        pSysSave->sSelectCur++;
+        
+        pSysSave->sSelectCur &= 0x1;
+        
+        CallSystemSe(0, 2);
+    }
+    else if ((Pad->press & GetOkButton()))
+    {
+        if (pSysSave->sSelectCur == 1)
+        {
+            SetStateSysSaveExitFormat(pSysSave);
+        }
+        else
+        {
+            SetStateSysSaveStartFormat(pSysSave);
+        }
+        
+        CallSystemSe(0, 3);
+    }
+    else if ((Pad->press & GetCancelButton()))
+    {
+        SetStateSysSaveExitFormat(pSysSave);
+        
+        CallSystemSe(0, 0);
+    }
+    else if ((pSysSave->lCardState > 100) && (pSysSave->lCardState < 104))
+    {
+        SetStateSysSaveAwarenessCard(pSysSave);
+    }
+}
+
+// 100% matching!
+void SetStateSysSaveStartFormat(SYSSAVE_SCREEN* pSysSave)
+{
+    pSysSave->ulState = 41;
+    pSysSave->ulSubState = 0;
+    
+    pSysSave->cMesFlag = 4;
+    
+    SetCheckMcFlag(pSysSave->pMcState, 1);
+}
+
+// 100% matching!
+void ExecuteStateSysSaveStartFormat(SYSSAVE_SCREEN* pSysSave)
+{
+    int lFormatResult;
+    
+    switch (pSysSave->ulSubState)
+    {
+    case 0:
+        if (FormatMemoryCard(pSysSave->pMcState) == 1)
+        {
+            pSysSave->ulSubState = 1;
+        }
+        
+        break;
+    case 1:
+        lFormatResult = RecoveryMemoryCardFormatEnd(pSysSave->pMcState);
+
+        if (lFormatResult == 1)
+        {
+            SetCheckMcFlag(pSysSave->pMcState, 0);
+            
+            pSysSave->ulSubState = 2;
+        }
+        else if (lFormatResult == -1)
+        {
+            SetCheckMcFlag(pSysSave->pMcState, 0);
+            
+            RecoveryMemoryCardError(pSysSave->pMcState);
+            
+            pSysSave->ulSubState = 3;
+        }
+        
+        break;
+    case 2:
+        if (pSysSave->lCardState == 100)
+        {
+            SetStateSysSaveSuccessFormat(pSysSave);
+        }
+        
+        break;
+    case 3:
+        if (pSysSave->lCardState == 100)
+        {
+            SetStateSysSaveErrFormat(pSysSave);
+        }
+        
+        break;
+    }
+}
+
+// 100% matching!
+void SetStateSysSaveExitFormat(SYSSAVE_SCREEN* pSysSave)
+{
+    pSysSave->ulState = 42;
+    
+    pSysSave->cMesFlag = 15;
+    
+    pSysSave->sSelectCur = 1;
+}
+
+// 100% matching!
+void ExecuteStateSysSaveExitFormat(SYSSAVE_SCREEN* pSysSave)
+{
+    if ((Pad->press & 0x1000))
+    {
+        pSysSave->sSelectCur--;
+
+        pSysSave->sSelectCur &= 0x1;
+        
+        CallSystemSe(0, 2);
+    }
+    else if ((Pad->press & 0x4000))
+    {
+        pSysSave->sSelectCur++;
+        
+        pSysSave->sSelectCur &= 0x1;
+        
+        CallSystemSe(0, 2);
+    }
+    else if ((Pad->press & GetOkButton()))
+    {
+        if (pSysSave->sSelectCur == 1) 
+        {
+            SetStateSysSaveAwarenessCard(pSysSave);
+        }
+        else 
+        {
+            pSysSave->usExitFlag = 1;
+            
+            SetStateSysSaveTitleExit(pSysSave);
+        }
+        
+        CallSystemSe(0, 3);
+    }
+    else if ((Pad->press & GetCancelButton()))
+    {
+        SetStateSysSaveAwarenessCard(pSysSave);
+        
+        CallSystemSe(0, 0);
+    }
+    else if ((pSysSave->lCardState > 100) && (pSysSave->lCardState < 104))
+    {
+        SetStateSysSaveAwarenessCard(pSysSave);
+    }
+}
+
+// 100% matching!
+void SetStateSysSaveSuccessFormat(SYSSAVE_SCREEN* pSysSave)
+{
+    pSysSave->ulState = 43;
+    
+    pSysSave->cMesFlag = 5;
+    
+    pSysSave->ulMemCheckCountTimer = 60;
+}
+
+// 100% matching!
+void ExecuteStateSysSaveSuccessFormat(SYSSAVE_SCREEN* pSysSave)
+{
+    pSysSave->ulMemCheckCountTimer--;
+    
+    if (pSysSave->ulMemCheckCountTimer == 0)
+    {
+        SetStateSysSaveAwarenessCard(pSysSave);
+    }
+    else if ((pSysSave->lCardState > 100) && (pSysSave->lCardState < 104))
+    {
+        SetStateSysSaveAwarenessCard(pSysSave);
+    }
+}
+
+// 100% matching!
+void SetStateSysSaveErrFormat(SYSSAVE_SCREEN* pSysSave)
+{
+    pSysSave->ulState = 44;
+    
+    pSysSave->cMesFlag = 6;
+    
+    pSysSave->sSelectCur = 0;
+}
+
+// 100% matching!
+void ExecuteStateSysSaveErrFormat(SYSSAVE_SCREEN* pSysSave)
+{
+    if ((Pad->press & 0x800))
+    {
+        SetStateSysSaveExitFormat(pSysSave);
+    }
+    else if ((pSysSave->lCardState > 100) && (pSysSave->lCardState < 104))
+    {
+        SetStateSysSaveAwarenessCard(pSysSave);
+    }
+}
+
+// 100% matching!
+void SetStateSysSaveTitleExit(SYSSAVE_SCREEN* pSysSave)
+{
+    pSysSave->ulState = 50;
+}
+
+// 100% matching!
+void ExecuteStateSysSaveTitleExit()
+{
+    sys->typ_md1 = 0;
+    
+    if (!(sys->tk_flg & 0x2000))
+    {
+        sys->typ_md0 = 0;
+    }
+}
+
+// 100% matching!
+void SysSaveHikaku(CONFIGFILE* pConfig)
+{
+    unsigned int Count;
+    
+    if (pConfig->ssd_flg != 0)
+    {
+        sys->ssd_flg |= pConfig->ssd_flg;
+
+        for (Count = 0; Count < 8; Count++)
+        {
+            if ((sys->best_tm[Count] > pConfig->best_tm[Count]) && (pConfig->best_tm[Count] != 0))
+            {
+                sys->best_tm[Count] = pConfig->best_tm[Count];
+            }
+        }
+    }
+    else
+    {
+        for (Count = 0; Count < 8; Count++)
+        {
+            sys->best_tm[Count] = pConfig->best_tm[Count] = 0; 
+        }
+    }
+}
+
+// 100% matching!
+unsigned int GetOkButton()
+{
+    unsigned int ButtonDef[3] = { 0xC0, 0x60, 0xA0 };
+
+    return ButtonDef[sys->keytype];
+}
+
+// 100% matching!
+unsigned int GetCancelButton()
+{
+    unsigned int ButtonDef[3] = { 0x20, 0x80, 0x40 };
+
+    return ButtonDef[sys->keytype];
+}

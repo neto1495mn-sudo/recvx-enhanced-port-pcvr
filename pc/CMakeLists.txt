@@ -165,6 +165,9 @@ file(GLOB_RECURSE PLATFORM_SOURCES CONFIGURE_DEPENDS
     ${CMAKE_CURRENT_SOURCE_DIR}/src/*.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp)
 add_library(recvx_platform OBJECT ${PLATFORM_SOURCES})
+# our texts' table (tr.c, section .trtab): its text is in the library, read into the heap at tr_init
+set_property(SOURCE src/host/tr.c APPEND PROPERTY COMPILE_DEFINITIONS "TR_TABLE_INC=\"${CMAKE_CURRENT_SOURCE_DIR}/src/host/tr_table.inc\"")
+set_property(SOURCE src/host/tr.c APPEND PROPERTY OBJECT_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/host/tr_table.inc)
 set_property(SOURCE src/host/host.c src/host/overlay.cpp APPEND PROPERTY COMPILE_DEFINITIONS "RECVX_VERSION=\"${RECVX_VERSION}\"")
 target_include_directories(recvx_platform PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include

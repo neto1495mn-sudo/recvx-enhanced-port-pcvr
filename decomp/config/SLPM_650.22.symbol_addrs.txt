@@ -1,0 +1,8 @@
+syCacheOCWB                                        = 0x002D7DF0; // size:0x8
+ufAutoSynch                                        = 0x002DD0C0; // size:0x8
+ufChangeWorkBuffer                                 = 0x002DD0D0; // size:0x8
+ufExitSystem                                       = 0x002DD0E0; // size:0x8
+ufInitSystem                                       = 0x002DD0F0; // size:0x8
+ufPlayTime                                         = 0x002DD100; // size:0x8
+ufReadAllHead                                      = 0x002DD110; // size:0x8
+ufSynch                                            = 0x002DD120; // size:0x8

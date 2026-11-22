@@ -1,0 +1,3527 @@
+#include "../../../ps2/veronica/prog/sdfunc.h"
+#include "../../../ps2/veronica/prog/adv.h"
+#include "../../../ps2/veronica/prog/adxwrap.h"
+#include "../../../ps2/veronica/prog/gdlib.h"
+#include "../../../ps2/veronica/prog/mwwrap.h"
+#include "../../../ps2/veronica/prog/ps2_MovieFunc.h"
+#include "../../../ps2/veronica/prog/ps2_NaColi.h"
+#include "../../../ps2/veronica/prog/ps2_NaMatrix.h"
+#include "../../../ps2/veronica/prog/ps2_NaView.h"
+#include "../../../ps2/veronica/prog/ps2_sg_maloc.h"
+#include "../../../ps2/veronica/prog/ps2_sg_sybt.h"
+#include "../../../ps2/veronica/prog/ps2_sg_sycfg.h"
+#include "../../../ps2/veronica/prog/padman.h"
+#include "../../../ps2/veronica/prog/pwksub.h"
+#include "../../../ps2/veronica/prog/screen.h"
+#include "../../../ps2/veronica/prog/sdc.h"
+#include "../../../ps2/veronica/prog/sdcwrap.h"
+#include "../../../ps2/veronica/prog/vibman.h"
+#include "../../../ps2/veronica/prog/main.h"
+
+//#include <string.h>
+
+#include <mathf.h>
+
+#ifdef TARGET_PC   /* a sound number's bank: MWCC compiles the signed / 256 as an arithmetic shift (retail: sra 8, rounding
+                      down); C rounds toward zero, which gave a negative number (bit 31: a MIDI sound such as the
+                      typewriter's 0x80000242, the item box lid's, the computers') bank 3 instead of 2 */
+#define SE_BANK_NO(SeNo) (((SeNo) >> 8) & 0xF)
+#else
+#define SE_BANK_NO(SeNo) (((SeNo) / 256) & 0xF)
+#endif
+
+unsigned char* pConfigWork __attribute__((aligned(64)));
+unsigned char* pSoundAfs;
+unsigned short* pSpqList;
+unsigned short SpqKeyCode;
+SND_REQ RequestInfo;
+NJS_POINT3 CameraPos;
+NJS_POINT3 PlayerPos;
+char CurrentRoomFxProgNo;
+char CurrentRoomFxLevel;
+char CurrentDoorNo;
+RM_SNDENV Room_SoundEnv __attribute__((aligned(64)));
+int CurrentBgmVolume;
+int NextBgmVolume;
+int ReqFadeBgmNo;
+int ReqFadeBgSe[2];
+NO_NAME_30 BgSePrmBuf[2];
+EnemySlot EnemySlotInfo[6];
+Enemy EnemyInfo[128];
+ObjectSlot ObjectSlotInfo[3];
+Object ObjectInfo[16];
+unsigned char RequestList[128];
+unsigned char ObjectReqList[16];
+int MaxRequestList;
+int MaxObjectReqList;
+int MaxSlotObjectSe;
+int MaxSlotEventSe;
+int StartInitScriptFlag;
+SND_CMD SoundCommand;
+NO_NAME_31 GsSlotInfoSe[20];
+NO_NAME_31 GsSlotInfoMi[8];
+NO_NAME_31 GsSlotInfoAx[2];
+SPQ_HEADER* pSpqHeader;
+unsigned int AdxPlayFlag[2];
+int GenAdxfSlot;
+unsigned char* pSdReadBuf;
+char SpqFileName[32];
+unsigned char* DestReadPtr;
+int OpenDriveTrayFlag;
+MOV_INFO MovieInfo;
+int EventVibrationMode;
+int RoomFxLevel;
+char FxLevelTimer;
+int CurrentFxLevel;
+int AddFxLevel;
+int AngBak;
+int SystemAdjustFlag;
+int KeyReadSwitch;
+int FileReadStatus;
+int ReadFileRequestFlag;
+int TransSoundPackDataFlag;
+int SpqFileReadRequestFlag;
+int SdReadMode;
+int SoundInitLevel;
+int RoomSoundCaseNo;
+char MoviePlayTrayOpenFlag;
+int WeaponSeSlotSwitch;
+int SystemSeSlotSwitch;
+int xAng;
+int xVol;
+int xPan;
+int PlayerFootStepSwitch[3] = { 0 };
+/*int EnemyBackGroundSeFlag; - unused*/
+short DefBg[3] = { 0, 1, 2 };
+/*float xDist; - unused*/
+SYS_BT_SYSTEMID BootDiscSystemId;
+NEXTSOUND_INFO NextSoundInfo;
+int PatId[4] = { -1, -1, -1, -1 };
+AFS_PATINFO SoundAfsPatDef[8] = {
+    { "BGM?.AFS"    , 0, 128, NULL },
+    { "VOICE?.AFS"  , 1, 768, NULL },
+    { "MULTSPQ?.AFS", 2, 512, NULL },
+    { "ADV.AFS"     , 3, 128, NULL },
+    { "ITEM?.AFS"   , 4, 512, NULL },
+    { "MRY.AFS"     , 5, 160, NULL },
+    { "SYSTEM.AFS"  , 6, 256, NULL },
+    { NULL          , 0, 0  , NULL }
+};
+ADX_WORK AdxDef[2] = { { 2, 48000, 2, -1 }, { 1, 48000, 2, -1 } };
+SDE_DATA_TYPE SdTypeDef[5] = { SDE_DATA_TYPE_MIDI_SEQ_BANK, SDE_DATA_TYPE_MIDI_PRG_BANK, SDE_DATA_TYPE_SHOT_BANK, SDE_DATA_TYPE_FX_PRG_BANK, SDE_DATA_TYPE_FX_OUT_BANK }; 
+int CurrentBgmNo = -1;
+int CurrentBgSeNo[2] = { -1, -1 };
+short DefObj[5] = { 3, 4, 5, 6, 7 };
+short DefEvt[5] = { 7, 6, 5, 4, 3 };
+short DefEne[6] = { 0, 1, 2, 3, 4, 5 };
+char ThreeDVolTbl[510] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFE, 0xFE, 0xFE, 0xFE, 0xFE, 0xFD, 0xFD, 0xFD, 0xFD, 0xFD, 0xFC, 0xFC, 0xFC, 0xFC, 0xFC, 0xFB, 0xFB, 0xFB, 0xFB, 0xFB, 0xFA, 0xFA, 0xFA, 0xFA, 0xFA, 0xF9, 0xF9, 0xF9, 0xF9, 0xF9, 0xF8, 0xF8, 0xF8, 0xF8, 0xF8, 0xF7, 0xF7, 0xF7, 0xF7, 0xF7, 0xF6, 0xF6, 0xF6, 0xF6, 0xF6, 0xF5, 0xF5, 0xF5, 0xF5, 0xF5, 0xF4, 0xF4, 0xF4, 0xF4, 0xF4, 0xF3, 0xF3, 0xF3, 0xF3, 0xF3, 0xF2, 0xF2, 0xF2, 0xF2, 0xF2, 0xF1, 0xF1, 0xF1, 0xF1, 0xF1, 0xF0, 0xF0, 0xF0, 0xF0, 0xF0, 0xF0, 0xF0, 0xF0, 0xF0, 0xF0, 0xEF, 0xEF, 0xEF, 0xEF, 0xEF, 0xEF, 0xEF, 0xEF, 0xEF, 0xEF, 0xEE, 0xEE, 0xEE, 0xEE, 0xEE, 0xED, 0xED, 0xED, 0xED, 0xED, 0xEC, 0xEC, 0xEC, 0xEC, 0xEC, 0xEB, 0xEB, 0xEB, 0xEB, 0xEB, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xE9, 0xE9, 0xE9, 0xE9, 0xE9, 0xE8, 0xE8, 0xE8, 0xE8, 0xE8, 0xE7, 0xE7, 0xE7, 0xE7, 0xE7, 0xE6, 0xE6, 0xE6, 0xE6, 0xE6, 0xE5, 0xE5, 0xE5, 0xE5, 0xE5, 0xE4, 0xE4, 0xE4, 0xE4, 0xE4, 0xE3, 0xE3, 0xE3, 0xE3, 0xE3, 0xE2, 0xE2, 0xE2, 0xE2, 0xE2, 0xE1, 0xE1, 0xE1, 0xE1, 0xE1, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xDF, 0xDF, 0xDF, 0xDF, 0xDF, 0xDF, 0xDF, 0xDF, 0xDF, 0xDF, 0xDE, 0xDE, 0xDE, 0xDE, 0xDE, 0xDD, 0xDD, 0xDD, 0xDD, 0xDD, 0xDC, 0xDC, 0xDC, 0xDC, 0xDC, 0xDB, 0xDB, 0xDB, 0xDB, 0xDB, 0xDA, 0xDA, 0xDA, 0xDA, 0xDA, 0xD9, 0xD9, 0xD9, 0xD9, 0xD9, 0xD8, 0xD8, 0xD8, 0xD8, 0xD8, 0xD7, 0xD7, 0xD7, 0xD7, 0xD7, 0xD6, 0xD6, 0xD6, 0xD6, 0xD6, 0xD5, 0xD5, 0xD5, 0xD5, 0xD5, 0xD4, 0xD4, 0xD4, 0xD4, 0xD4, 0xD3, 0xD3, 0xD3, 0xD3, 0xD3, 0xD2, 0xD2, 0xD2, 0xD2, 0xD2, 0xD1, 0xD1, 0xD1, 0xD1, 0xD1, 0xD0, 0xD0, 0xD0, 0xD0, 0xD0, 0xD0, 0xD0, 0xD0, 0xD0, 0xD0, 0xCF, 0xCF, 0xCF, 0xCF, 0xCF, 0xCF, 0xCF, 0xCF, 0xCF, 0xCF, 0xCE, 0xCE, 0xCE, 0xCE, 0xCE, 0xCD, 0xCD, 0xCD, 0xCD, 0xCD, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCB, 0xCB, 0xCB, 0xCB, 0xCB, 0xCA, 0xCA, 0xCA, 0xCA, 0xCA, 0xC9, 0xC9, 0xC9, 0xC9, 0xC9, 0xC8, 0xC8, 0xC8, 0xC8, 0xC8, 0xC7, 0xC7, 0xC7, 0xC7, 0xC7, 0xC6, 0xC6, 0xC6, 0xC6, 0xC6, 0xC5, 0xC5, 0xC5, 0xC5, 0xC5, 0xC4, 0xC4, 0xC4, 0xC4, 0xC4, 0xC3, 0xC3, 0xC3, 0xC3, 0xC3, 0xC2, 0xC2, 0xC2, 0xC2, 0xC2, 0xC1, 0xC1, 0xC1, 0xC1, 0xC1, 0xC0, 0xC0, 0xC0, 0xC0, 0xC0, 0xC0, 0xC0, 0xC0, 0xC0, 0xC0, 0xBF, 0xBF, 0xBF, 0xBF, 0xBF, 0xBF, 0xBF, 0xBF, 0xBF, 0xBF, 0xBE, 0xBE, 0xBE, 0xBE, 0xBE, 0xBD, 0xBD, 0xBD, 0xBD, 0xBD, 0xBC, 0xBC, 0xBC, 0xBC, 0xBC, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBA, 0xBA, 0xBA, 0xBA, 0xBA, 0xB9, 0xB9, 0xB9, 0xB9, 0xB9, 0xB8, 0xB8, 0xB8, 0xB8, 0xB8, 0xB7, 0xB7, 0xB7, 0xB7, 0xB7, 0xB6, 0xB6, 0xB6, 0xB6, 0xB6, 0xB5, 0xB5, 0xB5, 0xB5, 0xB5, 0xB4, 0xB4, 0xB4, 0xB4, 0xB4, 0xB3, 0xB3, 0xB3, 0xB3, 0xB3, 0xB2, 0xB2, 0xB2, 0xB2, 0xB2, 0xB1, 0xB1, 0xB1, 0xB1, 0xB1, 0xB0, 0xB0, 0xB0, 0xB0, 0xB0, 0xAF, 0xAF, 0xAF, 0xAF, 0xAF, 0xAE, 0xAE, 0xAE, 0xAE, 0xAE, 0xAD, 0xAD, 0xAD, 0xAD, 0xAD, 0xAC, 0xAC, 0xAC, 0xAC, 0xAC, 0xAB, 0xAB, 0xAB, 0xAB, 0xAB, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xA9, 0xA9, 0xA9, 0xA9, 0xA9 };
+char PanTbl360[68] = { 0x00, 0xFE, 0xFC, 0xFA, 0xF8, 0xF6, 0xF4, 0xF2, 0xF0, 0xEE, 0xEC, 0xEA, 0xE8, 0xE6, 0xE4, 0xE2, 0xE0, 0xE0, 0xE2, 0xE4, 0xE6, 0xE8, 0xEA, 0xEC, 0xEE, 0xF0, 0xF2, 0xF4, 0xF6, 0xF8, 0xFA, 0xFC, 0xFE, 0x00, 0x00, 0x02, 0x04, 0x06, 0x08, 0x0A, 0x0C, 0x0E, 0x10, 0x12, 0x14, 0x16, 0x18, 0x1A, 0x1C, 0x1E, 0x20, 0x20, 0x1E, 0x1C, 0x1A, 0x18, 0x16, 0x14, 0x12, 0x10, 0x0E, 0x0C, 0x0A, 0x08, 0x06, 0x04, 0x02, 0x00 };
+char PanTbl360Vol[68] __attribute__((aligned(64))) = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFE, 0xFC, 0xFA, 0xF8, 0xF6, 0xF4, 0xF2, 0xF0, 0xEE, 0xEC, 0xEA, 0xE8, 0xE6, 0xE4, 0xE2, 0xE0, 0xDE, 0xDC, 0xDA, 0xDA, 0xDC, 0xDE, 0xE0, 0xE2, 0xE4, 0xE6, 0xE8, 0xEA, 0xEC, 0xEE, 0xF0, 0xF2, 0xF4, 0xF6, 0xF8, 0xFA, 0xFC, 0xFE, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
+SDCOM_FUNCTBL SdComFuncTbl[10] = { NULL, Com_ExecRoomFadeIn, Com_ExecRoomFadeOut, Com_StartInitScript, Com_FinishInitScript, Com_ExecCallBgm_And_BgSe, Com_ExecCallBgm_And_BgSe, Com_ExecCallBgm_And_BgSe, Com_ExecCallBgm_And_BgSe, Com_ExecCallBgm_And_BgSe };
+unsigned char MovieTypeDef[22] = { 0x02, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x02, 0x80, 0x42, 0x82, 0x00, 0x80, 0x00, 0x82 };
+short MovieVolDef[22] = { 0 }; 
+MOV_DEF MovieDef[4] __attribute__((aligned(64))) = { { 320, 240, 0, 0, 640, 448, 1 }, { 320, 176, 0, 64, 640, 320, 1 }, { 320, 352, 0, 64, 640, 320, 1 }, { 0, 0, 0, 0, 0, 0, 1 } };
+PDS_VIBPARAM_EX VibP[32] __attribute__((aligned(64))) = { { 0x01, 0x07, 0x3B, 0x04 }, 
+                                                          { 0x02, 0x10, 0x2C, 0x04 }, 
+                                                          { 0x01, 0x55, 0x1D, 0x04 }, 
+                                                          { 0x00, 0x01, 0x21, 0x01 }, 
+                                                          { 0x01, 0xF9, 0x0F, 0x02 }, 
+                                                          { 0x01, 0xF9, 0x0F, 0x03 }, 
+                                                          { 0x00, 0x55, 0x0F, 0x04 }, 
+                                                          { 0x02, 0xFF, 0x19, 0x05 }, 
+                                                          { 0x02, 0xFE, 0x2D, 0x05 }, 
+                                                          { 0x02, 0x01, 0x14, 0x08 }, 
+                                                          { 0x01, 0x04, 0x1E, 0x01 }, 
+                                                          { 0x02, 0x07, 0x3B, 0x02 }, 
+                                                          { 0x01, 0xFE, 0x0F, 0x05 }, 
+                                                          { 0x02, 0x07, 0x1D, 0x01 }, 
+                                                          { 0x00, 0x00, 0x0F, 0x01 }, 
+                                                          { 0x00, 0x00, 0x0F, 0x01 }, 
+                                                          { 0x00, 0x50, 0x0F, 0x02 }, 
+                                                          { 0x00, 0x00, 0x0F, 0x01 }, 
+                                                          { 0x00, 0x00, 0x0F, 0x01 }, 
+                                                          { 0x00, 0x00, 0x0F, 0x01 }, 
+                                                          { 0x00, 0x00, 0x0F, 0x01 }, 
+                                                          { 0x00, 0x00, 0x0F, 0x01 }, 
+                                                          { 0x00, 0x00, 0x0F, 0x01 }, 
+                                                          { 0x00, 0x00, 0x0F, 0x01 }, 
+                                                          { 0x00, 0x00, 0x0F, 0x01 }, 
+                                                          { 0x00, 0x00, 0x0F, 0x01 }, 
+                                                          { 0x00, 0x00, 0x0F, 0x01 }, 
+                                                          { 0x00, 0x00, 0x0F, 0x01 }, 
+                                                          { 0x00, 0x00, 0x0F, 0x01 }, 
+                                                          { 0x00, 0x00, 0x0F, 0x01 }, 
+                                                          { 0x00, 0x00, 0x0F, 0x01 }, 
+                                                          { 0x00, 0x00, 0x0F, 0x01 } };
+char VibFlag[5] = { 0x01, 0x08, 0x80, 0x09, 0x81 };
+
+// 100% matching!
+void bhReleaseFreeMemory(void* mp)
+{ 
+    sys->memp = mp; 
+}
+
+// 100% matching!
+void ExitApplication()
+{ 
+    njUserExit();
+}
+
+// 100% matching!
+void QuickGetDiscTrayStatus() 
+{ 
+    StatusUpdateCounter = 1; 
+    
+    njWaitVSync(); 
+    
+    if (DiscOpenTrayFlag == -1)
+    { 
+        ExitApplication(); 
+    }
+} 
+
+// 100% matching!
+void InitFirstSofdec()
+{
+    mwPlyPreInitSofdec();
+}
+
+// 100% matching! 
+int GetBootDiscId()
+{
+    unsigned char* p; 
+    int ReturnCode; 
+
+    syBtGetBootSystemID(&BootDiscSystemId);
+    
+    p = syMalloc(16384);
+    
+    QuickGetDiscTrayStatus();
+    
+    if (ReadFileEx("DISCID.BIN", p) != 0) 
+    {
+        ExitApplication();
+    }
+    
+    ReturnCode = *p;
+    
+    syFree(p);
+    
+    return ReturnCode;
+}
+
+// 100% matching! 
+void InitSofdecSystem(int Mode)
+{
+    MWS_PLY_INIT_SFD iprm;
+    int temp; // not from the debugging symbols
+
+    memset(&iprm, 0, sizeof(MWS_PLY_INIT_SFD));
+    
+    iprm.mode = hws->mode;
+    
+    iprm.frame = hws->frame; 
+    
+    iprm.count = hws->count; 
+    
+    if (hws->vtx_opq_a < 0) 
+    {
+        temp = 2;
+    }
+    else if (hws->vtx_opq_b < 0) 
+    {
+        temp = 2;
+    }
+    else if (hws->vtx_trs_a < 0) 
+    {
+        temp = 2;
+    } 
+    else if (hws->vtx_trs_b < 0)
+    {
+        temp = 2;
+    }
+    else if (hws->vtx_punch < 0) 
+    {
+        temp = 2;
+    }
+    else 
+    {
+        temp = 3;
+    }
+
+    iprm.latency = temp; 
+    
+    if (Mode == 0) 
+    {
+        InitMwSystem(0, &iprm);
+    }
+    else 
+    {
+        ReinitMwSystem(&iprm);
+    }
+}
+
+// 100% matching! 
+void ExitSofdecSystem()
+{
+    if (MoviePlayTrayOpenFlag == 0) 
+    {
+        ExitMwSystem();
+    }
+}
+
+// 100% matching! 
+void InitSoundProgram()
+{
+    int i;
+
+    switch (GetBootDiscId()) 
+    {                         
+    case 0:
+        sys->ss_flg &= ~0x1;
+        break;
+    case 1:
+        sys->ss_flg |= 0x1;
+        break;
+    }
+    
+    pConfigWork = syMalloc(16384);
+    
+    syCfgInit(pConfigWork);
+    
+    SoundInitLevel = 1;
+    
+    InitSoundDriver("MANATEE.DRV", "COMMON.MLT");
+    
+    SoundInitLevel = 2;
+    
+    for (i = 0; i < 8; i++) 
+    {
+        RegistMidiSlot(i);
+    } 
+    
+    for (i = 0; i < 20; i++)
+    {
+        RegistSeSlot(i);
+    } 
+    
+    SetFxProgram(0, 0);
+    
+    InitSofdecSystem(0);
+    
+    MovieInfo.ExecMovieSystemFlag = 0;
+    
+    SoundInitLevel = 3;
+    
+    InitAdx();
+    
+    RegistAdxStreamEx(2, 4, (ADX_WORK*)AdxDef);
+    
+    if (MountSoundAfs() != 0) 
+    {
+        ExitApplication();
+    }
+    
+    SoundInitLevel = 4;
+    
+    InitReadKeyEx(1);
+    
+    SetRepeatKeyTimer(5, 2);
+    
+    InitVibrationUnit();
+    InitPlayLogSystem();
+    
+    RequestAdjustDisplay(0, 0);
+    
+    ResetRoomSoundEnvParam();
+    ResetSoundComInfo();
+    
+    memset(&SoundCommand, 0, sizeof(SND_CMD));
+    
+    InitAdvSystem();
+    
+    SoundInitLevel = -1;
+}
+
+// 100% matching!
+void ExitSoundProgram() 
+{ 
+    switch (SoundInitLevel)
+    {       
+    case -1:
+        ExitPlayLogSystem(); 
+        ExitVibrationUnit(); 
+    case 4:
+        UnmountSoundAfs(); 
+        
+        FreeAdxStream(); 
+        
+        ExitAdx(); 
+    case 3:
+        ExitSofdecSystem(); 
+    case 2:
+        ExitSoundDriver(); 
+    case 1:
+        syCfgExit(); 
+        syFree(pConfigWork); 
+    }
+} 
+
+// 100% matching! 
+int MountSoundAfs()
+{
+    int i; 
+    int WorkSize; 
+    unsigned char* p; 
+    
+    if (!(sys->ss_flg & 0x1))
+    {
+        SoundAfsPatDef[0].AfsFileName[3] = '1';
+        SoundAfsPatDef[1].AfsFileName[5] = '1';
+        SoundAfsPatDef[2].AfsFileName[7] = '1';
+        SoundAfsPatDef[4].AfsFileName[4] = '1';
+    }
+    else
+    {
+        SoundAfsPatDef[0].AfsFileName[3] = '2';
+        SoundAfsPatDef[1].AfsFileName[5] = '2';
+        SoundAfsPatDef[2].AfsFileName[7] = '2';
+        SoundAfsPatDef[4].AfsFileName[4] = '2';
+    }
+    
+    i = 0;
+
+    WorkSize = 0;
+    
+    while (SoundAfsPatDef[i].AfsFileName != NULL) 
+    {
+        WorkSize += ADXF_CALC_PTINFO_SIZE(SoundAfsPatDef[i].MaxInsideFileNum); 
+        
+        i++;
+    }
+    
+    pSoundAfs = syMalloc(WorkSize + ADXF_DEF_SCT_SIZE);
+    
+    p = pSoundAfs;
+    
+    pSpqList = (unsigned short*)p;
+    
+    p += ADXF_DEF_SCT_SIZE;
+    
+    QuickGetDiscTrayStatus();
+    
+    if (!(sys->ss_flg & 0x1)) 
+    {
+        if (ReadFileEx("MULTSPQ1.IDX", pSpqList) != 0) 
+        {
+            ExitApplication();
+        }
+    }
+    else if (ReadFileEx("MULTSPQ2.IDX", pSpqList) != 0)
+    {
+        ExitApplication();
+    }
+    
+    i = 0; 
+    
+    while (SoundAfsPatDef[i].AfsFileName != NULL)
+    {
+        SoundAfsPatDef[i].pInfoWork = p;
+        
+        p += ADXF_CALC_PTINFO_SIZE(SoundAfsPatDef[i].MaxInsideFileNum); 
+        
+        i++; 
+    }
+    
+    QuickGetDiscTrayStatus();
+    
+    if (CreatePartitionEx(SoundAfsPatDef) != 0) 
+    {
+        ExitApplication();
+    }
+    
+    PatId[0] = SoundAfsPatDef[0].PartitionId;
+    PatId[1] = SoundAfsPatDef[1].PartitionId;
+    PatId[2] = SoundAfsPatDef[2].PartitionId;
+    PatId[3] = SoundAfsPatDef[3].PartitionId;
+    
+    sys->itm_partid = SoundAfsPatDef[4].PartitionId;
+    sys->dor_partid = SoundAfsPatDef[5].PartitionId;
+    sys->sys_partid = SoundAfsPatDef[6].PartitionId;
+    
+    return 0;
+}
+
+// 100% matching!
+void UnmountSoundAfs()
+{ 
+    if (PatId[0] != -1) 
+    { 
+        DeletePartitionEx(SoundAfsPatDef); 
+        
+        syFree(pSoundAfs); 
+        
+        PatId[0] = PatId[1] = PatId[2] = PatId[3] = -1; 
+    }
+} 
+
+// 100% matching! 
+void ExecSoundSynchProgram()
+{
+    if (SoundInitLevel < 0) 
+    {
+        sdSysServer();
+        
+        if ((SpqFileReadRequestFlag != 0) && (LoadSoundPackFile(SpqFileName) <= 0)) 
+        {
+            SpqFileReadRequestFlag = 0;
+        }
+        
+        ExecTransSoundData();
+        
+        ExecSoundFadeManager();
+        ExecSoundPanManager();
+        
+        if (!(sys->ss_flg & 0x4000000)) 
+        {
+            ExecAdxFadeManager();
+        }
+        
+        KeyReadSwitch = (KeyReadSwitch != 0) ^ 1;
+        
+        ExecFileManager();
+        
+        ExecAdjustDisplay();
+    }
+}
+
+// 100% matching!
+void InitGameSoundSystem() {
+    int i;
+
+    SetVolumeMidi2(0, -127, 0);
+    SetVolumeMidi2(1, -127, 0);
+    ReqFadeBgmNo = 0;
+    CurrentBgmNo = -1;
+    CurrentBgmVolume = -0x7F;
+    NextBgmVolume = -0x7F;
+
+    for(i = 0; i < 2; i++) {
+        CurrentBgSeNo[i] = -1;
+        ReqFadeBgSe[i] = 0;
+    }
+
+    memset(&BgSePrmBuf, 0, 0x10);
+    ResetEnemySeInfo();
+    ResetObjectSeInfo();
+    memset(&SoundCommand, 0, 8);
+    CustomMidiSlotDef(1, 4);
+    ResetRoomSoundEnvParam();
+    ResetSoundComInfo();
+    EventVibrationMode = 0;
+}
+
+// 100% matching! 
+int SearchAfsInsideFileId(unsigned short KeyCode)
+{
+    int i;
+    unsigned short* lp;
+
+    lp = pSpqList;
+    
+    for (i = 0; i < 1024; i++, lp++) 
+    {
+        if (*lp == 65535)
+        {
+            return -1;
+        }
+        
+        if (*lp == (KeyCode & 0xFFFF)) 
+        {
+            return i;
+        }
+    }
+
+    return -1;
+}
+
+// 100% matching!
+void StopThePsgSound(void) {
+    if (CheckPlayMidi(0) != 0) {
+        StopBackGroundSeEx(0, 0);
+    }
+    if (CheckPlayMidi(1) != 0) {
+        StopBackGroundSeEx(1, 0);
+    }
+}
+
+// 
+// 100% matching!
+int CheckSpecialBank(int Type, int BankNo)
+{
+    while(TRUE)
+    {
+        if ((Type != 0) || (BankNo != 3)) 
+        {
+            if ((Type != 1 || BankNo != 3)) 
+            {
+                break;
+            }
+        }
+        
+        if ((ReqFadeBgSe[0] & 2) || ((ReqFadeBgSe[1]) & 2)) 
+        {
+            StopThePsgSound();
+            return 0;
+        }
+    
+        if (CurrentBgSeNo[0] == -1) 
+        {
+            if (CurrentBgSeNo[1] == -1) 
+            {
+                StopThePsgSound();
+                return 0;
+            }
+        }     
+        
+        return 1;
+    }
+    
+    return 0;
+}
+
+// 100% matching!
+int LoadSoundPackFile(char* SpqFile)
+{
+    int FileSize;
+    int InsideId;
+    
+    switch (SdReadMode) 
+    {             
+    case 0:                              
+        if (SpqKeyCode == 0xFFFF) 
+        {
+            FileSize = GetFileSize(SpqFile);
+            
+            if (FileSize == 0) 
+            {
+                return -1;
+            }
+        }
+        else
+        {
+            if ((InsideId = SearchAfsInsideFileId(SpqKeyCode)) < 0) 
+            {
+                return -1;
+            }
+            
+            FileSize = GetInsideFileSize(PatId[2], InsideId);
+            
+            if (FileSize == 0)
+            {
+                return -1;
+            }
+        }
+        
+        pSdReadBuf = bhGetFreeMemory(FileSize, 32);
+        
+        if (SpqKeyCode == 0xFFFF) 
+        {
+            RequestReadIsoFile(SpqFile, pSdReadBuf);
+        }
+        else 
+        {
+            RequestReadInsideFile(PatId[2], InsideId, pSdReadBuf);
+        }
+        
+        SdReadMode++;
+    case 1:                            
+        switch (GetReadFileStatus())
+        {       
+        case 0:        
+            pSpqHeader = (SPQ_HEADER*)pSdReadBuf;
+            
+            SdReadMode++;
+            break;
+        case 1:      
+            break;
+        case -1:     
+            bhReleaseFreeMemory(pSdReadBuf);
+            
+            SdReadMode = 0;
+            
+            return -2;
+        }
+        
+        break;
+    case 2:                           
+        if (pSpqHeader->Type != 5) 
+        {
+            if (CheckSpecialBank(pSpqHeader->Type, pSpqHeader->BankNo) == 0)
+            {
+                SetSoundData(SdTypeDef[pSpqHeader->Type], pSpqHeader->BankNo, &pSdReadBuf[pSpqHeader->Offset], pSpqHeader->Size);
+            }
+        }
+        else 
+        {
+            memcpy(&Room_SoundEnv, &pSdReadBuf[pSpqHeader->Offset], sizeof(RM_SNDENV)); 
+            
+            FxLevelTimer = 16;
+            
+            RoomFxLevel = Room_SoundEnv.RoomFxLevel * 256;
+            AddFxLevel = (RoomFxLevel - CurrentFxLevel) / 16;
+        }
+        
+        SdReadMode++;
+        
+        break;
+    case 3:                    
+        if (pSpqHeader->Type != 5) 
+        {
+            if ((CheckSpecialBank(pSpqHeader->Type, pSpqHeader->BankNo) != 0) || (CheckTransComplete() == 0)) 
+            {
+                pSpqHeader++;
+                
+                if (pSpqHeader->Offset == 0)
+                {
+                    bhReleaseFreeMemory(pSdReadBuf);
+                    
+                    SetRoomSoundFxLevelEx();
+                    
+                    SdReadMode = 0;
+                    
+                    return 0;
+                }
+                
+                SdReadMode = 2;
+            }
+        }
+        else 
+        {
+            pSpqHeader++;
+            
+            if (pSpqHeader->Offset == 0)
+            {
+                bhReleaseFreeMemory(pSdReadBuf);
+                
+                SetRoomSoundFxLevelEx();
+                
+                SdReadMode = 0;
+                
+                return 0;
+            }
+            
+            SdReadMode = 2;
+        }
+    }
+
+    return 1;
+}
+
+// 100% matching! 
+void ExecTransSoundData()
+{
+    if (TransSoundPackDataFlag != 0)
+    {
+        switch (SdReadMode) 
+        {                    
+        case 0:
+            SetSoundData(SdTypeDef[pSpqHeader->Type], pSpqHeader->BankNo, &pSdReadBuf[pSpqHeader->Offset], pSpqHeader->Size);
+            
+            SdReadMode++;
+            return;
+        case 1:
+            if (CheckTransComplete(SdReadMode) == 0)
+            {
+                SdReadMode = 0;
+                
+                pSpqHeader++;
+                
+                if (pSpqHeader->Offset == 0) 
+                {
+                    TransSoundPackDataFlag = 0;
+                }
+            }
+            
+            return;
+        }
+    }
+}
+
+// 100% matching! 
+void RequestRoomSoundBank(int StageNo, int RoomNo, int CaseNo) {
+    ResetRoomSoundEnvParam();
+    sprintf(SpqFileName, "RM_%01u%02u%01u.SPQ", StageNo, RoomNo, CaseNo);
+    SpqKeyCode = CaseNo + ((StageNo * 0x3E8) + (RoomNo * 0xA));
+#ifdef TARGET_PC
+    {
+        extern int pc_mod_room_sound_key(int key);
+        SpqKeyCode = pc_mod_room_sound_key(SpqKeyCode);
+    }
+#endif
+    SpqFileReadRequestFlag = 1;
+}
+
+// 100% matching!
+void RequestArmsSoundBank(int ArmsNo) {
+    sprintf(SpqFileName, "ARMS_%03u.SPQ", ArmsNo);
+    SpqKeyCode = ArmsNo | 0x4000;
+    SpqFileReadRequestFlag = 2;
+}
+
+// 100% matching!
+void RequestDoorSoundBank(int DoorNo) {
+    sprintf(SpqFileName, "DOOR_%03u.SPQ", DoorNo);
+    CurrentDoorNo = DoorNo;
+    SpqKeyCode = DoorNo | 0x8000;
+    SpqFileReadRequestFlag = 3;
+}
+
+// 100% matching!
+void RequestPlayerVoiceSoundBank(int PlayerNo) {
+    sprintf(SpqFileName, "CORE_%03u.SPQ", PlayerNo);
+    SpqKeyCode = PlayerNo | 0xFFF0;
+    SpqFileReadRequestFlag = 4;
+}
+
+// 100% matching!
+int CheckTransEndSoundBank() {
+    return SpqFileReadRequestFlag;
+}
+
+// 100% matching!
+void SetRoomSoundCaseNo(int CaseNo) {
+    RoomSoundCaseNo = CaseNo;
+}
+
+// 100% matching!
+int GetRoomSoundCaseNo() {
+    int ReturnCode;
+    
+    ReturnCode = RoomSoundCaseNo;
+    RoomSoundCaseNo = 0;
+    
+    return ReturnCode;
+}
+
+// 100% matching!
+int CustomMidiSlotDef(int ObjectSlot, int EventSlot) {
+    if ((ObjectSlot + EventSlot) > 5) {
+        MaxSlotObjectSe = 1;
+        MaxSlotEventSe = 4;
+        return 1;
+    }
+    
+    if (ObjectSlot > 3) {
+        MaxSlotObjectSe = 1;
+        MaxSlotEventSe = 4;
+        return 1;
+    }
+    
+    MaxSlotObjectSe = ObjectSlot;
+    MaxSlotEventSe = EventSlot;
+    return 0;
+}
+
+// 100% matching! 
+void ResetRoomSoundEnvParam()
+{
+    memset(&Room_SoundEnv, 0, sizeof(RM_SNDENV));
+}
+
+// 99.13% matching
+int wadGetAngle(NJS_POINT3* pPos1, int Ang, NJS_POINT3* pPos2) {
+    return (short)(Ang + (int)(10430.381f * atan2f(pPos1->x - pPos2->x,  pPos1->z - pPos2->z)));
+}
+
+// 100% matching!
+int CheckCollision4Sound(NJS_POINT3* pP2) {
+    NJS_CAPSULE Capsule;
+    int ReturnCode;
+
+    ReturnCode = 0;
+    if (rom->flg & 2) {
+        Capsule.c1.x = cam.wpx;
+        Capsule.c1.y = cam.wpy;
+        Capsule.c1.z = cam.wpz;
+        Capsule.c2.x = pP2->x;
+        Capsule.c2.y = pP2->y;
+        Capsule.c2.z = pP2->z;
+        Capsule.r =  0.1;
+
+        if (bhCheckC2Wall(&Capsule) != 0) {
+            ReturnCode = -0x1C;
+        }
+    } 
+
+    return ReturnCode;
+}
+
+// 100% matching!
+int Get3DSoundParameter(NJS_POINT3* pP1, NJS_POINT3* pP2, char* pPan, char* pVol, float* pDist, int Mode)
+{
+    int ReturnCode;
+    int Val;
+    int Ang; 
+    NJS_POINT2 ScreenPos;
+    NJS_POINT3 pd;
+    int pan_idx; // not from the debugging symbols
+
+    *pDist = njDistanceP2P(pP1, pP2);
+    
+    njCalcPoint(cam.mtx, pP2, &pd);
+    
+    ReturnCode = njCalcScreen(&pd, &ScreenPos.x, &ScreenPos.y);
+    
+    Val = *pDist;
+    
+    if (Val > sizeof(ThreeDVolTbl)) 
+    {
+        Val = 509;
+    } 
+    else if (Val < 0)
+    {
+        Val = 0;
+    }
+
+    Ang = wadGetAngle(pP1, cam.ay, pP2) & 0xFFFF;
+    AngBak = 0.005493164f * Ang;
+    
+    pan_idx = (0.005493164f * Ang) / 5.0f;
+    
+    *pPan = PanTbl360[pan_idx];
+    *pVol = ThreeDVolTbl[Val] + PanTbl360Vol[pan_idx];
+    
+    if (Mode == 0)
+    {
+        *pVol -= CurrentRoomFxLevel / 12;
+    }
+
+    return ReturnCode;
+}
+
+// 100% matching!
+int SetupSeGenericParm(int SlotNo, int SeNo, NJS_POINT3* pPos, int Flag, unsigned int Flag2)
+{
+    int ReturnCode;
+    float Distance; 
+    
+    ReturnCode = Get3DSoundParameter(&CameraPos, pPos, &RequestInfo.Pan, &RequestInfo.Volume, &Distance, 0);
+    
+    RequestInfo.SlotNo = SlotNo;
+    
+    if (Flag != 0) 
+    {
+        RequestInfo.ListNo = SeNo;
+    }
+    else 
+    {
+        RequestInfo.ListNo = -1;
+    }
+    
+    RequestInfo.BankNo = SE_BANK_NO(SeNo);
+    
+    RequestInfo.Priority = 0;
+    
+    if ((Flag2 & 0x2))
+    {
+        RequestInfo.VolumeDelayTime = -2;
+    } 
+    else
+    {
+        RequestInfo.VolumeDelayTime = 0;
+    }
+    
+    if ((Flag2 & 0x4))
+    {
+        RequestInfo.PanDelayTime = -2;
+    } 
+    else
+    {
+        RequestInfo.PanDelayTime = 0;
+    }
+    
+    RequestInfo.Pitch = 0;
+    RequestInfo.PitchDelayTime = -1;
+    
+    RequestInfo.FxInput = -1;
+    RequestInfo.FxLevel = 0;
+    
+    return ReturnCode;
+}
+
+// 100% matching!
+void Set3dSoundFlag(int Type, int SlotNo, unsigned int Flag)
+{
+    int No;
+
+    switch (Type) 
+    {
+    case 0:
+        GsSlotInfoSe[7].Flag = Flag;
+        
+        if ((Flag & 0x2)) 
+        {
+            SetVolumeSe2(7, 0, 0);
+        }
+        
+        if ((Flag & 0x4)) 
+        {
+            SetPanSe(7, 0, 0);
+        }
+    
+        break;
+    case 1:
+        GsSlotInfoSe[(SlotNo * 2) + 11].Flag = Flag;
+        GsSlotInfoSe[(SlotNo * 2) + 12].Flag = Flag;
+        
+        if ((Flag & 0x2)) 
+        {
+            SetVolumeSe2((SlotNo * 2) + 11, 0, 0);
+            SetVolumeSe2((SlotNo * 2) + 12, 0, 0);
+        }
+        
+        if ((Flag & 0x4)) 
+        {
+            SetPanSe((SlotNo * 2) + 11, 0, 0);
+            SetPanSe((SlotNo * 2) + 12, 0, 0);
+        }
+        
+        break;
+    case 2:
+        GsSlotInfoSe[6].Flag = Flag;
+        
+        if ((Flag & 0x2)) 
+        {
+            SetVolumeSe2(6, 0, 0);
+        }
+        
+        if ((Flag & 0x4)) 
+        {
+            SetPanSe(6, 0, 0);
+        }
+        
+        break;
+    case 3:
+        GsSlotInfoSe[8].Flag = Flag;
+        GsSlotInfoSe[9].Flag = Flag;
+        GsSlotInfoSe[19].Flag = Flag;
+        
+        if ((Flag & 0x2)) 
+        {
+            SetVolumeSe2(8, 0, 0);
+            SetVolumeSe2(9, 0, 0);
+            SetVolumeSe2(19, 0, 0);
+        }
+        
+        if ((Flag & 0x4)) 
+        {
+            SetPanSe(8, 0, 0);
+            SetPanSe(9, 0, 0);
+            SetPanSe(19, 0, 0);
+        }
+        
+        break;
+    case 4:
+        GsSlotInfoSe[10].Flag = Flag;
+        
+        if ((Flag & 0x2))
+        {
+            SetVolumeSe2(10, 0, 0);
+        }
+        
+        if ((Flag & 0x4)) 
+        {
+            SetPanSe(10, 0, 0);
+        }
+        
+        break;
+    case 5:
+        GsSlotInfoSe[DefEne[SlotNo]].Flag = Flag;
+        
+        if ((Flag & 0x2))
+        {
+            SetVolumeSe2(DefEne[SlotNo], 0, 0);
+        }
+        
+        if ((Flag & 0x4))
+        {
+            SetPanSe(DefEne[SlotNo], 0, 0);
+        }
+        
+        break;
+    case 6:
+        GsSlotInfoMi[DefBg[SlotNo]].Flag = Flag;
+        
+        if ((Flag & 0x2)) 
+        {
+            SetVolumeMidi2(DefBg[SlotNo], 0, 0);
+        }
+        
+        break;
+    case 7:
+        GsSlotInfoMi[DefEvt[SlotNo]].Flag = Flag;
+        
+        if ((Flag & 0x2))
+        {
+            SetVolumeMidi2(DefEvt[SlotNo], 0, 0);
+        }
+        
+        if ((Flag & 0x4)) 
+        {
+            SetPanMidi(DefEvt[SlotNo], 0, 0);
+        }
+        
+        break;
+    case 8:
+        ObjectInfo[SlotNo].Flag = Flag;
+        
+        if ((No = SearchPlayingObjectSeEx(SlotNo, 0)) >= 0)
+        {
+            if ((Flag & 0x2)) 
+            {
+                SetVolumeMidi2(DefObj[No], 0, 0);
+            }
+            
+            if ((Flag & 0x4)) 
+            {
+                SetPanMidi(DefObj[No], 0, 0);
+            }
+        }
+        
+        break;
+    case 10:
+        GsSlotInfoAx->Flag = Flag;
+        
+        SetVolumeAdx(0, CurrentBgmVolume);
+        break;
+    }
+}
+
+// 100% matching!
+void Reset3dSoundFlag(void) {
+    int i;
+    
+    Set3dSoundFlag(0, 0, 0);
+
+    for(i = 0; i < 3; i++) {
+        Set3dSoundFlag(1, i, 0);
+    }
+    
+    Set3dSoundFlag(2, 0, 0);
+    Set3dSoundFlag(3, 0, 0);
+    Set3dSoundFlag(4, 0, 0);
+
+    for(i = 0; i < 6; i++) {
+        Set3dSoundFlag(5, i, 0);
+    }
+    
+    Set3dSoundFlag(6, 0, 0);
+    Set3dSoundFlag(6, 1, 0);
+    Set3dSoundFlag(6, 2, 0);
+
+    for(i = 0; i < MaxSlotObjectSe; i++) {
+        Set3dSoundFlag(7, i, 0);
+    }
+
+    for(i = 0; i < MaxSlotEventSe; i++) {
+        Set3dSoundFlag(8, i, 0);
+    }
+    
+    Set3dSoundFlag(9, 0, 0);
+    Set3dSoundFlag(0xA, 0, 0);
+    Set3dSoundFlag(0xB, 0, 0);
+}
+
+// 100% matching!
+void SetUserSoundVolume(int Type, int SlotNo, int StartVol, int LastVol, int Frame)
+{
+    switch (Type) 
+    {
+    case 0:
+        if ((GsSlotInfoSe[7].Flag & 0x2))
+        {
+            RequestSeFadeFunctionEx(7, StartVol, LastVol, Frame);
+        }
+
+        break;
+    case 1:
+        if ((GsSlotInfoSe[(SlotNo * 2) + 11].Flag & 0x2))
+        {
+            RequestSeFadeFunctionEx((SlotNo * 2) + 11, StartVol, LastVol, Frame);
+            RequestSeFadeFunctionEx((SlotNo * 2) + 12, StartVol, LastVol, Frame);
+        }
+        
+        break;
+    case 2:
+        if ((GsSlotInfoSe[6].Flag & 0x2))
+        {
+            RequestSeFadeFunctionEx(6, StartVol, LastVol, Frame);
+        }
+        
+        break;
+    case 3:
+        if ((GsSlotInfoSe[8].Flag & 0x2))
+        {
+            RequestSeFadeFunctionEx(8, StartVol, LastVol, Frame);
+            RequestSeFadeFunctionEx(9, StartVol, LastVol, Frame);
+            RequestSeFadeFunctionEx(19, StartVol, LastVol, Frame);
+        }
+        
+        break;
+    case 4:
+        if ((GsSlotInfoSe[10].Flag & 0x2))
+        {
+            RequestSeFadeFunctionEx(10, StartVol, LastVol, Frame);
+        }
+        
+        break;
+    case 5:
+        if ((GsSlotInfoSe[DefEne[SlotNo]].Flag & 0x2)) 
+        {
+            RequestSeFadeFunctionEx(DefEne[SlotNo], StartVol, LastVol, Frame);
+        }
+        
+        break;
+    case 6:
+        if ((GsSlotInfoMi[DefBg[SlotNo]].Flag & 0x2))
+        {
+            RequestMidiFadeFunctionEx(DefBg[SlotNo], StartVol, LastVol, Frame);
+        }
+        
+        break;
+    case 7:
+        if ((GsSlotInfoMi[DefEvt[SlotNo]].Flag & 0x2)) 
+        {
+            RequestMidiFadeFunctionEx(DefEvt[SlotNo], StartVol, LastVol, Frame);
+        }
+        
+        break;
+    case 8:
+        if ((ObjectInfo[SlotNo].Flag & 0x2))
+        {
+            ObjectInfo[SlotNo].VolFadeP[0] = StartVol;
+            ObjectInfo[SlotNo].VolFadeP[1] = LastVol;
+            ObjectInfo[SlotNo].VolFadeP[2] = Frame;
+
+            ObjectInfo[SlotNo].Flag |= 0x8;
+        }
+        
+        break;
+    case 10:
+        if ((GsSlotInfoAx->Flag & 0x2))
+        {
+            RequestAdxFadeFunctionEx(0, StartVol, LastVol, Frame);
+        }
+        
+        break;
+    }
+}
+
+// 100% matching!
+void SetUserSoundPan(int Type, int SlotNo, int StartPan, int LastPan, int Frame)
+{
+    switch (Type)
+    {
+    case 0:
+        if ((GsSlotInfoSe[7].Flag & 0x4))
+        {
+            RequestSePanFunctionEx(7, StartPan, LastPan, Frame);
+        }
+        
+        break;
+    case 1:
+        if ((GsSlotInfoSe[(SlotNo * 2) + 11].Flag & 0x4))
+        {
+            RequestSePanFunctionEx((SlotNo * 2) + 11, StartPan, LastPan, Frame);
+            RequestSePanFunctionEx((SlotNo * 2) + 12, StartPan, LastPan, Frame);
+        }
+        
+        break;
+    case 2:
+        if ((GsSlotInfoSe[6].Flag & 0x4)) 
+        {
+            RequestSePanFunctionEx(6, StartPan, LastPan, Frame);
+        }
+        
+        break;
+    case 3:
+        if ((GsSlotInfoSe[8].Flag & 0x4)) 
+        {
+            RequestSePanFunctionEx(8, StartPan, LastPan, Frame);
+            RequestSePanFunctionEx(9, StartPan, LastPan, Frame);
+            RequestSePanFunctionEx(19, StartPan, LastPan, Frame);
+        }
+        
+        break;
+    case 4:
+        if ((GsSlotInfoSe[10].Flag & 0x4))
+        {
+            RequestSePanFunctionEx(10, StartPan, LastPan, Frame);
+        }
+        
+        break;
+    case 5:
+        if ((GsSlotInfoSe[DefEne[SlotNo]].Flag & 0x4)) 
+        {
+            RequestSePanFunctionEx(DefEne[SlotNo], StartPan, LastPan, Frame);
+        }
+        
+        break;
+    case 7:
+        if ((GsSlotInfoMi[DefEvt[SlotNo]].Flag & 0x4)) 
+        {
+            RequestMidiPanFunctionEx(DefEvt[SlotNo], StartPan, LastPan, Frame);
+        }
+        
+        break;
+    case 8:
+        if ((ObjectInfo[SlotNo].Flag & 0x4))
+        {
+            ObjectInfo[SlotNo].PanFadeP[0] = StartPan;
+            ObjectInfo[SlotNo].PanFadeP[1] = LastPan;
+            ObjectInfo[SlotNo].PanFadeP[2] = Frame;
+            
+            ObjectInfo[SlotNo].Flag |= 0x10;
+        }
+        
+        break;
+    }
+}
+
+// 100% matching!
+void PlayGameSe4Event(GAME_WORK* gp, NJS_POINT3* pPos, int FloorType, int SeType)
+{
+    int Flag;
+
+    Flag = 0;
+    
+    if (gp->LastVol != -1) 
+    {
+        Flag |= 0x2;
+    }
+    
+    if (gp->LastPan != -1) 
+    {
+        Flag |= 0x4;
+    }
+    
+    Set3dSoundFlag(gp->Type, gp->SlotNo, Flag);
+    
+    if (gp->LastVol != -1) 
+    {
+        SetUserSoundVolume(gp->Type, gp->SlotNo, gp->StartVol, gp->LastVol, gp->Frame);
+    }
+    
+    if (gp->LastPan != -1) 
+    {
+        SetUserSoundPan(gp->Type, gp->SlotNo, gp->StartPan, gp->LastPan, gp->Frame);
+    }
+    
+    switch (gp->Type)
+    {
+    case 0:
+        CallPlayerVoice(gp->SeNo);
+        break;
+    case 1:
+        CallPlayerFootStepSeEx(FloorType, SeType, 1, gp->SlotNo, pPos);
+        break;
+    case 2:
+        CallPlayerActionSe(gp->SeNo, 1);
+        break;
+    case 3:
+        CallPlayerWeaponSeEx(pPos, gp->SeNo, gp->SlotNo);
+        break;
+    case 4:
+        CallYakkyouSe(pPos, gp->SeNo);
+        break;
+    case 5:
+        CallEnemySe(gp->SlotNo, pPos, gp->SeNo);
+        break;
+    case 6:
+        CallBackGroundSe(gp->SlotNo, gp->SeNo);
+        break;
+    case 7:
+        CallNativeEventSe(gp->SlotNo, pPos, gp->SeNo, 1);
+        break;
+    case 8:
+    case 9:
+    case 10:
+    case 11:
+        break;
+    }
+}
+
+// 100% matching! 
+void CallSystemSeBasic(int SeNo, int Volume, int FxLevel)
+{
+    int SlotDef[2] = { 17, 18 };
+
+    RequestInfo.BankNo = SE_BANK_NO(SeNo);
+    RequestInfo.ListNo = SeNo;
+    
+    RequestInfo.Priority = 0;
+    
+    RequestInfo.PanDelayTime = -2;
+    
+    RequestInfo.Volume = Volume;
+    
+    RequestInfo.VolumeDelayTime = 0;
+    RequestInfo.PitchDelayTime = -2;
+    RequestInfo.SpeedDelayTime = -1;
+    
+    if (FxLevel == 0)
+    {
+        RequestInfo.FxInput = -2;
+        RequestInfo.FxLevel = 0;
+    } 
+    else 
+    {
+        RequestInfo.FxInput = 0;
+        RequestInfo.FxLevel = FxLevel;
+    }
+    
+    if ((SeNo & 0x80000000)) 
+    {
+        StopFadeMidi(2);
+        
+        RequestInfo.SlotNo = 2;
+        
+        ExPlayMidi(&RequestInfo);
+    }
+    else 
+    {
+        RequestInfo.SlotNo = SlotDef[SystemSeSlotSwitch];
+        
+        SystemSeSlotSwitch = !SystemSeSlotSwitch;
+        
+        ExPlaySe(&RequestInfo);
+    }
+}
+
+// 100% matching!
+void CallSystemSeEx(int SeNo, int Volume) {
+    CallSystemSeBasic(SeNo, Volume, 0);
+}
+
+// 100% matching!
+void CallSystemSe(int param, int SeNo) // first parameter is not present on the debugging symbols
+{
+    CallSystemSeEx(SeNo, 0);
+}
+
+// 100% matching!
+void StopSystemSe() {
+    StopMidi(2);
+}
+
+// 100% matching!
+// syukan = custom; habit; manners
+void SetSyukanModeSoundParam() {
+    if (sys->gm_flg & 0x01000000) {
+        RequestInfo.Volume = 0;
+        RequestInfo.VolumeDelayTime = 0;
+        RequestInfo.Pan = 0;
+        RequestInfo.PanDelayTime = 0;
+    }
+}
+
+#ifdef TARGET_PC
+/* the player's voice (bank 4) from the voice bank of the character the player appears as, an extra
+   bank (pc/glue/coop_glue.c, pc/src/audio/snd_iop.c); 0: bank 4 as loaded (the character played),
+   -1: none (co-op: the partner's own game voices it) */
+int pc_player_voice(int SeNo);
+extern int pc_se_xbank;
+#endif
+
+// 100% matching!
+void CallPlayerVoice(int SeNo) {
+    SetupSeGenericParm(7, SeNo, &PlayerPos, 1, GsSlotInfoSe[7].Flag);
+    RequestInfo.PitchDelayTime = -2;
+    if (!(GsSlotInfoSe[7].Flag & 2)) {
+        RequestInfo.Volume += Room_SoundEnv.VolPlayerVoice;
+    }
+#ifdef TARGET_PC
+    if (RequestInfo.BankNo == 4 && (pc_se_xbank = pc_player_voice(SeNo)) < 0) {
+        pc_se_xbank = 0;
+        return;
+    }
+#endif
+    ExPlaySe(&RequestInfo);
+#ifdef TARGET_PC
+    pc_se_xbank = 0;
+#endif
+}
+
+// 100% matching!
+int GetPlayerActionSeSlotNo(int Type, int Id)
+{
+    int SlotDef[6] = { 11, 12, 13, 14, 15, 16 };
+    
+    switch (Type) 
+    {
+    case 0:
+    case 1:
+    case 4:
+    case 5:
+        PlayerFootStepSwitch[Id] = !PlayerFootStepSwitch[Id];
+    
+        return SlotDef[(Id * 2) + PlayerFootStepSwitch[Id]];
+    case 2:
+    case 3:
+    case 6:
+        return 6;
+    }
+}
+
+// 100% matching!
+void CallPlayerFootStepSeEx(int FloorType, int Type, int Flag, int Id, NJS_POINT3* pPos)
+{
+    short WalkPitchTbl[4] = { 0, 256, 256, 0 };
+    short RunPitchTbl[4] = { 512, 768, 768, 512 };
+    char FootDef[5] = { 0, 1, 2, 3, 4 }; 
+    float Distance; 
+
+    Get3DSoundParameter(&CameraPos, pPos, &RequestInfo.Pan, &RequestInfo.Volume, &Distance, 0);
+    
+    SetSyukanModeSoundParam();
+    
+    xPan = RequestInfo.Pan;
+    xVol = RequestInfo.Volume;
+    xAng = AngBak;
+    
+    RequestInfo.SlotNo = GetPlayerActionSeSlotNo(Type, Id);
+    
+    RequestInfo.Priority = 0;
+    
+    RequestInfo.FxInput = -1;
+    
+    if (Flag != 0)
+    {
+        switch (Type)
+        {                 
+        case 0:
+            RequestInfo.BankNo = 2;
+            RequestInfo.ListNo = FootDef[FloorType];
+            
+            RequestInfo.Pitch = WalkPitchTbl[(unsigned int)(4.0f * (-rand() / -2.1474836e9f)) & 0x3];
+            RequestInfo.PitchDelayTime = 0;
+            break;
+        case 1:
+            RequestInfo.BankNo = 2;
+            RequestInfo.ListNo = FootDef[FloorType];
+            
+            RequestInfo.Pitch = RunPitchTbl[(unsigned int)(4.0f * (-rand() / -2.1474836e9f)) & 0x3];
+            RequestInfo.PitchDelayTime = 0;
+            break;
+        case 2:
+            RequestInfo.BankNo = 2;
+            RequestInfo.ListNo = 5;
+            
+            RequestInfo.PitchDelayTime = -2;
+            break;
+        case 3:
+            RequestInfo.BankNo = 2;
+            RequestInfo.ListNo = FloorType;
+            
+            RequestInfo.PitchDelayTime = -2;
+            break;
+        }
+        
+        if ((GsSlotInfoSe[RequestInfo.SlotNo].Flag & 0x2))
+        {
+            RequestInfo.VolumeDelayTime = -1;
+        }
+        else 
+        {
+            RequestInfo.VolumeDelayTime = 0;
+        }
+        
+        if ((GsSlotInfoSe[RequestInfo.SlotNo].Flag & 0x4)) 
+        {
+            RequestInfo.PanDelayTime = -1;
+        }
+        else 
+        {
+            RequestInfo.PanDelayTime = 0;
+        }
+    } 
+    else 
+    {
+        RequestInfo.ListNo = -1;
+        
+        RequestInfo.PanDelayTime = -1;
+        RequestInfo.VolumeDelayTime = -1;
+        RequestInfo.PitchDelayTime = -1;
+    }
+    
+    if (!(GsSlotInfoSe[RequestInfo.SlotNo].Flag & 0x2)) 
+    {
+        RequestInfo.Volume += Room_SoundEnv.VolPlayerAction;
+    }
+    
+    ExPlaySe(&RequestInfo);
+}
+
+// 100% matching!
+void CallPlayerFootStepSe(int FloorType, int Type, int Flag) {
+    CallPlayerFootStepSeEx(FloorType, Type, Flag, 0, &PlayerPos);
+}
+
+// 100% matching!
+void CallPlayerActionSe(int SeNo, int Flag) {
+    CallPlayerFootStepSeEx(SeNo, 3, Flag, 0, &PlayerPos);
+}
+
+// 100% matching! 
+void CallPlayerWeaponSeEx(NJS_POINT3* pPos, int SeNo, int SlotNo)
+{
+    int SlotDef[2] = { 8, 9 };   
+    int NeoSlotNo;            
+    int temp; // not from the debugging symbols
+
+    if (SpqFileReadRequestFlag != 2) 
+    {
+        NeoSlotNo = (SeNo & 0xFFFF00FF) | 0x100; 
+        
+        if (SlotNo == 0) 
+        {
+            temp = SlotDef[WeaponSeSlotSwitch];
+            WeaponSeSlotSwitch = !WeaponSeSlotSwitch;
+        } 
+        else 
+        {
+            temp = 19;
+        }
+        
+        SetupSeGenericParm(temp, NeoSlotNo, pPos, 1, GsSlotInfoSe[temp].Flag); 
+        
+        SetSyukanModeSoundParam();
+        
+        RequestInfo.PitchDelayTime = -2;
+        
+        if (!(GsSlotInfoSe[temp].Flag & 0x2))
+        {
+            RequestInfo.Volume += Room_SoundEnv.VolWeaponSe;
+        }
+        
+        ExPlaySe(&RequestInfo);
+    }
+}
+
+// 100% matching!
+// yakkyou = (ammunition) cartridge; shell case
+void CallYakkyouSe(NJS_POINT3* pPos, int SeNo) 
+{
+    if (SpqFileReadRequestFlag != 2) 
+    {
+        SetupSeGenericParm(10, (SeNo & 0xFFFF00FF) | 0x100, pPos, 1, GsSlotInfoSe[10].Flag);
+        
+        RequestInfo.Volume -= CurrentRoomFxLevel / 12;
+        
+        if (!((GsSlotInfoSe[10].Flag) & 0x2)) 
+        {
+            RequestInfo.Volume += Room_SoundEnv.VolCartridgeSe;
+        }
+        
+        ExPlaySe(&RequestInfo);
+    }
+}
+
+// 100% matching!
+void CallBackGroundSeEx(unsigned int SlotNo, int SeNo, short Timer)
+{
+    int SlotDef[3] = { 0, 1, 2 };
+
+    SeNo = (SeNo & 0xFFFF00FF) | 0x300;
+    
+    if (StartInitScriptFlag != 0)
+    {
+        BgSePrmBuf[SlotNo].SeNo = SeNo;
+        
+        BgSePrmBuf[SlotNo].Timer = Timer;
+        
+        BgSePrmBuf[SlotNo].ReqFlag = 1;
+        return;
+    }
+    
+    if (Timer != 0) 
+    {
+        RequestMidiFadeFunction(SlotDef[SlotNo], 1, Timer);
+        
+        RequestInfo.VolumeDelayTime = -1;
+        
+        sdMidiSetVol(MidiHandle[SlotNo], -127, 0);
+    } 
+    else 
+    {
+        RequestInfo.VolumeDelayTime = -2;
+    }
+    
+    RequestInfo.SlotNo = SlotDef[SlotNo];
+    RequestInfo.BankNo = SE_BANK_NO(SeNo);
+    RequestInfo.ListNo = SeNo;
+    
+    RequestInfo.Priority = 0;
+    
+    RequestInfo.PanDelayTime = -2;
+    RequestInfo.PitchDelayTime = -2;
+    RequestInfo.SpeedDelayTime = -1;
+    
+    RequestInfo.FxInput = -1;
+    
+    ExPlayMidi(&RequestInfo);
+    
+    CurrentBgSeNo[SlotNo] = SeNo;
+}
+
+// 100% matching!
+void CallBackGroundSe(unsigned int SlotNo, int SeNo) {
+    CallBackGroundSeEx(SlotNo, SeNo, 0);
+}
+
+// 100% matching!
+void CallBackGroundSe2(unsigned int SlotNo, int SeNo) {
+    if( SeNo != CurrentBgSeNo[SlotNo]) {
+        ReqFadeBgSe[SlotNo] |= 2;
+        CurrentBgSeNo[SlotNo] = SeNo;
+    }
+}
+
+// 100% matching!
+void StopBackGroundSeEx(unsigned int SlotNo, short Timer)
+{
+    int SlotDef[3] = { 0, 1, 2 };
+    
+    if (Timer != 0) 
+    {
+        RequestMidiFadeFunction(SlotDef[SlotNo], 2, Timer);
+    } 
+    else 
+    {
+        StopMidi(SlotDef[SlotNo]);
+    }
+    
+    CurrentBgSeNo[SlotNo] = -1;
+}
+
+// 100% matching!
+void StopBackGroundSe2(unsigned int SlotNo) {
+    ReqFadeBgSe[SlotNo] = 1;
+    CurrentBgSeNo[SlotNo] = -1;
+}
+
+// 100% matching!
+void CallDoorSe(unsigned int No)
+{
+    unsigned char DoorFxDef[40] = { 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40 };
+    
+    RequestInfo.SlotNo = 2; 
+    RequestInfo.BankNo = 1;
+    RequestInfo.ListNo = No;
+    
+    RequestInfo.Priority = 0;
+    
+    RequestInfo.PanDelayTime = -2;
+    RequestInfo.VolumeDelayTime = -2;
+    RequestInfo.PitchDelayTime = -2;
+    RequestInfo.SpeedDelayTime = -1;
+    
+    RequestInfo.FxInput = 0;
+    RequestInfo.FxLevel = DoorFxDef[CurrentDoorNo];
+    
+    MidiInfo[RequestInfo.SlotNo].FadeFunc = 0;
+    
+    ExPlayMidi(&RequestInfo);
+}
+
+#ifdef TARGET_PC
+/* Enemy sounds of types the room's bank 3 lacks (docs/ENEMIES.md "Sounds of added types"): per request, the extra bank the
+   spawner loaded for the requesting enemy's type (spawn_glue.c; 0: the room's, -1: none, silence),
+   used when the sound manager plays it (CallEnemySeMain) */
+static signed char pc_enemy_se_bank[128];
+int spawn_sound_bank(int enemy_no);
+extern int pc_se_xbank;
+#endif
+
+// 100% matching!
+void RequestEnemySeBasic(int EnemyNo, NJS_POINT3* pPos, int SeNo, int Flag, int FadeRate)
+{
+    Enemy* eip;
+    char VolDownTbl[8] = { 0, 254, 252, 250, 248, 247, 246, 245 };
+
+    eip = EnemyInfo; 
+    eip = &eip[EnemyNo];
+#ifdef TARGET_PC
+    pc_enemy_se_bank[EnemyNo & 127] = (signed char)spawn_sound_bank(EnemyNo);
+#endif
+    
+    eip->Pos = *pPos;
+    
+    Get3DSoundParameter(&CameraPos, pPos, &eip->Pan, &eip->Vol, &eip->Dist, 0);
+    
+    eip->Vol += Room_SoundEnv.VolEnemySe;
+    eip->Vol += VolDownTbl[(SeNo & 0xF00000) >> 20];
+    
+    eip->FadeRate = FadeRate;
+
+    if (eip->Prio > ((SeNo & 0xF0000) >> 16)) 
+    {
+        eip->Prio = (SeNo & 0xF0000) >> 16;
+    }
+
+    if (!(SeNo & 0xF000000)) 
+    {
+        eip->SeNo = SeNo;
+        
+        eip->ReqFlag = 1;
+        eip->CallFlag = Flag;
+    }
+    else 
+    {
+        eip->SeNoV = SeNo;
+        
+        eip->ReqFlagV = 1;
+        eip->CallFlagV = Flag;
+    }
+}
+
+// 100% matching! 
+void RequestEnemySe(int EnemyNo, NJS_POINT3* pPos, int SeNo)
+{
+	RequestEnemySeBasic(EnemyNo, pPos, SeNo, 1, 0);
+}
+
+// 100% matching! 
+void RequestEnemySeEx(int EnemyNo, NJS_POINT3* pPos, int SeNo, int FadeRate)
+{
+	RequestEnemySeBasic(EnemyNo, pPos, SeNo, 1, FadeRate);
+}
+
+// 100% matching!
+int ChechPlayEnemySe(int EnemyNo, int SeNo)
+{
+    int i;
+    EnemySlot* esp;
+    
+    esp = EnemySlotInfo;
+    
+    for (i = 0; i < 6; i++, esp++) 
+    {
+        if ((esp->Flag != 0) && (esp->EnemyNo == EnemyNo)) 
+        {
+            if (SeNo > 0) 
+            {
+                return 1;
+            }
+            
+            if (esp->SeNo == SeNo) 
+            {
+                return 1;
+            }
+        }
+    }
+    
+    return 0;
+}
+
+// 100% matching!
+void AllStopEnemySe(void) {
+    int i;
+    EnemySlot* esp;
+
+    esp = &EnemySlotInfo[0];
+    for(i = 0; i < 6; i++, esp++) {
+        if (esp->Flag != 0) {
+            RequestSeFadeFunction(DefEne[i], 2, 0xC8);
+        } else {
+            StopEnemySe(i);
+        }
+        
+        esp->EnemyNo = 0;
+        esp->SeNo = 0;
+        esp->Flag = 0;
+    }
+
+    StopVibrationEx();
+}
+
+// 100% matching!
+void CallEnemySe(int SlotNo, NJS_POINT3* pPos, int SeNo)
+{
+    int SlotDef[6] = { 0, 1, 2, 3, 4, 5 };
+
+    SeNo = (SeNo & 0xFFFF00FF) | 0x300;
+
+    SetupSeGenericParm(SlotDef[SlotNo], SeNo, pPos, 1, GsSlotInfoSe[SlotDef[SlotNo]].Flag);
+    
+    if (!(GsSlotInfoSe[SlotDef[SlotNo]].Flag & 0x2))
+    {
+        RequestInfo.Volume += Room_SoundEnv.VolEnemySe;
+    }
+    
+    ExPlaySe(&RequestInfo);
+}
+
+// 100% matching!
+void StopEnemySe(int SlotNo)
+{
+    StopSe(DefEne[SlotNo]);
+}
+
+// 100% matching!
+int CallNativeEventSe(int SlotNo, NJS_POINT3* pPos, int SeNo, int Mode)
+{
+    float Distance;
+    int SlotDef[5] = { 7, 6, 5, 4, 3 };
+    
+    if (MaxSlotEventSe < SlotNo)
+    {
+        return 1;
+    }
+    
+    SeNo = (SeNo & 0xFFFF00FF) | 0x200;
+    
+    RequestInfo.SlotNo = SlotDef[SlotNo];
+    RequestInfo.BankNo = SE_BANK_NO(SeNo);
+    RequestInfo.ListNo = SeNo;
+    
+    RequestInfo.Priority = 0;
+    
+    RequestInfo.PitchDelayTime = -2;
+    RequestInfo.SpeedDelayTime = -1;
+    
+    RequestInfo.FxInput = -1;
+    
+    switch (Mode) 
+    {                               
+    case 0:
+        Get3DSoundParameter(&CameraPos, pPos, &RequestInfo.Pan, &RequestInfo.Volume, &Distance, 0);
+        
+        RequestInfo.PanDelayTime = 0;
+        RequestInfo.VolumeDelayTime = 0;
+        break;
+    case 1:
+        RequestInfo.PanDelayTime = -2;
+        
+        if ((GsSlotInfoMi[SlotDef[SlotNo]].Flag & 0x2))
+        {
+            RequestInfo.VolumeDelayTime = -1;
+        } 
+        else
+        {
+            RequestInfo.VolumeDelayTime = -2;
+        }
+        
+        break;
+    }
+    
+    ExPlayMidi(&RequestInfo);
+    
+    return 0;
+}
+
+// 100% matching!
+int StopNativeEventSe(int SlotNo)
+{
+    int SlotDef[5] = { 7, 6, 5, 4, 3 };
+    
+    if (MaxSlotEventSe < SlotNo) 
+    {
+        return 1;
+    }
+    
+    StopMidi(SlotDef[SlotNo]);
+    
+    return 0;
+}
+
+// 100% matching!
+void RequestObjectSeEx(int ObjectNo, NJS_POINT3* pPos, int SeNo, int Prio, int Type) 
+{ 
+    Object* oip;
+
+    oip = ObjectInfo;
+    
+    oip = &oip[ObjectNo];
+
+    if (Type == 0) 
+    {
+        Get3DSoundParameter(&CameraPos, pPos, &oip->Pan, &oip->Vol, &oip->Dist, 0);
+    } 
+    else
+    {
+        Get3DSoundParameter(&CameraPos, pPos, &oip->Pan, &oip->Vol, &oip->Dist, 1);
+    }
+
+    if (Type == 0) 
+    {
+        oip->Vol += Room_SoundEnv.VolObjectSe;
+    }
+
+    oip->SlotNo = -1;
+    
+    oip->ReqFlag = 1;
+}
+
+// 100% matching!
+void RegistObjectSe(int ObjectNo, NJS_POINT3* pPos, int SeNo, int Prio)
+{
+    int i;
+    Object* oip;
+
+    oip = ObjectInfo;
+    
+    oip = &oip[ObjectNo];
+    
+    SeNo = (SeNo & 0xFFFF00FF) | 0x200;
+    
+    oip->pos.x = pPos->x;
+    oip->pos.y = pPos->y;
+    oip->pos.z = pPos->z;
+    
+    oip->Prio = Prio;
+    
+    oip->Type = 0;
+    
+    oip->SlotNo = -1;
+    oip->SeNo = SeNo;
+    
+    oip->ReqFlag = 1;
+    
+    for (i = 0; i < MaxObjectReqList; i++)  
+    {
+        if (ObjectReqList[i] == ObjectNo)
+        {
+            return;
+        }
+    } 
+    
+    ObjectReqList[i] = ObjectNo;
+    
+    MaxObjectReqList++;
+}
+
+// 100% matching!
+void FreeObjectSe(int ObjectNo)
+{
+    int i;
+    int Flag;
+    Object* oip;
+    int SlotNo; // not from DWARF
+
+    oip = ObjectInfo;
+    
+    oip = &oip[ObjectNo];
+    
+    oip->SlotNo = -1;
+    
+    oip->ReqFlag = 0;
+    
+    Flag = 0;
+    
+    for (i = 0; i < MaxObjectReqList; i++)  
+    {
+        if (ObjectReqList[i] == ObjectNo) 
+        {
+            Flag = 1;
+        }
+        
+        if (Flag != 0) 
+        {
+            ObjectReqList[i] = ObjectReqList[i + 1];
+        }
+    }
+    
+    if (Flag != 0) 
+    {
+        MaxObjectReqList--;
+    }
+    
+    SlotNo = SearchPlayingObjectSeEx(ObjectNo, 0);
+    
+    if (SlotNo >= 0) 
+    {
+        StopMidi(DefObj[SlotNo]);
+    }
+}
+
+// 100% matching!
+void PlayBgmEx2(unsigned int PatId, int BgmNo, int FadeInRate, int Volume)
+{
+    if (!(sys->ss_flg & 0x4000000)) 
+    {
+        if (GetAdxStatus(0) == 3) 
+        {
+            StopAdx(0);
+            
+            AdxPlayFlag[0] = 0;
+        }
+        
+        if ((FadeInRate + 1) != 0) 
+        {
+            SetVolumeAdxEx(0, -127.0f, Volume);
+            
+            RequestAdxFadeFunction(0, 1, FadeInRate + 1);
+        }
+        
+        PlayAdx(0, PatId, BgmNo);
+        
+        CurrentBgmNo = BgmNo;
+        CurrentBgmVolume = Volume;
+        
+        AdxPlayFlag[0] = 1;
+    }
+}
+
+// 100% matching!
+void PlayBgmEx(int BgmNo, int FadeInRate, int Volume)
+{
+	PlayBgmEx2(PatId[0], BgmNo, FadeInRate, Volume);
+}
+
+// 100% matching!
+void PlayBgm(int BgmNo, int FadeInRate)
+{
+	PlayBgmEx(BgmNo, FadeInRate, -45);
+}
+
+// 100% matching!
+void PlayBgm2(int BgmNo, int Volume)
+{
+    if (CurrentBgmNo != BgmNo) 
+    {
+        CurrentBgmNo = BgmNo;
+        ReqFadeBgmNo = 8;
+    }
+    else if (CurrentBgmVolume != Volume) 
+    {
+        ReqFadeBgmNo = 2;
+    }
+    CurrentBgmVolume = Volume;
+}
+
+// 100% matching!
+void StopBgm(int FadeOutRate) 
+{
+    if (FadeOutRate != 0) 
+    {
+        RequestAdxFadeFunction(0, 2, FadeOutRate);
+    } 
+    else 
+    {
+        StopAdx(0);
+        AdxPlayFlag[0] = 0;
+    }
+    CurrentBgmNo = -1;
+    CurrentBgmVolume = -127;
+    NextBgmVolume = -127;
+}
+
+// 100% matching!
+void StopBgm2()
+{
+    ReqFadeBgmNo = 1;
+    
+    CurrentBgmNo = -1;
+    CurrentBgmVolume = -127;
+    
+    NextBgmVolume = -127;
+}
+
+// 100% matching!
+void PlayVoiceEx2(int PatId, int VoiceNo, NJS_POINT3* pPos, int Mode, int FadeInRate, int PauseFlag)
+{
+    char Pan;   
+    char Vol;   
+    float Dist; 
+
+    Pan = 0;
+    Vol = 0;
+    
+    if (GetAdxStatus(1) == 3) 
+    {
+        StopAdx(1);
+        
+        AdxPlayFlag[1] = 0;
+    }
+    
+    switch (Mode) 
+    {                               
+    case 0:
+        Get3DSoundParameter(&CameraPos, pPos, &Pan, &Vol, &Dist, 1);
+        
+        SetPanAdx(1, 0, Pan);
+        SetVolumeAdx(1, Vol); 
+        
+        PlayAdxEx(1, PatId, VoiceNo, PauseFlag);
+        break;
+    case 1:
+        if (FadeInRate != 0) 
+        {
+            RequestAdxFadeFunction(1, 1, FadeInRate);
+        } 
+        else 
+        {
+            SetVolumeAdx(1, 0);
+        }
+        
+        SetPanAdx(1, 0, 0);
+
+        PlayAdxEx(1, PatId, VoiceNo, PauseFlag);
+        break;
+    case 2:
+        Get3DSoundParameter(&CameraPos, pPos, &Pan, &Vol, &Dist, 1);
+        
+        SetPanAdx(1, 0, Pan);
+        SetVolumeAdx(1, Vol);
+        break;
+    }
+    
+    AdxPlayFlag[1] = 1;
+}
+
+// 100% matching!
+void PlayVoiceEx(int VoiceNo, NJS_POINT3* pPos, int Mode, int FadeInRate, int PauseFlag)
+{
+	PlayVoiceEx2(PatId[1], VoiceNo, pPos, Mode, FadeInRate, PauseFlag);
+}
+
+// 100% matching!
+void PlayVoice(int VoiceNo, NJS_POINT3* pPos, int Mode, int FadeInRate)
+{
+	PlayVoiceEx(VoiceNo, pPos, Mode, FadeInRate, 0);
+}
+
+// 100% matching!
+void ContinuePlayVoice()
+{
+	ContinueAdx(1);
+}
+
+// 100% matching!
+void StopVoice(int FadeOutRate)
+{
+    if (FadeOutRate != 0) 
+    {
+        RequestAdxFadeFunction(1, 2, FadeOutRate);
+        return;
+    }
+    StopAdx(1);
+    AdxPlayFlag[1] = 0;
+}
+
+// 100% matching!
+int CheckPlayEndAdx(int SlotNo)
+{
+    return AdxPlayFlag[SlotNo];
+}
+
+// 100% matching!
+int GetTimeAdx(int SlotNo)
+{
+    return GetAdxPlayTime(SlotNo);
+}
+
+
+// 100% matching!
+void SetRoomSoundFxLevel(char FxProgNo, char FxLevel)
+{
+    SetFxLevelSe(0, FxLevel);
+    SetFxLevelSe(1, FxLevel);
+    SetFxLevelSe(2, FxLevel);
+    SetFxLevelSe(3, FxLevel);
+    SetFxLevelSe(4, FxLevel);
+    SetFxLevelSe(5, FxLevel);
+    SetFxLevelSe(0xB, FxLevel);
+    SetFxLevelSe(0xC, FxLevel);
+    SetFxLevelSe(7, FxLevel);
+    SetFxLevelSe(6, FxLevel);
+    SetFxLevelSe(8, FxLevel);
+    SetFxLevelSe(9, FxLevel);
+    SetFxLevelSe(0xA, FxLevel);
+    SetFxLevelSe(0xD, FxLevel);
+    SetFxLevelSe(0xE, FxLevel);
+    SetFxLevelSe(0xF, FxLevel);
+    SetFxLevelSe(0x10, FxLevel);
+    SetFxLevelMidi(3, FxLevel);
+    SetFxLevelMidi(4, FxLevel);
+    SetFxLevelMidi(5, FxLevel);
+    SetFxLevelMidi(7, FxLevel);
+    SetFxLevelMidi(6, FxLevel);
+    CurrentRoomFxProgNo = FxProgNo;
+    CurrentRoomFxLevel = FxLevel;
+}
+
+// 100% matching!
+void SetRoomSoundFxLevelEx() 
+{
+    SetRoomSoundFxLevel(0, Room_SoundEnv.RoomFxLevel);
+}
+
+// 100% matching!
+int SearchPlayingEnemySe(int EnemyNo, int Attrib) 
+{
+    EnemySlot* EnemySlotPtr;
+    int i = 0;
+    EnemySlotPtr = &EnemySlotInfo[0];
+    
+    while (TRUE)
+    {
+        if ((EnemySlotPtr->Flag != 0) && (EnemyNo == EnemySlotPtr->EnemyNo) && (Attrib == EnemySlotPtr->Attrib)) 
+        {
+            return i;
+        }
+        
+        i += 1;
+        EnemySlotPtr += 1;
+        
+        if (i >= 6) 
+        {
+            return -1;
+        }
+    }
+}
+
+// 100% matching!
+int SearchFreeEnemySeSlot() 
+{
+    EnemySlot* EnemySlotPtr;
+    int i = 0;
+    EnemySlotPtr = &EnemySlotInfo[0];
+    
+    while (TRUE)
+    {
+        if (EnemySlotPtr->Flag == 0) 
+        {
+            return i;
+        }
+        
+        i += 1;
+        EnemySlotPtr += 1;
+        
+        if (i >= 6) 
+        {
+            return -1;
+        }
+    }
+}
+
+
+// 100% matching!
+int CheckPlaySameSe(int EnemyNo, int SeNo, int Flag) 
+{
+    int i = 0;
+    EnemySlot* EnemySlotPtr;
+    int SameSeCount = 0;
+    int MaxSeCount = 0;
+    EnemySlotPtr = &EnemySlotInfo[0];
+    
+    while (i < 6)
+    {
+        if ((EnemySlotPtr->Flag != 0) && (EnemySlotPtr->SeNo == SeNo) && (EnemyNo != EnemySlotPtr->EnemyNo) && (Flag != 0)) 
+        {
+            SameSeCount += 1;
+        }
+        
+        i += 1;
+        EnemySlotPtr += 1;
+    }
+    
+    MaxSeCount = (SeNo >> 12) & 0xF;
+    
+    if (SameSeCount == 0)
+    {
+        return 0;
+    }
+    
+    return (SameSeCount < MaxSeCount) ? 0 : 1;
+
+}
+
+
+// 100% matching!
+void CallEnemySeMain(unsigned int SlotNo, int SeNo, char Pan, char Vol, int Flag, int FadeRate)
+{
+    short* var_at;
+    RequestInfo.SlotNo = SlotNo;
+    RequestInfo.Priority = 0;
+    
+    if (Flag == 0) 
+    {
+        RequestInfo.ListNo = -1;
+        if (CheckFadeEndSe(SlotNo) == 0) 
+        {
+            RequestInfo.Volume = Vol;
+            RequestInfo.VolumeDelayTime = 0;
+        } 
+        else 
+        {
+            RequestInfo.VolumeDelayTime = -1;
+        }
+        
+    }
+    else 
+    {
+        StopSe(SlotNo);
+        RequestInfo.BankNo = ((SeNo >> 0x8) & 0xF);
+        RequestInfo.ListNo = SeNo;
+#ifdef TARGET_PC
+        { extern void vr_enemy_sound(int enemy_no, int se_no); vr_enemy_sound(EnemySlotInfo[SlotNo].EnemyNo, SeNo); }   /* VR: a hold's bites felt with their sound (pc/glue/vr_glue.c) */
+#endif
+#ifdef TARGET_PC
+        if (RequestInfo.BankNo == 3)
+        {
+            pc_se_xbank = pc_enemy_se_bank[EnemySlotInfo[SlotNo].EnemyNo & 127];
+            
+            if (pc_se_xbank < 0)
+            {
+                pc_se_xbank = 0;
+                RequestInfo.ListNo = -1;   /* its bank is not loaded: silence, not another type's sound */
+            }
+        }
+#endif
+        if (FadeRate == 0) 
+        {
+            StopFadeSe(SlotNo);
+             RequestInfo.Volume = Vol;
+             RequestInfo.VolumeDelayTime = 0;
+        } 
+        else 
+        {
+        block_8:
+            RequestInfo.VolumeDelayTime = -1;
+        }
+    }
+    RequestInfo.Pan = Pan;
+    RequestInfo.PanDelayTime = 0;
+    RequestInfo.PitchDelayTime = -1;
+    RequestInfo.FxInput = -1;
+    ExPlaySe(&RequestInfo);
+#ifdef TARGET_PC
+    pc_se_xbank = 0;
+#endif
+    if ((Flag != 0) && (FadeRate != 0)) 
+    {
+        RequestSeFadeFunctionEx(SlotNo, -0x7F, Vol, FadeRate);
+    }
+}
+
+
+// 100% matching!
+void RegistEnemySlot(int SlotNo, int EnemyNo, int SeNo)
+{
+    EnemySlot* EnemySlotPtr;
+    
+    EnemySlotPtr = EnemySlotInfo;
+    EnemySlotPtr += (SlotNo * 0x1);
+    EnemySlotPtr->EnemyNo = EnemyNo;
+    EnemySlotPtr->SeNo = SeNo;
+    EnemySlotPtr->Attrib = (SeNo & 0xF000000) >> 0x18;
+    EnemySlotPtr->Prio = (SeNo & 0xF0000) >> 0x10;
+    EnemySlotPtr->Flag = 1;
+}
+
+// 100% matching!
+void ResetEnemySeInfo()
+{
+
+}
+
+// 99.85% matching
+void ExecEnemySeManager()
+{
+    int i;
+    int j;
+    EnemySlot* esp;
+    Enemy* eip;
+    Enemy* eip2;
+    unsigned char* rlp1;
+    unsigned char* rlp2;
+    unsigned char a;
+    unsigned char b;
+    int SlotNo;
+    int FreeEnemySlotCnt;
+
+    FreeEnemySlotCnt = 0;
+    
+    if (StartInitScriptFlag != 0) 
+    {
+        return;
+    }
+    
+    for (i = 0, esp = EnemySlotInfo; i < 6; i++, esp++) 
+    {
+        if (CheckPlaySe(i) == 0) 
+        {
+            esp->Flag = 0;
+            
+            esp->EnemyNo = 0;
+            esp->SeNo = 0;
+            
+            esp->Attrib = 0;
+            
+            esp->Prio = 0;
+            
+            FreeEnemySlotCnt++;
+        }
+    }
+    
+    MaxRequestList = 0;
+    
+    for (i = 0, eip = EnemyInfo; i < 128; i++, eip++) 
+    {
+        if ((eip->ReqFlag != 0) || (eip->ReqFlagV != 0)) 
+        {
+            RequestList[MaxRequestList] = i;
+            
+            MaxRequestList++;
+        }
+    }
+    
+    if (MaxRequestList >= 2) 
+    {
+        for (i = 0; i < (MaxRequestList - 1); i++) 
+        {
+            for (j = i + 1; j < MaxRequestList; j++) 
+            {
+                rlp1 = rlp1 = RequestList;
+                
+                rlp1 += i;
+                
+                a = *rlp1;
+
+                rlp2 = RequestList;
+                
+                rlp2 += j;
+                
+                b = *rlp2;
+
+                eip = EnemyInfo;
+                
+                eip += a;
+
+                eip2 = EnemyInfo;
+                
+                eip2 += b;
+
+                if (eip->Prio > eip2->Prio) 
+                {
+                    *rlp1 = b;
+                    *rlp2 = a;
+                }
+                else if (eip->Dist > eip2->Dist) 
+                {
+                    *rlp1 = b;
+                    *rlp2 = a;
+                }
+            }
+        }
+    }
+    
+    for (i = 0; i < MaxRequestList; i++) 
+    {
+        eip = EnemyInfo;
+        
+        j = RequestList[i];
+        
+        eip += j;
+        
+        eip->Vol += CheckCollision4Sound(&eip->Pos);
+        
+        if (eip->ReqFlag != 0) 
+        {
+            if (CheckPlaySameSe(j, eip->SeNo, eip->CallFlag) == 0) 
+            {
+                if ((SlotNo = SearchPlayingEnemySe(j, 0)) < 0)
+                {
+                    if ((SlotNo = SearchFreeEnemySeSlot()) >= 0) 
+                    {
+                        RegistEnemySlot(SlotNo, j, eip->SeNo);
+                        
+                        CallEnemySeMain(SlotNo, eip->SeNo, eip->Pan, eip->Vol, eip->CallFlag, eip->FadeRate);
+                    }
+                } 
+                else 
+                {
+                    RegistEnemySlot(SlotNo, j, eip->SeNo);
+                    
+                    CallEnemySeMain(SlotNo, eip->SeNo, eip->Pan, eip->Vol, eip->CallFlag, eip->FadeRate);
+                }
+            }
+            
+            eip->ReqFlag = 0;
+        }
+
+        if (eip->ReqFlagV != 0) 
+        {
+            if (CheckPlaySameSe(j, eip->SeNoV, eip->CallFlagV) == 0) 
+            {
+                if ((SlotNo = SearchPlayingEnemySe(j, 1)) < 0)
+                {
+                    if ((SlotNo = SearchFreeEnemySeSlot()) >= 0) 
+                    {
+                        RegistEnemySlot(SlotNo, j, eip->SeNoV);
+                        
+                        CallEnemySeMain(SlotNo, eip->SeNoV, eip->Pan, eip->Vol, eip->CallFlagV, eip->FadeRate);
+                    }
+                } 
+                else 
+                {
+                    RegistEnemySlot(SlotNo, j, eip->SeNoV);
+                    
+                    CallEnemySeMain(SlotNo, eip->SeNoV, eip->Pan, eip->Vol, eip->CallFlagV, eip->FadeRate);
+                }
+            }
+            
+            eip->ReqFlagV = 0;
+        }
+        
+        eip->Prio = 3;
+    }
+}
+
+// 100% matching!
+int SearchPlayingObjectSeEx(int ObjectNo, int Mode) {
+    int i;
+    ObjectSlot* osp;
+    
+    i = 0;
+    osp = &ObjectSlotInfo[i];
+
+    while(i < MaxSlotObjectSe) {
+
+        if ((osp->Flag != 0) && (ObjectNo == osp->ObjectNo)) {
+            if (Mode != 0) {
+                osp->FindFlag = 1;
+            }
+            
+            return i;
+        }
+        
+        i += 1;
+        osp++;
+    }
+    
+    return -1;
+}
+
+// 100% matching!
+int SearchPlayingObjectSe(int ObjectNo) {
+    return SearchPlayingObjectSeEx(ObjectNo, 1);
+}
+
+// 100% matching!
+int SearchFreeObjectSeSlot()
+{
+    int i;
+    ObjectSlot* osp;
+
+    i = 0;
+
+    for (osp = &ObjectSlotInfo[i]; i < MaxSlotObjectSe; i++, osp++)
+    {
+        if (osp->Flag == 0) 
+        {
+            return i;
+        }
+    }
+
+    return -1;
+}
+
+// 100% matching! 
+void CallObjectSe2(unsigned int SlotNo, Object* oip, int Flag)
+{
+    if (oip->Type == 0) 
+    {
+        RequestInfo.SlotNo = DefObj[SlotNo];
+        
+        if (Flag == 0) 
+        {
+            RequestInfo.ListNo = -1;
+        } 
+        else 
+        {
+            RequestInfo.BankNo = SE_BANK_NO(oip->SeNo);
+            RequestInfo.ListNo = oip->SeNo;
+        }
+        
+        RequestInfo.Priority = 0;
+        
+        if ((oip->Flag & 0x2)) 
+        {
+            RequestInfo.VolumeDelayTime = -1;
+            
+            if ((oip->Flag & 0x8)) 
+            {
+                RequestMidiFadeFunctionEx(DefObj[SlotNo], oip->VolFadeP[0], oip->VolFadeP[1], oip->VolFadeP[2]);
+                
+                oip->Flag &= ~0x8;
+            }
+        } 
+        else 
+        {
+            RequestInfo.Volume = oip->Vol;
+            
+            RequestInfo.Volume += CheckCollision4Sound(&oip->pos); 
+            
+            RequestInfo.VolumeDelayTime = 0;
+        }
+        
+        if ((oip->Flag & 0x4)) 
+        {
+            RequestInfo.PanDelayTime = -1;
+            
+            if ((oip->Flag & 0x10)) 
+            {
+                RequestMidiPanFunctionEx(DefObj[SlotNo], oip->PanFadeP[0], oip->PanFadeP[1], oip->PanFadeP[2]);
+                
+                oip->Flag &= ~0x10;
+            }
+        } 
+        else 
+        {
+            RequestInfo.Pan = oip->Pan;
+            
+            RequestInfo.PanDelayTime = 0;
+        }
+        
+        RequestInfo.SpeedDelayTime = RequestInfo.PitchDelayTime = -1;
+        
+        RequestInfo.FxInput = -1;
+        
+        ExPlayMidi(&RequestInfo);
+    }
+    else 
+    {
+        SetPanAdx(0, 0, oip->Pan);
+        SetVolumeAdx(0, oip->Vol);
+        
+        if (Flag != 0) 
+        {
+            PlayAdx(0, PatId[0], oip->SeNo);
+        }
+    }
+}
+
+// 100% matching!
+void RegistObjectSlot(int SlotNo, int ObjectNo, int SeNo)
+{
+    ObjectSlot* ObjectSlotPtr;
+    
+    ObjectSlotPtr = ObjectSlotInfo;
+    ObjectSlotPtr = ObjectSlotPtr + (SlotNo);
+    ObjectSlotPtr->ObjectNo = ObjectNo;
+    ObjectSlotPtr->SeNo = SeNo;
+    ObjectSlotPtr->Prio = 0;
+    ObjectSlotPtr->Flag = 1;
+}
+
+// 100% matching!
+void ResetObjectSeInfo()
+{
+    memset(&ObjectSlotInfo, 0, 0x24);
+    memset(&ObjectInfo, 0, 0x380);
+    MaxObjectReqList = 0;
+}
+
+// 100% matching!
+void ExecObjectSeManager() {
+    int i;
+    int j;
+    Object *oip;
+    ObjectSlot *osp;
+    int SlotNo;
+    
+    if (StartInitScriptFlag != 0) {
+        return;
+    }
+    
+    for (i = 0; i < MaxObjectReqList; i++) {
+        oip = ObjectInfo;
+        j = ObjectReqList[i];
+        oip += j;
+
+        RequestObjectSeEx(
+            j,
+            &oip->pos,
+            oip->SeNo,     
+            oip->Prio,     
+            oip->Type      
+        );
+
+    }
+    
+    for (i = 0; i < MaxSlotObjectSe; i++) {
+        oip = ObjectInfo;
+        j = ObjectReqList[i];
+        oip += j;
+        
+        if (oip->ReqFlag != 0) {
+            SlotNo = SearchPlayingObjectSe(j);
+            if (SlotNo >= 0) {
+                oip->SlotNo = SlotNo;
+            }
+        }
+    }
+   
+    for (i = 0; i < MaxSlotObjectSe; i++) {
+        oip = ObjectInfo;
+        j = ObjectReqList[i];
+        oip += j;
+
+        if (oip->ReqFlag != 0) {
+            if (oip->SlotNo < 0) {
+                if ((SlotNo = SearchFreeObjectSeSlot() )>= 0) {
+                    CallObjectSe2(SlotNo, oip, 1);
+                    RegistObjectSlot(SlotNo, j, oip->SeNo);
+                }
+            } else {
+                CallObjectSe2(oip->SlotNo, oip, 0);
+                RegistObjectSlot(oip->SlotNo, j, oip->SeNo);
+            }
+            
+            oip->ReqFlag = 0;
+        }
+    }
+
+    for (i = 0, osp = ObjectSlotInfo; i < MaxSlotObjectSe; i++, osp++) {
+        osp->FindFlag = 0;  
+    }
+}
+
+// 100% matching!
+void RequestSoundFade(int Func, int Attr, short Timer) 
+{
+    int i;
+
+    if ((Attr & 0x1)) 
+    {
+        RequestSeFadeFunction(11, Func, Timer);
+        RequestSeFadeFunction(12, Func, Timer);
+    }
+
+    if ((Attr & 0x2)) 
+    {
+        RequestSeFadeFunction(0, Func, Timer);
+        RequestSeFadeFunction(1, Func, Timer);
+        RequestSeFadeFunction(2, Func, Timer);
+        RequestSeFadeFunction(3, Func, Timer);
+        RequestSeFadeFunction(4, Func, Timer);
+        RequestSeFadeFunction(5, Func, Timer);
+    }
+
+    if ((Attr & 0x8))
+    {
+        RequestMidiFadeFunction(0, Func, Timer);
+    }
+
+    if ((Attr & 0x10)) 
+    {
+        RequestMidiFadeFunction(1, Func, Timer);
+    }
+
+    if ((Attr & 0x20)) 
+    {
+        for (i = 0; i < MaxSlotObjectSe; i++) 
+        {
+            if (Func == 1)
+            {
+                RequestMidiFadeFunctionEx(DefObj[i], -127, -64, ((Timer / 100) * 30) + (((Timer % 100) * 6) / 10));
+            }
+            else 
+            {
+                RequestMidiFadeFunction(DefObj[i], Func, Timer); 
+            }
+        }
+
+        for (i = 0; i < MaxSlotEventSe; i++) 
+        {
+            RequestMidiFadeFunction(DefEvt[i], Func, Timer);
+        }
+    }
+
+    if ((Attr & 0x40)) 
+    {
+        RequestAdxFadeFunction(0, Func, Timer);
+    }
+    
+    if ((Attr & 0x80))
+    {
+        RequestAdxFadeFunction(1,  Func, Timer);
+    }
+}
+
+// 100% matching!
+void RequestAllStopSoundEx(int AdxFlag, int InSoundFlag, int FadeCount)
+{
+    int i;
+
+    if ((MovieInfo.ExecMovieSystemFlag == 0) && (AdxFlag != 0)) 
+    {
+       for (i = 0; i < 2; i++) 
+       {
+            if (FadeCount == 0)
+            {
+                StopAdx(i);
+            } 
+            else 
+            {
+                RequestAdxFadeFunctionEx(i, -1, -127, FadeCount);
+            }
+           
+            AdxPlayFlag[i] = 0;
+        } 
+
+        ReqFadeBgmNo = 0;
+        CurrentBgmNo = -1;
+        
+        NextBgmVolume = CurrentBgmVolume = -127;
+    }
+
+    if (InSoundFlag != 0)
+    {
+        ResetObjectSeInfo();
+        
+        for (i = 0; i < 20; i++)
+        {
+            if (FadeCount == 0) 
+            {
+                StopSe(i);
+                StopFadeSe(i);
+            } 
+            else 
+            {
+                RequestSeFadeFunctionEx(i, -1, -127, FadeCount);
+            }
+        }
+
+        for (i = 0; i < 8; i++) 
+        {
+            if (FadeCount == 0) 
+            {
+                StopMidi(i);
+                StopFadeMidi(i);
+            }
+            else 
+            {
+                RequestMidiFadeFunctionEx(i, -1, -127, FadeCount);
+            }
+        }
+
+        for (i = 0; i < 2; i++)
+        {
+            CurrentBgSeNo[i] = -1;
+            
+            ReqFadeBgSe[i] = 0;
+        }
+    }
+}
+
+// 100% matching! 
+void ResetSoundComInfo()
+{
+
+}
+
+// 100% matching!
+void Com_ExecRoomFadeIn()
+{
+    int i;
+    
+    StartInitScriptFlag = 0;
+        
+    if ((ReqFadeBgmNo & 0x8)) 
+    {
+        PlayBgmEx(CurrentBgmNo, 120, CurrentBgmVolume);
+    } 
+    else if ((ReqFadeBgmNo & 0x2)) 
+    {
+        RequestAdxFadeFunctionEx(0, -1, CurrentBgmVolume, 42);
+    }
+
+    ReqFadeBgmNo = 0;
+    
+    for (i = 0; i < 2; i++) 
+    {
+        if ((ReqFadeBgSe[i] & 0x2)) 
+        {
+            CallBackGroundSeEx(i, CurrentBgSeNo[i], 120);
+        } 
+        else if (BgSePrmBuf[i].ReqFlag != 0) 
+        {
+            CallBackGroundSeEx(i, BgSePrmBuf[i].SeNo, BgSePrmBuf[i].Timer) ;
+        }
+        
+        ReqFadeBgSe[i] = 0;
+        
+        BgSePrmBuf[i].ReqFlag = 0;
+    }
+
+    RequestSoundFade(1, 0xA3, 120);
+    
+    ResetSoundComInfo();
+    
+    RequestMidiFadeFunction(2, 2, 250);
+}
+
+// 100% matching!
+void Com_ExecRoomFadeOut()
+{
+    int i;
+    int FadeAttr;
+    int AttrTbl[2] = { 0x8, 0x10 };
+
+    FadeAttr = 0xA3;
+    
+    if (ReqFadeBgmNo != 0)
+    {
+        FadeAttr |= 0x40;
+    }
+    
+    ReqFadeBgmNo = 0;
+    
+    for (i = 0; i < 2; i++) 
+    {
+        if ((ReqFadeBgSe[i] & 0x1)) 
+        {
+            FadeAttr |= AttrTbl[i];
+        }
+    }
+    
+    RequestSoundFade(2, FadeAttr, 400);
+    
+    StopVibrationEx();
+}
+
+// 100% matching!
+void Com_ExecCallBgm_And_BgSe()
+{
+
+}
+
+// 100% matching!
+void Com_StartInitScript()
+{
+    StartInitScriptFlag = 1;
+    
+    ResetEnemySeInfo();
+    ResetObjectSeInfo();
+    
+    StopMidi(3);
+    StopMidi(4);
+    StopMidi(5);
+    StopMidi(6);
+    StopMidi(7);
+    
+    memset(GsSlotInfoSe, 0, 20);
+    memset(GsSlotInfoMi, 0, 8);
+    memset(GsSlotInfoAx, 0, 2);
+    
+    CustomMidiSlotDef(1, 4);
+}
+
+// 100% matching!
+void Com_FinishInitScript() 
+{
+
+}
+
+// 100% matching! 
+void ExecuteSoundCommand()
+{
+    int i;
+    
+    for (i = 0; i < SoundCommand.MaxCommand; i++) 
+    {
+        if (SdComFuncTbl[SoundCommand.ComTbl[i]].FuncName != NULL) 
+        {
+            SdComFuncTbl[SoundCommand.ComTbl[i]].FuncName(SoundCommand.ComTbl[i]);
+        }
+        
+        SoundCommand.ComTbl[i] = 0;
+    }
+    
+    SoundCommand.MaxCommand = 0;
+}
+
+// 100% matching!
+void SendSoundCommand(unsigned int CommandNo)
+{
+    if (SoundCommand.MaxCommand != 2) 
+    {
+        SoundCommand.ComTbl[SoundCommand.MaxCommand] = CommandNo;
+        
+        SoundCommand.MaxCommand++;
+        
+        ExecuteSoundCommand();
+    }
+}
+
+// 100% matching!
+void ExecSoundSystemMonitor()
+{
+    int i;
+    
+    CameraPos.x = cam.wpx;
+    CameraPos.y = cam.wpy;
+    CameraPos.z = cam.wpz;
+    
+    PlayerPos.x = plp->px;
+    PlayerPos.y = plp->py;
+    PlayerPos.z = plp->pz;
+    
+    for (i = 0; i < 2; i++)
+    {
+        if ((AdxPlayFlag[i] != 0) && ((GetAdxStatus(i) == 5) || (GetAdxStatus(i) == 0)))
+        {
+            StopAdx(i);
+                
+            AdxPlayFlag[i] = 0;
+        }
+    } 
+    
+    ExecEnemySeManager();
+    ExecObjectSeManager();
+}
+
+// 100% matching!
+int RequestReadIsoFile(char* FileName, void* DestPtr)
+{
+    if (ReadFileRequestFlag != 0) 
+    {
+        return -1;
+    }
+    
+    if ((GenAdxfSlot = OpenAfsIsoFile(FileName)) < 0) 
+    {
+        return -1;
+    }
+    
+    RequestReadAfsInsideFile(GenAdxfSlot, DestPtr);
+    
+    DestReadPtr = DestPtr;
+
+    ReadFileRequestFlag = 1;
+
+    FileReadStatus = 1;
+
+    return 0;
+}
+
+// 100% matching!
+int RequestReadInsideFile(unsigned int PartitionId, unsigned int FileId, void* DestPtr)
+{
+    if (ReadFileRequestFlag != 0) 
+    {
+        return -1;
+    }
+    
+    if ((GenAdxfSlot = OpenAfsInsideFile(PartitionId, FileId)) < 0) 
+    {
+        return -1;
+    }
+    
+    RequestReadAfsInsideFile(GenAdxfSlot, DestPtr);
+    
+    DestReadPtr = DestPtr;
+    
+    ReadFileRequestFlag = 1;
+    
+    FileReadStatus = 1;
+    
+    return 0;
+}
+
+// 100% matching!
+int GetIsoFileSize(char* FileName)
+{
+    return GetFileSize(FileName);
+}
+
+// 100% matching!
+int GetInsideFileSize(unsigned int PartitionId, unsigned int FileId)
+{
+    unsigned int temp; // not from the debugging symbols
+    int SlotNo;
+    int FileSize;
+    
+    SlotNo = OpenAfsInsideFile(PartitionId, FileId);
+    
+    temp = SlotNo;
+    
+    if (SlotNo < 0)
+    {
+        return 0;
+    }
+    
+    FileSize = GetAfsInsideFileSize(temp);
+
+    CloseAfsInsideFile(temp);
+    
+    return FileSize;
+}
+
+// 100% matching!
+int GetReadFileStatus() 
+{ 
+    return FileReadStatus; 
+}
+
+// 100% matching! 
+void ExecFileManager()
+{
+    OpenDriveTrayFlag = CheckOpenTray();
+    
+    if (ReadFileRequestFlag != 0)
+    {
+        if ((OpenDriveTrayFlag != 0) || (CheckSoftResetKeyFlag(-1) != 0))
+        {
+            StopAfsInsideFile(GenAdxfSlot);
+            
+            ReadFileRequestFlag = 0;
+            
+            FileReadStatus = -1;
+        }
+        else if ((FileReadStatus == 1) && (CheckReadEndAfsInsideFile(GenAdxfSlot) != 0)) 
+        {
+            ReadFileRequestFlag = 0;
+            
+            FileReadStatus = 0;
+        }
+    }
+}
+
+// 100% matching! 
+int PlayStartMovieEx(int MovieNo, int MovieType, int PauseFlag)
+{
+    MWS_PLY_CPRM_SFD CprmSfd;
+    char FileName[16];        
+    unsigned int Type;     
+
+    if (MovieInfo.ExecMovieSystemFlag != 0)
+    {
+        MovieInfo.MovieSystemLastError = 2;
+        
+        return 2;
+    }
+
+    Type = MovieTypeDef[MovieNo] & 0x1F;
+
+    CprmSfd.ftype = 1;
+    CprmSfd.dtype = MovieDef[Type].DispType;
+    
+    CprmSfd.max_bps = 0x384000;
+    
+    CprmSfd.max_width = MovieDef[Type].sSizeX;
+    CprmSfd.max_height = MovieDef[Type].sSizeY;
+    
+    CprmSfd.nfrm_pool_wk = 3;
+    
+    CprmSfd.wksize = mwPlyCalcWorkSofdec(CprmSfd.ftype, CprmSfd.max_bps, CprmSfd.max_width, CprmSfd.max_height, CprmSfd.nfrm_pool_wk);
+
+    if ((MovieInfo.mmp = bhGetFreeMemory(CprmSfd.wksize, sizeof(MWS_PLY_CPRM_SFD))) == NULL)
+    {
+        MovieInfo.MovieSystemLastError = 1;
+        
+        return 1;
+    }
+
+    StopBgm(0);
+    StopVoice(0);
+    
+    SleepAdxStream();
+    
+    sprintf(FileName, "MV_%03u.PSS", MovieNo);
+    
+    PlayMw2(FileName, 0, MovieInfo.mmp, &CprmSfd, PauseFlag);
+
+    if (MovieDef[Type].dSizeX != 0)
+    {
+        SetSfdDislpaySize(MovieDef[Type].dPosX, MovieDef[Type].dPosY, MovieDef[Type].dSizeX, MovieDef[Type].dSizeY);
+    }
+
+    MovieInfo.MovieCancelFlag = ((MovieTypeDef[MovieNo] & 0x80) == 0) ? 1 : 0;
+    
+    if ((MovieType & 0x1))
+    {
+        MovieInfo.MovieCancelFlag = 1;
+    }
+    
+    MovieInfo.MovieFadeFlag = ((MovieTypeDef[MovieNo] & 0x40) == 0) ? 0 : 1;
+    
+    if ((MovieType & 0x2))
+    {
+        MovieInfo.MovieFadeFlag = 1;
+    }
+    
+    MovieInfo.MovieFadeMode = 0;
+    
+    MovieInfo.FrameCnt = 30;
+    
+    MovieInfo.Vol = MovieVolDef[MovieNo];
+    MovieInfo.VolSpeed = (MovieVolDef[MovieNo] - -999.0f) / MovieInfo.FrameCnt;
+    
+    MovieInfo.Fade = GetSfdFadeRate();
+    MovieInfo.FadeSpeed = MovieInfo.Fade / MovieInfo.FrameCnt;
+    
+    MovieInfo.MovieSystemLastError = 0;
+    
+    MovieInfo.ExecMovieSystemFlag = 1;
+
+    return 0;
+}
+
+// 100% matching!
+void PlayStopMovieEx(int Mode)
+{
+    if (MovieInfo.ExecMovieSystemFlag != 0) 
+    {
+        if (Mode == 0) 
+        {
+            StopMw();
+            
+            bhReleaseFreeMemory(MovieInfo.mmp);
+            
+            WakeupAdxStream(AdxDef);
+        }
+        
+        MovieInfo.ExecMovieSystemFlag = 0;
+        
+        if ((sys->cb_flg & 0x2)) 
+        {
+            sys->cb_flg &= ~0x2;
+        }
+    }
+}
+
+// 100% matching!
+void PlayStopMovie()
+{
+    PlayStopMovieEx(0);
+}
+
+// 100% matching!
+int CheckPlayEndMovie()
+{
+    return MovieInfo.ExecMovieSystemFlag;
+}
+
+// 100% matching!
+int GetTimeMoive()
+{
+    if (MovieInfo.ExecMovieSystemFlag != 0)
+    {
+        return GetMwPlayTimeEx();
+    }
+    
+    return 0;
+}
+
+// 100% matching!
+int WaitPrePlayMovie()
+{
+    if (MovieInfo.ExecMovieSystemFlag != 0)
+    {
+        if (OpenDriveTrayFlag != 0) 
+        {
+            PlayStopMovieEx(1);
+            
+            return 3;
+        }
+        
+        if (CheckSoftResetKeyFlag(-1) != 0)
+        {
+            PlayStopMovie();
+            
+            return 3;
+        }
+        
+        if ((MovieInfo.MovieCancelFlag != 0) && ((rmi.MVCancelButton & Pad[CurrentPortId].press))) 
+        {
+            PlayStopMovie();
+            
+            return 2;
+        }
+        
+        PlayMwMain();
+        
+        if (GetMwStatus() == MWE_PLY_STAT_PLAYING) 
+        {
+            RestartMw();
+            
+            return 0;
+        }
+        
+        return 1;
+    }
+    
+    return 0;
+}
+
+// 100% matching!
+int PlayMovieMain()
+{
+    if (MovieInfo.ExecMovieSystemFlag != 0) 
+    {
+        if (OpenDriveTrayFlag != 0) 
+        {
+            PlayStopMovieEx(1);
+            
+            return 3;
+        }
+        
+        if (CheckSoftResetKeyFlag(-1) != 0)
+        {
+            PlayStopMovie();
+            
+            return 3;
+        }
+        
+        mwPlyStartFrame();
+        
+        if (MovieInfo.MovieCancelFlag != 0)
+        {
+            if ((rmi.MVCancelButton & Pad[CurrentPortId].press)) 
+            {
+                if (MovieInfo.MovieFadeFlag == 0) 
+                {
+                    PlayStopMovie();
+                    
+                    return 2;
+                }
+                
+                if (MovieInfo.MovieFadeMode != 1) 
+                {
+                    MovieInfo.MovieFadeMode = 1;
+                    
+                    bhSetScreenFade(0xFF000000, MovieInfo.FrameCnt);
+                }
+            }
+        }
+        
+        if (MovieInfo.MovieFadeMode != 0) 
+        {
+            if (!(sys->cb_flg & 0x2)) 
+            {
+                PlayStopMovie();
+                
+                return 2;
+            }
+            
+            bhControlScreenFade();
+            
+            if (sys->fade_an > 0) 
+            {
+                bhDrawScreenFade();
+            }
+            
+            MovieInfo.Vol -= MovieInfo.VolSpeed;
+            
+            SetMwVolume(MovieInfo.Vol);
+        }
+        
+        if (PlayMwMain() == 0) 
+        {
+            PlayStopMovie();
+            
+            return 1;
+        }
+    }
+    
+    return 0;
+}
+
+// 100% matching!
+void SetEventVibrationMode(int Mode) 
+{ 
+    EventVibrationMode = Mode; 
+}
+
+// 100% matching!
+void StartVibrationBasic(int PortNo, int AtrbId, int VibNo)
+{
+    PDS_VIBPARAM VibPrm;
+    
+    if ((!(sys->ss_flg & 0x400000)) && ((EventVibrationMode == 0) || (AtrbId == 2))) 
+    {
+        VibPrm.flag = VibFlag[VibP[VibNo].flag];
+        
+        VibPrm.power = VibP[VibNo].power;
+        
+        VibPrm.freq = VibP[VibNo].freq;
+        
+        VibPrm.inc = VibP[VibNo].inc;
+        
+        StartVibration((PortNo * 6) + 2, &VibPrm);
+    }
+}
+
+// 100% matching!
+void StartVibrationEx(int AtrbId, int VibNo) 
+{ 
+    StartVibrationBasic(CurrentPortId, AtrbId, VibNo);
+}
+
+// 100% matching!
+void StopVibrationBasic(int PortNo) 
+{ 
+    StopVibration((PortNo * 6) + 2);
+}
+
+// 100% matching!
+void StopVibrationEx() 
+{ 
+    StopVibrationBasic(CurrentPortId);
+}
+
+// 100% matching!
+void SetAdjustDisplay() 
+{ 
+    SystemAdjustFlag = 1; 
+}
+
+// 100% matching! 
+void RequestAdjustDisplay(int AdjustX, int AdjustY)
+{ 
+    sys->adjust_x = AdjustX;
+    sys->adjust_y = AdjustY; 
+    
+    SetAdjustDisplay(); 
+}
+
+// 100% matching! 
+void ExecAdjustDisplay()
+{ 
+    if (SystemAdjustFlag != 0) 
+    { 
+        njAdjustDisplay(sys->adjust_x, sys->adjust_y + 1); 
+        
+        SystemAdjustFlag = 0; 
+    }
+} 
+
+// 100% matching! 
+void InitPlayLogSystem()
+{
+
+}
+
+// 100% matching! 
+void ExitPlayLogSystem()
+{
+
+}
+
+// 100% matching! 
+void ReadPlayLog(unsigned char* param1, unsigned char* param2) // parameters are not present on the debugging symbols
+{
+
+}
+
+// 100% matching! 
+void WritePlayLog(int param1, int param2) // parameters are not present on the debugging symbols
+{
+
+}

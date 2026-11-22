@@ -90,6 +90,8 @@ int   pc_model_cull(void);      /* actors/objects off-screen are skipped (bhChec
 float pc_font_width(unsigned short code);
 float pc_font_space(void);      /* a space's (0xFF01) advance at scale 1 */
 int   pc_font_glyph(int code, void** texlist, float* dx);   /* bhDispFont: the cell to draw (-1 none); *texlist another font's; *dx its shift */
+float pc_lang_mes_x(int which, float us);   /* lang_glue.c: the x the language's executable draws one at */
+unsigned int* pc_lang_sys_mes(unsigned int* sp);   /* lang_glue.c: SYSMES.ALD read, the US messages where one is not whole */
 const unsigned short* pc_lang_mes(int which, const unsigned short* us);   /* the executable's short texts (lang.h LM_*) */
 int   pc_lang_file_page(float x, float y, int file, int page);   /* a file page as the language's picture (1 drawn) */
 int   pc_lang_page_end(int us);   /* PlayPageCheck: the playing manual's hidden pages in the language's layout */
@@ -100,6 +102,9 @@ extern int pc_enemy_refused;       /* eneset.c: the enemy's code runs on a playe
 int   pc_frame_blend(void);     /* PS2_swap blends the new frame 75% over the previous one (motion trail) */
 unsigned int pc_noclip(void);   /* F2 cheat: player flags whose enemy/wall push bhControlPlayer skips */
 int   pc_inf_ammo(void);      /* F2 cheat (pc/glue/cheat_glue.c): bhCheckBullet/bhCountBullet as for an unlimited weapon */
+int   pc_difficulty_select(void);        /* host.c: setting "Difficulty select" (adv.c CheckButton: NEW GAME opens the difficulty menu) */
+void  pc_hit_react_fx(int on);                    /* tps_glue.c: effect.c, the effects linked to a flinching part follow it */
+int   pc_battle_unlocked(void);               /* host.c: setting "Battle Game unlocked" (event.c bhCk: every Battle Game character) */
 int   pc_skip_intro(void);               /* option: boot straight to the title menu */
 int   pc_skip_intro_press_start(void);   /* ... and past "press start", once */     /* option: room transitions without the door/stairs animation */   /* camera filter/vignette: 0 original, 1 stretched, 2 off */
 /* full-screen 2D overlays (cinematic bars, fades, screen effects) in hor+ widescreen:
@@ -119,6 +124,7 @@ extern int coop_on;
 void  coop_control_remote(void);
 void  coop_draw_remote(void);
 void  coop_textures_released(void);
+void  coop_player_unload(void);                /* system.c bhSysCallMonitor: the player's textures go, another character loads (story switch, Battle Game rooms) */
 struct BH_PWORK;
 int   coop_enemy_begin(struct BH_PWORK* ep);   /* 1 = step done (client puppet) */
 void  coop_enemy_end(struct BH_PWORK* ep);
@@ -212,6 +218,7 @@ unsigned int menu_pad(unsigned int pad);
 unsigned int selmenu_pad(unsigned int pad);   /* vr145: pad.c bhSetPad, after trade_pad: Select pauses with a menu (options_glue.c) */
 int pc_selmenu_draw(void);
 void pc_title_exit(void);
+void pc_title_extra_open(void);   /* lobby_glue.c: the EXTRA row opens its page in mode 30 */
 void pc_title_font_leave(void);   /* vr146: adv.c, a game mode chosen at the title: its font released (lobby_glue.c) */   /* vr145: adv.c, the title menu's EXIT row (lobby_glue.c) */   /* vr145: system.c, the pause screen: 1 = the menu drew there */
 unsigned int trade_pad(unsigned int pad);   /* pad.c bhSetPad, after menu_pad: the screen's input, the player stands still */
 void  trade_draw(void);                     /* game.c bhMainSequence, after the frame's drawing */
@@ -243,6 +250,11 @@ struct BH_PWORK;
 void  tps_bend(struct BH_PWORK* p);   /* the last free-aim bend on a display copy of the player (actor_glue.c) */
 #include "ps2sdk_shim.h"
 #include "ps2_hw.h"
+#ifndef PS2_WINDOW
+/* the PS2 address window the image is linked in: addr|PS2_WINDOW is an identity on every game object (the decomp spells it with this name) */
+#define PS2_WINDOW 0x30000000u
+#define PS2_WINDOW_END (PS2_WINDOW + 0x10000000u)
+#endif
 #define u_long ps2_u_long
 #ifdef __SSE2__
 #include <emmintrin.h>   /* for vu_simd.h (vu0.h), which game files include after the define below */

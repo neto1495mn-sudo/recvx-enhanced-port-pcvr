@@ -7,6 +7,7 @@
  *       by the audio mixer when it plays the stream, or by wall-clock time.
  */
 #include "../host/lang.h"
+#include "../../include/pc_parse.h"
 #include "../ps2_platform.h"
 #include "audio.h"
 #include <SDL3/SDL.h>
@@ -34,17 +35,16 @@
    (docs/modding/README.md "The mods folder"): <mods>/NAME for files opened by name (room files RM_SRRC.RDX, also names the
    disc does not have, and plain ISO files), <mods>/<AFS file>/<id> for entries of AFS archives
    (e.g. mods/MRY.AFS/12). */
-static FILE* mod_open_path(const char* name, uint32_t* size, char* path, size_t npath)
+static FILE* mod_open_path(const char* name, uint32_t* size, char* path, size_t npath, int* srcp)
 {
     static const char* dir;
-    FILE* f;
+    FILE* f = NULL;
     const char* ld;
     int src = LF_MODS;
     if (!dir) dir = SDL_getenv("RECVX_MODS") ? SDL_getenv("RECVX_MODS") : "mods";
     while (*name == '\\' || *name == '/') name++;
-    snprintf(path, npath, "%s/%s", dir, name);
-    f = pc_fopen(path, "rb");
-    if (!f && (ld = pc_lang_file_dir())) {   /* the language's version of the file (lang.h; docs/LANGUAGES.md; its names upper case) */
+    if (!f) { snprintf(path, npath, "%s/%s", dir, name); f = pc_fopen(path, "rb"); src = LF_MODS; }
+    if (!f && (ld = pc_lang_file_dir(name))) {   /* the language's version of the file (lang.h; docs/LANGUAGES.md; its names upper case) */
         char up[64];
         int i;
         for (i = 0; name[i] && i < 63; i++) up[i] = name[i] >= 'a' && name[i] <= 'z' ? name[i] - 32 : name[i];
@@ -55,12 +55,21 @@ static FILE* mod_open_path(const char* name, uint32_t* size, char* path, size_t 
     }
     pc_lang_file_opened(name, f ? src : LF_DISC);
     if (!f) return NULL;
-    fseek(f, 0, SEEK_END);
-    *size = (uint32_t)ftell(f);
-    host_log("mods: %s replaces the disc file (%u bytes)\n", path, *size);
+    if (srcp) *srcp = src;   /* (LF_*) */
+    {
+        long n = fseek(f, 0, SEEK_END) ? -1 : ftell(f);
+        if (n < 0 || n > 0x7FFFF800L) {   /* (sizes are ints in the game; whole sectors are read) */
+            host_log("mods: %s cannot be read\n", path);
+            fclose(f);
+            return NULL;
+        }
+        *size = (uint32_t)n;
+    }
+    if (src != LF_LANG) host_log("mods: %s replaces the disc file (%u bytes)\n", path, *size);
     return f;
 }
-static FILE* mod_open(const char* name, uint32_t* size) { char path[512]; return mod_open_path(name, size, path, sizeof path); }
+static FILE* mod_open(const char* name, uint32_t* size) { char path[512]; return mod_open_path(name, size, path, sizeof path, NULL); }
+FILE* pc_mod_fopen(const char* name, uint32_t* size) { return mod_open(name, size); }   /* (movie_glue.c: a movie) */
 
 int pc_mod_file_size(const char* name)
 {
@@ -132,8 +141,23 @@ int adx_afs_locate(int ptid, int fid, uint32_t* lsn, uint32_t* size)
     return 1;
 }
 
+/* the AFS file of partition ptid (ITEM1.AFS), NULL none (lang_glue.c: a language's file pages) */
+const char* adx_afs_name(int ptid) { return ptid >= 0 && ptid < MAX_PT && pt[ptid].name[0] ? pt[ptid].name : NULL; }
+
+/* bytes [off, off + n) of the disc file at sector lsn (also lang_glue.c) */
+int adx_disc_read(uint32_t lsn, uint32_t off, void* dst, uint32_t n)
+{
+    uint8_t sec[SECTOR];
+    for (uint32_t k; n; dst = (char*)dst + k, off += k, n -= k) {
+        k = SECTOR - off % SECTOR < n ? SECTOR - off % SECTOR : n;
+        if (!cdvd_read_sectors(lsn + off / SECTOR, 1, sec)) return 0;
+        memcpy(dst, sec + off % SECTOR, k);
+    }
+    return 1;
+}
+
 /* ---------------- ADXF ---------------- */
-typedef struct { int used; uint32_t lsn, size, pos_sct; int stat; FILE* host; } AdxfFile;
+typedef struct { int used; uint32_t lsn, size, pos_sct; int stat; FILE* host; PcPart* parts; int nparts; } AdxfFile;   /* (parts: lang.h pc_lang_disc_parts) */
 static AdxfFile files[32];
 static int pt_stat[MAX_PT];
 
@@ -183,13 +207,21 @@ int pc_mod_exists(const char* name)
 
 void* ADXF_OpenAfs(int ptid, int flid)
 {
-    uint32_t lsn, size;
+    uint32_t lsn, size, n;
     AdxfFile* f;
     FILE* hf;
-    char name[64];
+    char name[64], path[512];
+    int src;
     if (ptid >= 0 && ptid < MAX_PT && pt[ptid].name[0]) {
         snprintf(name, sizeof(name), "%s/%d", pt[ptid].name, flid);
-        if ((hf = mod_open(name, &size))) return open_host(hf, size);
+        if ((hf = mod_open_path(name, &size, path, sizeof path, &src))) {
+            f = open_host(hf, size);
+            if (f && src == LF_LANG && adx_afs_locate(ptid, flid, &lsn, &n) && (f->parts = malloc(PC_PARTS_MAX * sizeof(PcPart)))) {
+                f->lsn = lsn;   /* a language's file: parts of it the disc's */
+                if (!(f->nparts = pc_lang_disc_parts(name, hf, size, lsn, n, f->parts, PC_PARTS_MAX))) { free(f->parts); f->parts = NULL; }
+            }
+            return f;
+        }
     }
     if (!adx_afs_locate(ptid, flid, &lsn, &size)) { host_log("adxf: no file %d in partition %d\n", flid, ptid); return NULL; }
     if (!(f = new_file())) return NULL;
@@ -215,6 +247,9 @@ void ADXF_Close(void* h)
     if (!f) return;
     if (f->host) fclose(f->host);
     f->host = NULL;
+    free(f->parts);
+    f->parts = NULL;
+    f->nparts = 0;
     f->used = 0;
 }
 int ADXF_GetFsizeByte(void* h) { return h ? (int)((AdxfFile*)h)->size : 0; }
@@ -231,6 +266,12 @@ int ADXF_ReadNw32(void* h, int nsct, void* buf)
         fseek(f->host, (long)f->pos_sct * SECTOR, SEEK_SET);
         got = fread(buf, 1, want, f->host);
         memset((char*)buf + got, 0, want - got);
+        for (int k = 0; k < f->nparts; k++) {   /* the disc's bytes there (lang.h pc_lang_disc_parts) */
+            const PcPart* p = &f->parts[k];
+            uint64_t a = (uint64_t)f->pos_sct * SECTOR, lo = a > p->off ? a : p->off, hi = (uint64_t)p->off + p->len;
+            if (hi > a + got) hi = a + got;
+            if (lo < hi) adx_disc_read(f->lsn, p->disc + (uint32_t)(lo - p->off), (char*)buf + (lo - a), (uint32_t)(hi - lo));
+        }
         f->stat = ADXF_STAT_READEND;
     } else
     f->stat = cdvd_read_sectors(f->lsn + f->pos_sct, (uint32_t)nsct, buf) ? ADXF_STAT_READEND : ADXF_STAT_ERROR;
@@ -297,7 +338,7 @@ void ADXT_StartAfs(void* h, int ptid, int fid)
     ADXT_Stop(h);
     if (ptid >= 0 && ptid < MAX_PT && pt[ptid].name[0]) {   /* <mods>/<AFS file>/<id>, as ADXF_OpenAfs */
         snprintf(name, sizeof(name), "%s/%d", pt[ptid].name, fid);
-        hf = mod_open_path(name, &size, path, sizeof path);
+        hf = mod_open_path(name, &size, path, sizeof path, NULL);
     }
     if (hf) { rewind(hf); ok = fread(hdr, 1, SECTOR, hf) >= 0x34; fclose(hf); mod = 1; }
     else ok = adx_afs_locate(ptid, fid, &lsn, &size) && cdvd_read_sectors(lsn, 1, hdr);
@@ -316,7 +357,26 @@ void ADXT_StartAfs(void* h, int ptid, int fid)
     t->paused = 0;
     t->stat = ADXT_STAT_PLAYING;
     t->voice = audio_stream_start_adx(mod ? path : g_config.iso_path, mod ? 0 : (uint64_t)lsn * SECTOR, size, t->vol);
-    host_log("adxt: start %d/%d (%u Hz, %u ch, %u samples, loop %d) voice %d\n", ptid, fid, t->rate, t->channels, t->total, t->loop, t->voice);
+    host_log("adxt: start %d/%d (%u Hz, %u ch, %u samples, loop %d) voice %d%s%s\n", ptid, fid, t->rate, t->channels, t->total, t->loop, t->voice, mod ? " from " : "", mod ? path : "");
+}
+
+/* how long file fid of partition ptid plays (its ADX header, as ADXT_StartAfs finds it), ms; 0 unknown (the voice
+   lines: pc/glue/cast_glue.c) */
+int adx_length_ms(int ptid, int fid)
+{
+    uint32_t lsn, size;
+    uint8_t hdr[SECTOR] = { 0 };
+    char name[64], path[512];
+    FILE* hf = NULL;
+    int ok;
+    if (ptid >= 0 && ptid < MAX_PT && pt[ptid].name[0]) {
+        snprintf(name, sizeof(name), "%s/%d", pt[ptid].name, fid);
+        hf = mod_open_path(name, &size, path, sizeof path, NULL);
+    }
+    if (hf) { rewind(hf); ok = fread(hdr, 1, SECTOR, hf) >= 0x34; fclose(hf); }
+    else ok = adx_afs_locate(ptid, fid, &lsn, &size) && cdvd_read_sectors(lsn, 1, hdr);
+    if (!ok || hdr[0] != 0x80 || !be32(hdr + 8)) return 0;
+    return (int)((uint64_t)be32(hdr + 12) * 1000 / be32(hdr + 8));
 }
 
 static uint64_t played_samples(AdxTalk* t)

@@ -115,7 +115,7 @@ static const char* const extras[] = { "Off", "Up to 1 per room", "Up to 2 per ro
 
 /* vr116: the VR comfort page - the few VR options to set before playing (the rest stay in recvx.ini) */
 extern int g_vr_seated;
-extern int g_vr_turn, g_vr_sight, g_vr_comfort, g_vr_res, g_vr_dyn_res, g_vr_fps, g_vr_radial, g_vr_seated, g_vr_sr, g_vr_aa, g_vr_pouch;
+extern int g_vr_turn, g_vr_sight, g_vr_comfort, g_vr_res, g_vr_dyn_res, g_vr_fps, g_vr_radial, g_vr_seated, g_vr_aa, g_vr_pouch;
 static const int vr_turns[] = { 0, 15, 30, 45, 60, 90 };
 static int vr_turn_get(void) { int b = 0; for (int i = 0; i < (int)SDL_arraysize(vr_turns); i++) if (abs(vr_turns[i] - g_vr_turn) < abs(vr_turns[b] - g_vr_turn)) b = i; return b; }
 static void vr_turn_set(int v) { if (v >= 0 && v < (int)SDL_arraysize(vr_turns)) g_vr_turn = vr_turns[v]; }
@@ -193,8 +193,6 @@ const Setting g_settings[] = {
       .help = "The ammo box at your holster is drawn as a leather pouch (a 3D model). Off: the plain box." },
     { SP_VR, "Anti-aliasing", V(g_vr_aa), 0, 1, 1,
       .help = "Smooths the jagged edges of the picture in the headset (FXAA). A little GPU; it also softens the picture slightly." },
-    { SP_VR, "Super Resolution", V(g_vr_sr), 0, 1, 1,
-      .help = "Sharpens the picture in the headset (an edge-aware sharpening upscale, in the idea of Qualcomm's Snapdragon Game Super Resolution; the headset's Meta Quest Super Resolution is asked too). Costs a little GPU." },
     { SP_VR, "Dynamic resolution", V(g_vr_dyn_res), 0, 1, 1,   /* vr177 */
       .help = "Lowers the resolution by itself in heavy places and raises it back after. Off: the resolution stays fixed." },
     { SP_VR, "Show frame rate", V(g_vr_fps), 0, 1, 1, .group = "INFO",
@@ -232,6 +230,10 @@ const Setting g_settings[] = {
       .help = "Cutscene subtitles in this language, also with the game in another one." },
     { SP_GAMEPLAY, "Skip intro", V(g_config.skip_intro), 0, 1, 1, .flags = SET_RESTART, .help = "Boot straight into the title menu: no warning screen, logos or intro movie." },
     { SP_GAMEPLAY, "Skip door animations", V(g_config.skip_doors), 0, 1, 1, .help = "Room transitions use the game's load screen instead of the door, stairs or ladder animation." },
+    { SP_GAMEPLAY, "Head blow-offs", V(g_config.head_blowoff), 0, 1, 1,
+      .help = "A zombie's head that the magnum or the shotgun aimed up close bursts is gone from its body, on every zombie look. Off: as the original, which only shows the burst and the blood." },
+    { SP_GAMEPLAY, "Difficulty select", V(g_config.difficulty_select), 0, 1, 1,
+      .help = "NEW GAME asks for the difficulty, as the European and Japanese versions do: Normal, Easy (supplies in the item box, more ammo per pickup) or Very Easy (also twice the health, stronger healing, weaker enemies). Off: as the US original, always Normal." },
     { SP_GAMEPLAY, "Battle Game unlocked", V(g_config.battle_unlocked), 0, 1, 1,
       .help = "The title menu offers BATTLE GAME without a finished playthrough. Saves and records stay as they are; off: only after a cleared game, as the original." },
     { SP_GAMEPLAY, "Quick knife", V(g_config.quick_knife), 0, 1, 1,
@@ -276,6 +278,8 @@ const Setting g_settings[] = {
     { SP_TPS, "Aiming sensitivity", V(g_tps.aim_sens), 10, 200, 5, .fmt = "%d%%", .help = "Mouse sensitivity while aiming, relative to the above." },
     { SP_TPS, "Invert Y", V(g_tps.invert_y), 0, 1, 1 },
     { SP_TPS, "Crosshair", V(g_tps.crosshair), 0, 1, 1 },
+    { SP_TPS, "Locational Hit Reactions", V(g_tps.hit_react), 0, 1, 1,
+      .help = "Zombies flinch where a shot lands: the head snaps back, an arm jerks or a leg buckles. Damage and timing stay the same." },
     { SP_TPS, "Game auto-aim", V(g_tps.auto_aim), 0, 1, 1, .help = "Off: free aim, the shot goes where the crosshair points. On: the game's lock-on." },
 
     { SP_AUDIO, "Music and voice", V(g_config.music_volume), 0, 100, 5, .fmt = "%d%%", .apply = apply_volume },

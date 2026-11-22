@@ -135,7 +135,6 @@ static int lost;                /* the session ended for good: back to the deskt
 static double hz;               /* from the predicted display period */
 static int64_t chain_fmt;
 static GLuint blit_fbo;
-int g_vr_sr;    /* ini vr_sr: the sharpening upscale of the eye images (gs_gl.c present pass) */
 volatile int g_vr_stick_lock;   /* weapon wheel (vr_glue.c): the right stick is for choosing, not turning - turn and scope zoom see it centred */
 int g_vr_fps;   /* ini vr_fps: the frame-rate readout in the headset (fps_layer) */
 static Chain fps_chain;
